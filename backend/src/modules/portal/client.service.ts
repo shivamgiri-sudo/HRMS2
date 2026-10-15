@@ -35,6 +35,16 @@ export interface Client {
   active_status: boolean;
   created_at: Date;
   updated_at?: Date;
+  // Invoicing fields (added by migration 2186)
+  gstin?: string;
+  billing_state_code?: string;
+  pan_number?: string;
+  payment_terms_days?: number;
+  hsn_sac_code?: string;
+  tds_section?: string;
+  tds_rate?: number;
+  credit_limit?: number;
+  invoice_prefix?: string;
 }
 
 export interface CreateClientInput {
@@ -60,6 +70,16 @@ export interface CreateClientInput {
   contract_end_date?: string;
   billing_cycle?: 'MONTHLY' | 'QUARTERLY' | 'ANNUAL';
   webhook_url?: string;
+  // Invoicing fields (migration 2186)
+  gstin?: string;
+  billing_state_code?: string;
+  pan_number?: string;
+  payment_terms_days?: number;
+  hsn_sac_code?: string;
+  tds_section?: string;
+  tds_rate?: number;
+  credit_limit?: number;
+  invoice_prefix?: string;
 }
 
 export async function listClients(filters?: {
@@ -155,6 +175,9 @@ const CLIENT_WRITABLE_COLS = new Set([
   'address_line1', 'address_line2', 'city', 'state', 'country', 'postal_code',
   'logo_url', 'website', 'contract_start_date', 'contract_end_date',
   'billing_cycle', 'subscription_status', 'webhook_url', 'active_status',
+  // Invoicing fields (migration 2186)
+  'gstin', 'billing_state_code', 'pan_number', 'payment_terms_days',
+  'hsn_sac_code', 'tds_section', 'tds_rate', 'credit_limit', 'invoice_prefix',
 ]);
 
 export async function createClient(

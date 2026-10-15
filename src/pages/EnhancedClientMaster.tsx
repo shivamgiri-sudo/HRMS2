@@ -56,12 +56,26 @@ interface Client {
   primary_contact_name?: string;
   primary_contact_email?: string;
   primary_contact_phone?: string;
+  address_line1?: string;
+  address_line2?: string;
   city?: string;
+  state?: string;
   country?: string;
+  postal_code?: string;
   subscription_status: string;
   billing_cycle: string;
   active_status: boolean;
   created_at: string;
+  // Invoicing fields (migration 2186)
+  gstin?: string;
+  billing_state_code?: string;
+  pan_number?: string;
+  payment_terms_days?: number;
+  hsn_sac_code?: string;
+  tds_section?: string;
+  tds_rate?: number;
+  credit_limit?: number;
+  invoice_prefix?: string;
 }
 
 interface PortalUser {
@@ -468,7 +482,16 @@ export default function EnhancedClientMaster() {
   const handleClientSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const data = Object.fromEntries(formData.entries());
+    const raw = Object.fromEntries(formData.entries()) as Record<string, string>;
+    // Coerce numeric invoicing fields so the backend receives numbers not strings
+    const data: Record<string, unknown> = { ...raw };
+    if (raw.payment_terms_days) data.payment_terms_days = parseInt(raw.payment_terms_days, 10);
+    if (raw.tds_rate) data.tds_rate = parseFloat(raw.tds_rate);
+    if (raw.credit_limit) data.credit_limit = parseFloat(raw.credit_limit);
+    // Strip billing_state_code from GSTIN automatically if not manually provided
+    if (raw.gstin && raw.gstin.length === 15 && !raw.billing_state_code) {
+      data.billing_state_code = raw.gstin.substring(0, 2);
+    }
     if (selectedClient) {
       updateClientMutation.mutate({ id: selectedClient.id, data });
     } else {
@@ -647,96 +670,214 @@ export default function EnhancedClientMaster() {
                     </DialogHeader>
 
                     <form onSubmit={handleClientSubmit} className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <Label htmlFor="client_code">Client Code *</Label>
-                          <Input
-                            id="client_code"
-                            name="client_code"
-                            required
-                            defaultValue={selectedClient?.client_code}
-                            placeholder="ABC_CORP"
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="client_name">Client Name *</Label>
-                          <Input
-                            id="client_name"
-                            name="client_name"
-                            required
-                            defaultValue={selectedClient?.client_name}
-                            placeholder="ABC Corporation"
-                          />
-                        </div>
-                      </div>
+                      <Tabs defaultValue="general">
+                        <TabsList className="grid grid-cols-3 w-full">
+                          <TabsTrigger value="general">General</TabsTrigger>
+                          <TabsTrigger value="address">Address &amp; Contact</TabsTrigger>
+                          <TabsTrigger value="invoicing">Invoicing &amp; Tax</TabsTrigger>
+                        </TabsList>
 
-                      <div>
-                        <Label htmlFor="legal_entity_name">Legal Entity Name</Label>
-                        <Input
-                          id="legal_entity_name"
-                          name="legal_entity_name"
-                          defaultValue={selectedClient?.legal_entity_name}
-                          placeholder="ABC Corp Private Limited"
-                        />
-                      </div>
+                        {/* ── GENERAL TAB ── */}
+                        <TabsContent value="general" className="space-y-4 pt-3">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label htmlFor="client_code">Client Code *</Label>
+                              <Input id="client_code" name="client_code" required
+                                defaultValue={selectedClient?.client_code} placeholder="ABC_CORP" />
+                            </div>
+                            <div>
+                              <Label htmlFor="client_name">Client Name *</Label>
+                              <Input id="client_name" name="client_name" required
+                                defaultValue={selectedClient?.client_name} placeholder="ABC Corporation" />
+                            </div>
+                          </div>
+                          <div>
+                            <Label htmlFor="legal_entity_name">Legal Entity Name</Label>
+                            <Input id="legal_entity_name" name="legal_entity_name"
+                              defaultValue={selectedClient?.legal_entity_name}
+                              placeholder="ABC Corp Private Limited" />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label htmlFor="industry">Industry</Label>
+                              <Input id="industry" name="industry"
+                                defaultValue={selectedClient?.industry} placeholder="BPO / Technology" />
+                            </div>
+                            <div>
+                              <Label htmlFor="billing_cycle">Billing Cycle</Label>
+                              <Select name="billing_cycle" defaultValue={selectedClient?.billing_cycle || "MONTHLY"}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="MONTHLY">Monthly</SelectItem>
+                                  <SelectItem value="QUARTERLY">Quarterly</SelectItem>
+                                  <SelectItem value="ANNUAL">Annual</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label htmlFor="contract_start_date">Contract Start</Label>
+                              <Input id="contract_start_date" name="contract_start_date" type="date"
+                                defaultValue={selectedClient?.contract_start_date as string | undefined} />
+                            </div>
+                            <div>
+                              <Label htmlFor="contract_end_date">Contract End</Label>
+                              <Input id="contract_end_date" name="contract_end_date" type="date"
+                                defaultValue={selectedClient?.contract_end_date as string | undefined} />
+                            </div>
+                          </div>
+                        </TabsContent>
 
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <Label htmlFor="industry">Industry</Label>
-                          <Input
-                            id="industry"
-                            name="industry"
-                            defaultValue={selectedClient?.industry}
-                            placeholder="Technology"
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="billing_cycle">Billing Cycle</Label>
-                          <Select name="billing_cycle" defaultValue={selectedClient?.billing_cycle || "MONTHLY"}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="MONTHLY">Monthly</SelectItem>
-                              <SelectItem value="QUARTERLY">Quarterly</SelectItem>
-                              <SelectItem value="ANNUAL">Annual</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
+                        {/* ── ADDRESS & CONTACT TAB ── */}
+                        <TabsContent value="address" className="space-y-4 pt-3">
+                          <div>
+                            <Label htmlFor="address_line1">Address Line 1</Label>
+                            <Input id="address_line1" name="address_line1"
+                              defaultValue={selectedClient?.address_line1} placeholder="Building / Plot No." />
+                          </div>
+                          <div>
+                            <Label htmlFor="address_line2">Address Line 2</Label>
+                            <Input id="address_line2" name="address_line2"
+                              defaultValue={selectedClient?.address_line2} placeholder="Street / Area" />
+                          </div>
+                          <div className="grid grid-cols-3 gap-4">
+                            <div>
+                              <Label htmlFor="city">City</Label>
+                              <Input id="city" name="city"
+                                defaultValue={selectedClient?.city} placeholder="Mumbai" />
+                            </div>
+                            <div>
+                              <Label htmlFor="state">State</Label>
+                              <Input id="state" name="state"
+                                defaultValue={selectedClient?.state} placeholder="Maharashtra" />
+                            </div>
+                            <div>
+                              <Label htmlFor="postal_code">Pincode</Label>
+                              <Input id="postal_code" name="postal_code"
+                                defaultValue={selectedClient?.postal_code} placeholder="400001" />
+                            </div>
+                          </div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 pt-2">Primary Contact</p>
+                          <div className="grid grid-cols-3 gap-4">
+                            <div>
+                              <Label htmlFor="primary_contact_name">Name</Label>
+                              <Input id="primary_contact_name" name="primary_contact_name"
+                                defaultValue={selectedClient?.primary_contact_name} placeholder="John Doe" />
+                            </div>
+                            <div>
+                              <Label htmlFor="primary_contact_email">Email</Label>
+                              <Input id="primary_contact_email" name="primary_contact_email" type="email"
+                                defaultValue={selectedClient?.primary_contact_email} placeholder="john@company.com" />
+                            </div>
+                            <div>
+                              <Label htmlFor="primary_contact_phone">Phone</Label>
+                              <Input id="primary_contact_phone" name="primary_contact_phone"
+                                defaultValue={selectedClient?.primary_contact_phone} placeholder="+91-9876543210" />
+                            </div>
+                          </div>
+                        </TabsContent>
 
-                      <div className="grid grid-cols-3 gap-4">
-                        <div>
-                          <Label htmlFor="primary_contact_name">Contact Name</Label>
-                          <Input
-                            id="primary_contact_name"
-                            name="primary_contact_name"
-                            defaultValue={selectedClient?.primary_contact_name}
-                            placeholder="John Doe"
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="primary_contact_email">Contact Email</Label>
-                          <Input
-                            id="primary_contact_email"
-                            name="primary_contact_email"
-                            type="email"
-                            defaultValue={selectedClient?.primary_contact_email}
-                            placeholder="john@company.com"
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="primary_contact_phone">Contact Phone</Label>
-                          <Input
-                            id="primary_contact_phone"
-                            name="primary_contact_phone"
-                            defaultValue={selectedClient?.primary_contact_phone}
-                            placeholder="+91-9876543210"
-                          />
-                        </div>
-                      </div>
+                        {/* ── INVOICING & TAX TAB ── */}
+                        <TabsContent value="invoicing" className="space-y-4 pt-3">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label htmlFor="gstin">GSTIN</Label>
+                              <Input id="gstin" name="gstin"
+                                defaultValue={selectedClient?.gstin}
+                                placeholder="29AABCF9845L1ZY"
+                                maxLength={15}
+                                className="font-mono uppercase"
+                                onChange={(e) => {
+                                  // Auto-fill billing_state_code from first 2 chars
+                                  const v = e.target.value.trim().toUpperCase();
+                                  const stateInput = e.currentTarget.form?.elements.namedItem('billing_state_code') as HTMLInputElement | null;
+                                  if (stateInput && v.length >= 2) stateInput.value = v.substring(0, 2);
+                                }}
+                              />
+                              <p className="text-xs text-muted-foreground mt-0.5">15-character GST registration number</p>
+                            </div>
+                            <div>
+                              <Label htmlFor="billing_state_code">Billing State Code</Label>
+                              <Input id="billing_state_code" name="billing_state_code"
+                                defaultValue={selectedClient?.billing_state_code}
+                                placeholder="27" maxLength={2}
+                                className="font-mono"
+                              />
+                              <p className="text-xs text-muted-foreground mt-0.5">Auto-filled from GSTIN (first 2 digits)</p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label htmlFor="pan_number">PAN</Label>
+                              <Input id="pan_number" name="pan_number"
+                                defaultValue={selectedClient?.pan_number}
+                                placeholder="AABCF9845L" maxLength={10}
+                                className="font-mono uppercase" />
+                            </div>
+                            <div>
+                              <Label htmlFor="hsn_sac_code">HSN / SAC Code</Label>
+                              <Input id="hsn_sac_code" name="hsn_sac_code"
+                                defaultValue={selectedClient?.hsn_sac_code ?? "998593"}
+                                placeholder="998593" className="font-mono" />
+                              <p className="text-xs text-muted-foreground mt-0.5">998593 = BPO/Call-centre services</p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-4">
+                            <div>
+                              <Label htmlFor="payment_terms_days">Payment Terms (days)</Label>
+                              <Select name="payment_terms_days"
+                                defaultValue={String(selectedClient?.payment_terms_days ?? 30)}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="15">15 days</SelectItem>
+                                  <SelectItem value="30">30 days</SelectItem>
+                                  <SelectItem value="45">45 days</SelectItem>
+                                  <SelectItem value="60">60 days</SelectItem>
+                                  <SelectItem value="90">90 days</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div>
+                              <Label htmlFor="tds_section">TDS Section</Label>
+                              <Select name="tds_section"
+                                defaultValue={selectedClient?.tds_section ?? ""}>
+                                <SelectTrigger><SelectValue placeholder="Select section" /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="">None / Not applicable</SelectItem>
+                                  <SelectItem value="194C">194C – Contracts (2%)</SelectItem>
+                                  <SelectItem value="194J">194J – Professional (10%)</SelectItem>
+                                  <SelectItem value="194N">194N – Cash withdrawal</SelectItem>
+                                  <SelectItem value="194I">194I – Rent</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div>
+                              <Label htmlFor="tds_rate">TDS Rate (%)</Label>
+                              <Input id="tds_rate" name="tds_rate" type="number" step="0.01" min="0" max="100"
+                                defaultValue={selectedClient?.tds_rate ?? ""}
+                                placeholder="2.00" />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label htmlFor="credit_limit">Credit Limit (₹)</Label>
+                              <Input id="credit_limit" name="credit_limit" type="number" step="1" min="0"
+                                defaultValue={selectedClient?.credit_limit ?? ""}
+                                placeholder="500000" />
+                            </div>
+                            <div>
+                              <Label htmlFor="invoice_prefix">Invoice Prefix</Label>
+                              <Input id="invoice_prefix" name="invoice_prefix"
+                                defaultValue={selectedClient?.invoice_prefix ?? ""}
+                                placeholder="MCN-ABC-" />
+                              <p className="text-xs text-muted-foreground mt-0.5">Leave blank to use global prefix</p>
+                            </div>
+                          </div>
+                        </TabsContent>
+                      </Tabs>
 
-                      <div className="flex justify-end gap-2">
+                      <div className="flex justify-end gap-2 pt-2 border-t">
                         <Button type="button" variant="outline" onClick={() => setShowClientDialog(false)}>
                           Cancel
                         </Button>
@@ -821,6 +962,17 @@ export default function EnhancedClientMaster() {
                             costCentreCount={Number(client.active_cost_centre_count ?? 0)}
                             processCount={Number(client.active_process_count ?? 0)}
                           />
+                          {/* Invoicing summary row */}
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground pt-1 border-t">
+                            {client.gstin ? (
+                              <span className="font-mono">GST: {client.gstin}</span>
+                            ) : (
+                              <span className="text-orange-500 font-medium">GSTIN missing</span>
+                            )}
+                            {client.pan_number && <span className="font-mono">PAN: {client.pan_number}</span>}
+                            {client.payment_terms_days && <span>{client.payment_terms_days}d credit</span>}
+                            {client.tds_section && <span>TDS {client.tds_section}</span>}
+                          </div>
                           <div className="flex items-center justify-between pt-2">
                             <span className="text-xs text-muted-foreground">
                               {client.billing_cycle} billing
