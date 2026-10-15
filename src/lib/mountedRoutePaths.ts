@@ -475,4 +475,5 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/workforce-planning",
   "/workforce/aon-analytics",
   "/workforce/command-center",
+  "/branch-head/dashboard",
 ]);
