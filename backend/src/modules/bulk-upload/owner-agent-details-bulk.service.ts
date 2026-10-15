@@ -1,6 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { upsertAgent } from "../process-performance/agent-master/agent-master.service.js";
 
 /**
  * Housing Owner's "Owner Agent Details" roster -- writes into
@@ -60,10 +60,14 @@ export async function importOwnerAgentDetailsBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  const insertRows: ChunkInsertRow[] = [];
+  let importedRows = 0;
+  let updatedAgents = 0;
+  let unchangedAgents = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
+  // Matched by MAS (the agent key): a new agent is inserted in full; an existing one is updated
+  // only where name, TL, AM, target or status differ, and each change is logged. Nothing is deleted.
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -76,32 +80,41 @@ export async function importOwnerAgentDetailsBatch(
       errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    insertRows.push({
-      rowId: row.id,
-      rowNo: row.row_no,
-      values: [
-        n(data, "SNo"), n(data, "CRMID"), n(data, "Overall"), n(data, "TLName", "TL Name"),
-        n(data, "DOJ"), n(data, "Status") ?? "Active", n(data, "Ageing"), n(data, "Bucket"),
-        parseNullableDecimal(getByColumn(data, "MonthlyTarget", "Monthly Target")),
-        parseNullableDecimal(getByColumn(data, "Without GST Target")),
-        parseNullableDecimal(getByColumn(data, "PerDayTarget", "Per Day Target")),
-        parseNullableDecimal(getByColumn(data, "MTD")),
-        masId, n(data, "Name"), n(data, "AM"),
-        uploadedByInt, batchId,
-      ],
-    });
-  }
+    const name = n(data, "Name");
+    const tl = n(data, "TLName", "TL Name");
+    const am = n(data, "AM");
+    const monthlyTarget = parseNullableDecimal(getByColumn(data, "MonthlyTarget", "Monthly Target"));
+    const status = n(data, "Status") ?? "Active";
 
-  const inserted = await chunkedMasmisInsert({
-    insertPrefix: `INSERT INTO db_masmis.owner_agent_details
-       (sno, crm_id, overall, tl_name, doj, status, ageing, bucket, monthly_target,
-        without_gst_target, per_day_target, mtd, mas_id, name, am, uploaded_by, upload_batch_id)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    rows: insertRows,
-  });
-  const importedRows = inserted.importedRows;
-  errorUpdates.push(...inserted.errorUpdates);
-  for (const u of inserted.errorUpdates) errors.push(u.message);
+    const outcome = await upsertAgent(
+      "housing_owner",
+      { key: masId, name, tl, am, target: monthlyTarget, status },
+      batchId,
+      uploadedByInt === null ? null : String(uploadedByInt),
+      async () => {
+        await db.execute(
+          `INSERT INTO db_masmis.owner_agent_details
+             (sno, crm_id, overall, tl_name, doj, status, ageing, bucket, monthly_target,
+              without_gst_target, per_day_target, mtd, mas_id, name, am, uploaded_by, upload_batch_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            n(data, "SNo"), n(data, "CRMID"), n(data, "Overall"), tl,
+            n(data, "DOJ"), status, n(data, "Ageing"), n(data, "Bucket"),
+            monthlyTarget,
+            parseNullableDecimal(getByColumn(data, "Without GST Target")),
+            parseNullableDecimal(getByColumn(data, "PerDayTarget", "Per Day Target")),
+            parseNullableDecimal(getByColumn(data, "MTD")),
+            masId, name, am, uploadedByInt, batchId,
+          ],
+        );
+      },
+    );
+    // Every matched row counts as imported: new agents are inserted, existing ones are updated or
+    // already current. Only the breakdown differs.
+    importedRows += 1;
+    if (outcome === "updated") updatedAgents += 1;
+    else if (outcome === "unchanged") unchangedAgents += 1;
+  }
   const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {

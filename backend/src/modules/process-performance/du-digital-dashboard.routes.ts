@@ -22,10 +22,19 @@ function resolveLabel(country: string): DuDashboardLabel | null {
   return c === "KOREA" || c === "THAILAND" ? c : null;
 }
 
+/** 0-23, both present and forming a real range, else no hour filtering. */
+function resolveHourRange(req: AuthenticatedRequest): { from: number; to: number } | undefined {
+  const f = Number(req.query.hourFrom);
+  const t = Number(req.query.hourTo);
+  if (!Number.isInteger(f) || !Number.isInteger(t) || f < 0 || f > 23 || t < 0 || t > 23 || f > t) return undefined;
+  if (f === 0 && t === 23) return undefined; // full day -- same as no filter, skip the extra work
+  return { from: f, to: t };
+}
+
 router.get("/du-digital/:country/dashboard", requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const label = resolveLabel(String(req.params.country ?? ""));
   if (!label) return res.status(400).json({ success: false, message: "country must be 'korea' or 'thailand'" });
-  const data = await getDuDigitalDashboard(label, String(req.query.from ?? ""), String(req.query.to ?? ""));
+  const data = await getDuDigitalDashboard(label, String(req.query.from ?? ""), String(req.query.to ?? ""), resolveHourRange(req));
   res.json({ success: true, data });
 }));
 

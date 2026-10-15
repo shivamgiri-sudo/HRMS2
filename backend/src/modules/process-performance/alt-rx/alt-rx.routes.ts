@@ -4,7 +4,8 @@ import { requireRole } from "../../../middleware/requireRole.js";
 import { writeAuditLog } from "../../../shared/auditLog.js";
 import { buildMisModel, toFacts, type DumpRow } from "./alt-rx.engine.js";
 import { buildAltRxMisWorkbook } from "./alt-rx.mis.js";
-import { loadStoredDump } from "./alt-rx.dump-store.js";
+import { EXPECTED_COLUMNS } from "./alt-rx.engine.js";
+import { getBatchSpan, loadDashboardRows, loadStoredBatch, loadStoredDump } from "./alt-rx.dump-store.js";
 
 /**
  * ALT RX dashboard and MIS. Both read the saved Dump in db_masmis.altdump, which the Uploader
@@ -62,27 +63,32 @@ function defaultRange(_span: { from: string | null; to: string | null }, now: Da
 
 /** Dashboard data: the saved Dump for the selected period, summarised for the screen. */
 router.get("/alt-rx/data", requireRole(...VIEWER_ROLES), h(async (req, res) => {
-  const stored = await loadStoredDump();
-  if (!stored.batch || stored.rows.length === 0) {
+  const batch = await loadStoredBatch();
+  if (!batch) {
     res.json({ success: true, data: null, batch: null, available: null, selected: null });
     return;
   }
-  const available = fullSpan(stored.rows);
+  const available = await getBatchSpan(batch.batchId);
+  if (!available.from || !available.to) {
+    res.json({ success: true, data: null, batch, available, selected: null });
+    return;
+  }
   const asked = rangeFromQuery(req.query as Record<string, unknown>);
   const range = asked.from || asked.to ? asked : defaultRange(available, new Date());
-  const rows = inRange(stored.rows, range.from, range.to);
+  // Filtered in SQL on the created_time index: only the selected range is read.
+  const rows = await loadDashboardRows(batch.batchId, range.from, range.to);
   const model = buildMisModel(rows);
   const { tickets: _omit, ...summary } = model;
   void _omit;
   res.json({
     success: true,
-    batch: stored.batch,
+    batch,
     available,
     selected: { from: range.from, to: range.to },
     data: {
       file: {
-        name: stored.batch.fileName, sheet: "altdump", rows: rows.length, columns: stored.columns.length,
-        missingExpected: [], unexpected: [], expectedColumns: stored.columns,
+        name: batch.fileName, sheet: "altdump", rows: rows.length, columns: EXPECTED_COLUMNS.length,
+        missingExpected: [], unexpected: [], expectedColumns: [...EXPECTED_COLUMNS],
       },
       ...summary,
     },

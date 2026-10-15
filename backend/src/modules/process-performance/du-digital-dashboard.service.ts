@@ -183,7 +183,18 @@ function resolveRange(fromInput: string, toInput: string): { from: string; to: s
   return { from, to };
 }
 
-export async function getDuDigitalDashboard(label: DuDashboardLabel, fromInput: string, toInput: string): Promise<DuDigitalDashboardData> {
+/** Hour-of-day range filter, inclusive. undefined = no filtering (the default, full 00-23). Only
+ * narrows the CDR side -- du_apr_daily_actual is one row per agent per DAY, with no per-call
+ * time, so Agent Wise's Calls/Login/Talk columns stay full-day even when this is set (there is
+ * no honest way to slice them finer; flagged to the viewer in the UI rather than faked). */
+export interface HourRange { from: number; to: number }
+
+function filterByHour(rows: CdrRow[], hours?: HourRange): CdrRow[] {
+  if (!hours) return rows;
+  return rows.filter((r) => r.hour_of_day !== null && Number(r.hour_of_day) >= hours.from && Number(r.hour_of_day) <= hours.to);
+}
+
+export async function getDuDigitalDashboard(label: DuDashboardLabel, fromInput: string, toInput: string, hours?: HourRange): Promise<DuDigitalDashboardData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const processId = await getProcessId();
   if (!processId) {
@@ -191,10 +202,11 @@ export async function getDuDigitalDashboard(label: DuDashboardLabel, fromInput: 
     return { from, to, kpis: empty, snapshot: { today: { ...empty, date: to }, wtd: empty, mtd: empty }, intraday: [], intradayDate: to, language: [], daily: [], agents: [], agentDaily: [], slots: [], dataAvailable: false };
   }
 
-  const [cdrRows, aprRows] = await Promise.all([
+  const [cdrRowsAll, aprRows] = await Promise.all([
     loadCdrRows(processId, label, from, to),
     loadAprRows(processId, label, from, to),
   ]);
+  const cdrRows = filterByHour(cdrRowsAll, hours);
 
   const kpis = kpiFromRows(cdrRows, agentCountFor(aprRows, cdrRows));
 

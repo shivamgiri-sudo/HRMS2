@@ -1,6 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { upsertAgent } from "../process-performance/agent-master/agent-master.service.js";
 
 /**
  * Housing Premium's "Premium Agent Details" roster -- writes into
@@ -57,10 +57,15 @@ export async function importPreAgentDetailsBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  const insertRows: ChunkInsertRow[] = [];
+  let importedRows = 0;
+  let updatedAgents = 0;
+  let unchangedAgents = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
+  // Matched by Emp ID: a new agent is inserted in full; an existing one is updated only where
+  // name, TL, target or status differ, and each change is logged. The file has no AM column, so
+  // an upload never changes an agent's AM. Nothing is deleted.
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -73,30 +78,39 @@ export async function importPreAgentDetailsBatch(
       errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    insertRows.push({
-      rowId: row.id,
-      rowNo: row.row_no,
-      values: [
-        empId, n(data, "Agent Name(As per CRM)", "Agent Name"), n(data, "TL Name"),
-        n(data, "Center"), n(data, "DOJ"), n(data, "Tenure"), n(data, "Tenure Bucket"),
-        parseNullableDecimal(getByColumn(data, "Target")),
-        parseNullableDecimal(getByColumn(data, "Achievement")),
-        n(data, "Ach%"), n(data, "Status") ?? "Active",
-        uploadedByInt, batchId,
-      ],
-    });
-  }
+    const name = n(data, "Agent Name(As per CRM)", "Agent Name");
+    const tl = n(data, "TL Name");
+    const target = parseNullableDecimal(getByColumn(data, "Target"));
+    const status = n(data, "Status") ?? "Active";
 
-  const inserted = await chunkedMasmisInsert({
-    insertPrefix: `INSERT INTO db_masmis.pre_agent_details
-       (emp_id, agent_name, tl_name, center, doj, tenure, tenure_bucket, target,
-        achievement, ach_pct, status, uploaded_by, upload_batch_id)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    rows: insertRows,
-  });
-  const importedRows = inserted.importedRows;
-  errorUpdates.push(...inserted.errorUpdates);
-  for (const u of inserted.errorUpdates) errors.push(u.message);
+    const outcome = await upsertAgent(
+      "housing_premium",
+      { key: empId, name, tl, target, status },
+      batchId,
+      uploadedByInt === null ? null : String(uploadedByInt),
+      async () => {
+        await db.execute(
+          `INSERT INTO db_masmis.pre_agent_details
+             (emp_id, agent_name, tl_name, center, doj, tenure, tenure_bucket, target,
+              achievement, ach_pct, status, uploaded_by, upload_batch_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            empId, name, tl,
+            n(data, "Center"), n(data, "DOJ"), n(data, "Tenure"), n(data, "Tenure Bucket"),
+            target,
+            parseNullableDecimal(getByColumn(data, "Achievement")),
+            n(data, "Ach%"), status,
+            uploadedByInt, batchId,
+          ],
+        );
+      },
+    );
+    // Every matched row counts as imported: new agents are inserted, existing ones are updated or
+    // already current. Only the breakdown differs.
+    importedRows += 1;
+    if (outcome === "updated") updatedAgents += 1;
+    else if (outcome === "unchanged") unchangedAgents += 1;
+  }
   const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {

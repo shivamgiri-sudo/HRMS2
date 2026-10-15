@@ -125,6 +125,20 @@ const fmtHms = (sec: number) => {
   return `${String(Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 };
 const hourLabel = (h: number) => `${String(h).padStart(2, "0")}:00`;
+
+/** Local-hour -> IST clock label for the slot-wise table, matching the reference workbook's own
+ * conversion for each country -- both round their true offset to a flat whole hour: Korea's true
+ * -3h30 rounds to -3h, Thailand's true -1h30 rounds to -2h. Confirmed against the reference's own
+ * slot columns for both (Korean Slot/Indian Slot: 09:00->06:00 throughout; THA/IST: 08:00->06:00,
+ * 09:00->07:00, 10:00->08:00 throughout). Wraps the clock only -- does not shift the date, same as
+ * the reference's own slot columns. */
+const IST_OFFSET_MIN: Record<Country, number> = { KOREA: -180, THAILAND: -120 };
+const LOCAL_LABEL: Record<Country, string> = { KOREA: "Korea", THAILAND: "Thailand" };
+function istLabel(country: Country, hour: number): string {
+  const total = ((hour * 60 + IST_OFFSET_MIN[country]) % 1440 + 1440) % 1440;
+  const h = Math.floor(total / 60), m = total % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
 const dayLabel = (iso: string) => {
   const d = new Date(`${iso}T00:00:00`);
   return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
@@ -254,8 +268,8 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
       ...data.agents.map((a) => [a.agent, a.offered, a.answered, a.abandoned, a.alPct, a.calls, a.login, a.talk]),
     ]), "Agent-wise");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
-      ["Date", "Hour", "Offered", "Answered", "Answered ≤ 20 s", "Abandoned", "SL %", "AL %", "AHT (sec)"],
-      ...data.slots.map((s) => [s.date, s.hour, s.offered, s.answered, s.answeredWithin20, s.abandoned, s.slPct, s.alPct, s.ahtSec]),
+      ["Date", `${LOCAL_LABEL[country]} Time Slot`, "India Time Slot", "Offered", "Answered", "Answered ≤ 20 s", "Abandoned", "SL %", "AL %", "AHT (sec)"],
+      ...data.slots.map((s) => [s.date, hourLabel(s.hour), istLabel(country, s.hour), s.offered, s.answered, s.answeredWithin20, s.abandoned, s.slPct, s.alPct, s.ahtSec]),
     ]), "Slot-wise");
     XLSX.writeFile(wb, `du_digital_${country.toLowerCase()}_${from}_${to}.xlsx`);
   };
@@ -366,7 +380,7 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
             <p className="du-eyebrow">Slot heat strip</p>
             <p style={{ margin: "2px 0 0", fontSize: 14, fontWeight: 600 }}>Service level by hour, {slotDates.length ? dayLabel(activeSlotDate) : "no date"}</p>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span className="du-eyebrow">Date</span>
             <select aria-label="Slot-wise date" value={activeSlotDate} onChange={(e) => { setSlotDate(e.target.value); setSlotHour(null); }}
               className="du-mono" style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "6px 10px", fontSize: 12, background: "#fff" }}>
@@ -383,8 +397,8 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
               <button key={h} type="button" className={`du-slot ${has ? "" : "du-slot-empty"} ${slotHour === h ? "du-slot-sel" : ""}`}
                 style={has ? { background: color } : undefined}
                 onClick={() => setSlotHour(slotHour === h ? null : h)}
-                aria-label={`${hourLabel(h)}: ${has ? `${s!.offered} calls, SL ${s!.slPct}%` : "no calls"}`}
-                title={has ? `${hourLabel(h)} · ${s!.offered} calls · SL ${s!.slPct}%` : `${hourLabel(h)} · no calls`}>
+                aria-label={`${hourLabel(h)} (IST ${istLabel(country, h)}): ${has ? `${s!.offered} calls, SL ${s!.slPct}%` : "no calls"}`}
+                title={has ? `${hourLabel(h)} · IST ${istLabel(country, h)} · ${s!.offered} calls · SL ${s!.slPct}%` : `${hourLabel(h)} · IST ${istLabel(country, h)} · no calls`}>
                 <span style={{ fontWeight: 600 }}>{String(h).padStart(2, "0")}</span>
                 <span style={{ opacity: .9 }}>{has ? `${s!.slPct}` : "–"}</span>
               </button>
@@ -401,7 +415,7 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
           <table className="du-table">
             <thead>
               <tr>
-                <th>Slot</th><th>Offered</th><th>Answered</th><th>≤ 20 s</th><th>Abandoned</th><th>SL %</th><th>AL %</th><th>AHT</th>
+                <th>{LOCAL_LABEL[country]} Time Slot</th><th>India Time Slot</th><th>Offered</th><th>Answered</th><th>≤ 20 s</th><th>Abandoned</th><th>SL %</th><th>AL %</th><th>AHT</th>
               </tr>
             </thead>
             <tbody>
@@ -412,17 +426,19 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
                     onKeyDown={(e) => { if (e.key === "Enter") setSlotHour(slotHour === h ? null : h); }}
                     style={slotHour === h ? { background: "#F1F5FF" } : undefined}>
                     <td>{hourLabel(h)}–{hourLabel((h + 1) % 24)}</td>
+                    <td className="du-mono" style={{ color: PALETTE.muted }}>{istLabel(country, h)}</td>
                     <td>{int(s.offered)}</td><td>{int(s.answered)}</td><td>{int(s.answeredWithin20)}</td><td style={{ color: PALETTE.abandoned }}>{int(s.abandoned)}</td>
                     <td style={{ color: slColor(s.slPct, true), fontWeight: 600 }}>{s.slPct}%</td><td>{s.alPct}%</td><td>{fmtHms(s.ahtSec)}</td>
                   </tr>
                 );
               })}
-              {slotsForDate.length === 0 && <tr><td colSpan={8} style={{ textAlign: "center", color: PALETTE.muted, fontFamily: "Inter" }}>No calls on this date.</td></tr>}
+              {slotsForDate.length === 0 && <tr><td colSpan={9} style={{ textAlign: "center", color: PALETTE.muted, fontFamily: "Inter" }}>No calls on this date.</td></tr>}
             </tbody>
             {slotsForDate.length > 0 && (
               <tfoot>
                 <tr>
                   <td style={{ fontWeight: 700 }}>Day total</td>
+                  <td>—</td>
                   <td>{int(slotsForDate.reduce((a, s) => a + s.offered, 0))}</td>
                   <td>{int(slotsForDate.reduce((a, s) => a + s.answered, 0))}</td>
                   <td>{int(slotsForDate.reduce((a, s) => a + s.answeredWithin20, 0))}</td>
