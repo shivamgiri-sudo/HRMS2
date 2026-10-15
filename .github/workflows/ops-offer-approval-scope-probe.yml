@@ -1,0 +1,41 @@
+name: Ops Offer Approval Scope Probe (manual, read-only)
+
+# Runs the offer-approval queue code as one user and groups results by branch. Writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: "User email to audit"
+        required: true
+        type: string
+
+concurrency:
+  group: ops-offer-approval-scope-probe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Audit
+        working-directory: backend
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          AUDIT_EMAIL: ${{ inputs.email }}
+        run: npx tsx scripts/probe-offer-approval-scope.ts "$AUDIT_EMAIL"
