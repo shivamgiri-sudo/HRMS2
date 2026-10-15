@@ -54,3 +54,15 @@ describe("careers mailbox pool", () => {
     expect(emailService.canSend("careers")).toBe(true);
   });
 });
+
+describe("careers pool - login failures", () => {
+  it("falls back to the default account when every careers mailbox rejects the login", async () => {
+    const { emailService } = await load();
+    const AUTH = Object.assign(new Error("Invalid login: 535 5.7.8"), { responseCode: 535, code: "EAUTH" });
+    sendMail.mockReset();
+    sendMail.mockImplementation(async (m: { from: string }) => { if (/c[12]@x\.com/.test(m.from)) throw AUTH; return { messageId: "default" }; });
+    const r = await emailService.send({ ...mail, pool: "careers" });
+    expect(r.messageId).toBe("default");
+    expect(sendMail.mock.calls.at(-1)![0].from).toContain("hrms@x.com");
+  });
+});

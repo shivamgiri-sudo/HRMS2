@@ -52,6 +52,12 @@ export function isDailyLimitError(error: unknown): boolean {
   return /5\.4\.5|daily user sending (limit|quota)|sending limit exceeded/i.test(msg) || (rc === 550 && /limit/i.test(msg));
 }
 
+/** SMTP login rejected (535 / EAUTH). */
+export function isAuthError(error: unknown): boolean {
+  const e = error as { responseCode?: unknown; code?: unknown } | null;
+  return Number(e?.responseCode) === 535 || String(e?.code ?? "") === "EAUTH";
+}
+
 /** How long a mailbox is left alone after Gmail reports its daily limit (it resets on a rolling window). */
 const QUOTA_BLOCK_MS = Math.max(5, Number(process.env.SMTP_QUOTA_BLOCK_MINUTES) || 60) * 60_000;
 
@@ -126,7 +132,7 @@ export function resetTransporter(): void {
 
 let defaultBlockedUntil = 0;
 
-type CareersAccount = { user: string; pass: string; transporter: ReturnType<typeof createTransporter> | null; blockedUntil: number };
+type CareersAccount = { user: string; pass: string; transporter: ReturnType<typeof createTransporter> | null; blockedUntil: number; authFailed?: boolean };
 let careersAccounts: CareersAccount[] = [];
 let careersLoaded = false;
 let careersCursor = 0;
@@ -271,18 +277,35 @@ export const emailService = {
       }
     }
 
-    // Careers pool: round robin; a mailbox that reports its limit is parked and the next one is tried.
+    // Careers pool: round robin. A mailbox that reports its daily limit is parked and the next one is tried. A mailbox that
+    // rejects the login (bad/expired password) is parked too; if EVERY mailbox rejects logins the pool is broken, and
+    // candidate mail goes out through the default account rather than failing for good.
     for (;;) {
       const account = pickCareersAccount();
-      if (!account) throw new EmailQuotaError("All careers mailboxes are at their daily sending limit");
+      if (!account) {
+        const list = loadCareersAccounts();
+        if (list.length && list.every((a) => a.authFailed)) break;
+        throw new EmailQuotaError("All careers mailboxes are at their daily sending limit");
+      }
       const transporter = (account.transporter ??= createTransporter({ ...careersConfig(), user: account.user, pass: account.pass }));
       try {
         const result = await withSmtpRetry(() => transporter.sendMail({ from: `"${careersConfig().fromName}" <${account.user}>`, ...message }));
+        account.authFailed = false;
         return { messageId: result.messageId };
       } catch (err) {
-        if (!isDailyLimitError(err)) throw err;
-        account.blockedUntil = Date.now() + QUOTA_BLOCK_MS;
+        if (isDailyLimitError(err)) { account.blockedUntil = Date.now() + QUOTA_BLOCK_MS; continue; }
+        if (isAuthError(err)) { account.blockedUntil = Date.now() + 10 * 60_000; account.authFailed = true; continue; }
+        throw err;
       }
+    }
+
+    if (defaultBlockedUntil > Date.now()) throw new EmailQuotaError();
+    try {
+      const fallback = await withSmtpRetry(() => getTransporter().sendMail({ from: fromAddress(), ...message }));
+      return { messageId: fallback.messageId };
+    } catch (err) {
+      if (isDailyLimitError(err)) { defaultBlockedUntil = Date.now() + QUOTA_BLOCK_MS; throw new EmailQuotaError(String((err as Error).message)); }
+      throw err;
     }
   },
 };
