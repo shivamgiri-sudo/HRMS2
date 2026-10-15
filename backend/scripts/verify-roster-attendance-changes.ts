@@ -18,51 +18,48 @@ const first = `${month}-01`;
 const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPacket[]>(sql, p))[0] as RowDataPacket[];
 const all: any = { mode: "all", ids: [] };
 const scope: any = { companyId: "ops", isSuperAdmin: true, branchScope: all, processScope: all, departmentScope: all, costCentreScope: all, canViewAllEmployees: true, canViewSensitiveFields: false };
-// Small sequential pages: the register runs per-employee queries concurrently, and one 3000-row call
-// is enough to trip the pool's circuit breaker on the live DB.
-const PAGE = 200;
-const run = async (f: Record<string, unknown>, maxPages = 8) => {
-  const out: any[] = [];
-  for (let i = 0; i < maxPages; i++) {
-    const r = (await attendanceRegisterMonthly({ month, employeeStatus: "all", ...f } as any, scope, { limit: PAGE, offset: i * PAGE, includeTotal: true, mode: "preview" } as any)) as any;
-    out.push(...r.rows);
-    if (r.rows.length < PAGE) break;
-    await new Promise((res) => setTimeout(res, 1500));
-  }
-  return out;
-};
-
 (async () => {
   let bad = 0;
-  const rows = await run({});
-  const ids = rows.map((r) => r.employee_id as string);
-  console.log(`register ${month}: ${rows.length} rows, inactive=${rows.filter((r) => r.employee_status === "Inactive").length}`);
-  if (ids.length) {
-    const gone = await q(
-      `SELECT employee_code, active_status, COALESCE(date_of_exit, date_of_leaving) AS exit_date FROM employees
-        WHERE id IN (${ids.map(() => "?").join(",")})
-          AND COALESCE(date_of_exit, date_of_leaving) < ? AND (date_of_joining IS NULL OR COALESCE(date_of_exit, date_of_leaving) >= DATE(date_of_joining))`,
-      [...ids, first],
-    );
-    console.log(`  left before ${first} but listed: ${gone.length}`);
-    if (gone.length) { bad++; console.table(gone.slice(0, 10)); }
-    const [{ n }] = await q(`SELECT COUNT(*) n FROM employees WHERE active_status = 0 AND COALESCE(date_of_exit, date_of_leaving) < ?`, [first]);
-    console.log(`  (inactive employees who left before month overall: ${n}, none should be listed)`);
+  const reg = async (f: Record<string, unknown>, limit = 25) =>
+    (await attendanceRegisterMonthly({ month, employeeStatus: "all", ...f } as any, scope, { limit, offset: 0, includeTotal: true, mode: "preview" } as any)) as any;
+
+  // Population size (count query only; limit 1 keeps the per-employee work to a single row).
+  const total = (await reg({}, 1)).rowCount;
+  console.log(`register ${month}: total employees listed = ${total}`);
+
+  // Targeted: people who left before the month must NOT come back, whatever active_status says.
+  const gone = await q(
+    `SELECT id, employee_code, active_status, COALESCE(date_of_exit, date_of_leaving) AS exit_date FROM employees
+      WHERE COALESCE(date_of_exit, date_of_leaving) < ? AND (date_of_joining IS NULL OR COALESCE(date_of_exit, date_of_leaving) >= DATE(date_of_joining))
+        AND (branch_id IS NULL OR branch_id IN (SELECT id FROM branch_master WHERE active_status = 1))
+      ORDER BY active_status DESC, exit_date DESC LIMIT 25`, [first]);
+  console.log(`left-before-month sample: ${gone.length} (active_status=1 among them: ${gone.filter((g) => Number(g.active_status) === 1).length})`);
+  if (gone.length) {
+    const r = await reg({ employeeIds: gone.map((g) => g.id) }, 25);
+    console.log(`  listed in register: ${r.rows.length} (must be 0)`);
+    if (r.rows.length) { bad++; console.table(r.rows.map((x: any) => ({ code: x.emp_code, status: x.employee_status, exit: x.date_of_exit }))); }
+  }
+  // Positive control: people who left DURING the month stay visible.
+  const during = await q(
+    `SELECT id FROM employees WHERE COALESCE(date_of_exit, date_of_leaving) BETWEEN ? AND LAST_DAY(?) AND DATE(date_of_joining) <= LAST_DAY(?) LIMIT 25`, [first, first, first]);
+  if (during.length) {
+    const r = await reg({ employeeIds: during.map((g) => g.id) }, 25);
+    console.log(`left during ${month}: ${during.length} in DB, ${r.rows.length} listed (branch filter may drop some)`);
   }
 
   const [lob] = await q(`SELECT lob_id, COUNT(*) n FROM employees WHERE active_status = 1 AND lob_id IS NOT NULL GROUP BY lob_id ORDER BY n DESC LIMIT 1`);
   if (lob) {
-    const r = await run({ lobId: lob.lob_id }, 2);
-    const wrong = r.length ? await q(`SELECT COUNT(*) n FROM employees WHERE id IN (${r.map(() => "?").join(",")}) AND (lob_id <> ? OR lob_id IS NULL)`, [...r.map((x) => x.employee_id), lob.lob_id]) : [{ n: 0 }];
-    console.log(`LOB ${lob.lob_id}: ${r.length} rows (of ${rows.length}), off-LOB rows: ${wrong[0].n}`);
-    if (wrong[0].n > 0 || r.length > rows.length && rows.length < PAGE * 8) bad++;
+    const r = await reg({ lobId: lob.lob_id }, 25);
+    const wrong = r.rows.length ? await q(`SELECT COUNT(*) n FROM employees WHERE id IN (${r.rows.map(() => "?").join(",")}) AND (lob_id <> ? OR lob_id IS NULL)`, [...r.rows.map((x: any) => x.employee_id), lob.lob_id]) : [{ n: 0 }];
+    console.log(`LOB ${lob.lob_id}: total ${r.rowCount} (of ${total}), page rows ${r.rows.length}, off-LOB: ${wrong[0].n}`);
+    if (wrong[0].n > 0 || r.rowCount >= total) bad++;
   }
   const [mgr] = await q(`SELECT reporting_manager_id, COUNT(*) n FROM employees WHERE active_status = 1 AND reporting_manager_id IS NOT NULL GROUP BY reporting_manager_id ORDER BY n DESC LIMIT 1`);
   if (mgr) {
-    const r = await run({ managerId: mgr.reporting_manager_id }, 2);
-    const wrong = r.length ? await q(`SELECT COUNT(*) n FROM employees WHERE id IN (${r.map(() => "?").join(",")}) AND reporting_manager_id <> ? AND (manager_id IS NULL OR manager_id <> ?)`, [...r.map((x) => x.employee_id), mgr.reporting_manager_id, mgr.reporting_manager_id]) : [{ n: 0 }];
-    console.log(`manager ${mgr.reporting_manager_id}: ${r.length} rows, off-manager rows: ${wrong[0].n}`);
-    if (wrong[0].n > 0 || r.length > rows.length && rows.length < PAGE * 8) bad++;
+    const r = await reg({ managerId: mgr.reporting_manager_id }, 25);
+    const wrong = r.rows.length ? await q(`SELECT COUNT(*) n FROM employees WHERE id IN (${r.rows.map(() => "?").join(",")}) AND reporting_manager_id <> ? AND (manager_id IS NULL OR manager_id <> ?)`, [...r.rows.map((x: any) => x.employee_id), mgr.reporting_manager_id, mgr.reporting_manager_id]) : [{ n: 0 }];
+    console.log(`manager ${mgr.reporting_manager_id}: total ${r.rowCount} (of ${total}), page rows ${r.rows.length}, off-manager: ${wrong[0].n}`);
+    if (wrong[0].n > 0 || r.rowCount >= total) bad++;
   }
 
   const sa: any = { roles: ["super_admin"], assignments: [] };
