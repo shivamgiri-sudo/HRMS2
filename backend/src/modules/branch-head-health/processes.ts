@@ -1,6 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
+import { notDialDeskProcessSql, ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
 
 export type CoverageTier = "full" | "inbound_quality" | "outbound_sale" | "baseline" | "not_wired";
 
@@ -14,6 +14,8 @@ export interface BranchProcess {
   headcount: number;
   tier: CoverageTier;
   latestMetricDate: string | null;
+  /** Idle BSS_* process that only mirrors a cost centre for billing. */
+  billingMirror: boolean;
 }
 export interface ProcessGroups { active: BranchProcess[]; unmapped: BranchProcess[] }
 export interface DrillRow { employeeCode: string; name: string; value: number | null; metric: string }
@@ -26,7 +28,8 @@ export function coverageTier(metricKeys: string[]): CoverageTier {
   const qa = has((k) => k.startsWith("QA_"));
   const risk = has((k) => k.startsWith("RISK_"));
   const inbound = has((k) => k.startsWith("INBOUND_") || k.startsWith("AHT") || k.startsWith("CHAT_"));
-  if (funnel && qa && risk) return "full";
+  void risk; // RISK_ is optional for "full"
+  if (funnel && qa) return "full";
   if (inbound && qa) return "inbound_quality";
   if (funnel && !qa) return "outbound_sale";
   return "baseline";
@@ -49,7 +52,8 @@ export async function listBranchProcesses(branchIds: string[]): Promise<ProcessG
          SELECT l.cost_centre_id, l.process_id, 1
            FROM cost_centre_process_link l WHERE l.active_status = 1
        ) x ON x.cc_id = cc.id
-      WHERE cc.branch_id IN (?) AND cc.active_status = 1 AND b.active_status = 1 AND b.close_date IS NULL`,
+      WHERE cc.branch_id IN (?) AND cc.active_status = 1 AND b.active_status = 1 AND b.close_date IS NULL
+        AND ${ownCompanyBranchSql("b")}`,
     [branchIds],
   );
   const linkedIds = [...new Set(ccRows.map((r) => String(r.process_id)))];
@@ -60,10 +64,14 @@ export async function listBranchProcesses(branchIds: string[]): Promise<ProcessG
               WHERE e.process_id = p.id AND e.active_status = 1 AND e.branch_id IN (?)) AS headcount
        FROM process_master p
        LEFT JOIN branch_master b ON b.id = p.branch_id
-      WHERE p.active_status = 1 AND ${notDialDeskProcessSql("p", "b")}
-        AND (p.branch_id IN (?) OR p.id IN (?)
-             OR EXISTS (SELECT 1 FROM employees e2 WHERE e2.process_id = p.id AND e2.active_status = 1 AND e2.branch_id IN (?)))`,
-    [branchIds, branchIds, linkedIds.length ? linkedIds : [""], branchIds],
+       LEFT JOIN branch_master nb ON 1 = 0
+      WHERE p.active_status = 1 AND (
+        (b.id IS NOT NULL AND b.active_status = 1 AND b.close_date IS NULL AND ${notDialDeskProcessSql("p", "b")}
+          AND (p.branch_id IN (?)
+               OR EXISTS (SELECT 1 FROM employees e2 WHERE e2.process_id = p.id AND e2.active_status = 1 AND e2.branch_id IN (?))))
+        OR (p.id IN (?) AND ${notDialDeskProcessSql("p", "nb")})
+      )`,
+    [branchIds, branchIds, branchIds, linkedIds.length ? linkedIds : [""]],
   );
 
   const ids = [...new Set(procRows.map((r) => String(r.id)))];
@@ -88,8 +96,6 @@ export async function listBranchProcesses(branchIds: string[]): Promise<ProcessG
 
   // Per-process cost-centre data, de-duplicated by cost centre id.
   const ccBy = new Map<string, Map<string, { code: string; seats: string | null; link: boolean }>>();
-  const ccToProcesses = new Map<string, Set<string>>();
-  const ccCode = new Map<string, string>();
   for (const r of ccRows) {
     const pid = String(r.process_id);
     const cid = String(r.cc_id);
@@ -97,18 +103,17 @@ export async function listBranchProcesses(branchIds: string[]): Promise<ProcessG
     const prev = m.get(cid);
     const link = Number(r.via_link) === 1;
     m.set(cid, { code: String(r.cc_code ?? ""), seats: r.mandated_seats == null ? null : String(r.mandated_seats), link: prev ? prev.link && link : link });
-    (ccToProcesses.get(cid) ?? ccToProcesses.set(cid, new Set()).get(cid)!).add(pid);
-    ccCode.set(cid, String(r.cc_code ?? ""));
   }
 
   const seen = new Map<string, RowDataPacket>();
   for (const r of procRows) if (!seen.has(String(r.id))) seen.set(String(r.id), r);
 
   const isBssIdle = (r: RowDataPacket) => String(r.process_code ?? "").toUpperCase().startsWith("BSS_") && Number(r.headcount) === 0;
+  const hasPrimary = (pid: string) => [...(ccBy.get(pid)?.values() ?? [])].some((c) => !c.link);
   const active: BranchProcess[] = [];
   const unmapped: BranchProcess[] = [];
   for (const [pid, r] of seen) {
-    if (isBssIdle(r)) continue; // billing identity: shown under its cost centre string
+    const mirror = isBssIdle(r);
     const ccs = ccBy.get(pid);
     const headcount = Number(r.headcount) || 0;
     const codes = new Set<string>();
@@ -131,8 +136,10 @@ export async function listBranchProcesses(branchIds: string[]): Promise<ProcessG
       headcount,
       tier: coverageTier(keys),
       latestMetricDate: latestBy.get(pid) ?? null,
+      billingMirror: mirror && hasPrimary(pid),
     };
-    (ccs && ccs.size > 0) || headcount > 0 ? active.push(bp) : unmapped.push(bp);
+    const isActive = mirror ? hasPrimary(pid) : (ccs && ccs.size > 0) || headcount > 0;
+    (isActive ? active : unmapped).push(bp);
   }
   const byCode = (a: BranchProcess, b: BranchProcess) => a.processCode.localeCompare(b.processCode);
   return { active: active.sort(byCode), unmapped: unmapped.sort(byCode) };
@@ -141,8 +148,20 @@ export async function listBranchProcesses(branchIds: string[]): Promise<ProcessG
 /** Per-agent latest value of one metric (last 45 days). The only place agent names are returned. */
 export async function getProcessDrilldown(branchId: string, processId: string, metric: string): Promise<DrillRow[]> {
   const [own] = await db.query<RowDataPacket[]>(
-    "SELECT p.id FROM process_master p WHERE p.id = ? AND p.branch_id = ? LIMIT 1",
-    [processId, branchId],
+    `SELECT p.id FROM process_master p
+       LEFT JOIN branch_master b ON b.id = p.branch_id
+       LEFT JOIN branch_master nb ON 1 = 0
+      WHERE p.id = ? AND p.active_status = 1 AND (
+        (EXISTS (SELECT 1 FROM cost_centre_master cc JOIN branch_master cb ON cb.id = cc.branch_id
+                  WHERE cc.branch_id = ? AND cc.active_status = 1 AND cb.active_status = 1 AND cb.close_date IS NULL
+                    AND ${ownCompanyBranchSql("cb")}
+                    AND (cc.process_id = p.id OR EXISTS (SELECT 1 FROM cost_centre_process_link l
+                          WHERE l.cost_centre_id = cc.id AND l.process_id = p.id AND l.active_status = 1)))
+         AND ${notDialDeskProcessSql("p", "nb")})
+        OR (b.id IS NOT NULL AND b.active_status = 1 AND b.close_date IS NULL AND ${notDialDeskProcessSql("p", "b")}
+            AND EXISTS (SELECT 1 FROM employees e0 WHERE e0.process_id = p.id AND e0.active_status = 1 AND e0.branch_id = ?))
+      ) LIMIT 1`,
+    [processId, branchId, branchId],
   );
   if (own.length === 0) return [];
   const [rows] = await db.query<RowDataPacket[]>(
@@ -153,9 +172,9 @@ export async function getProcessDrilldown(branchId: string, processId: string, m
         AND a.score_date = (SELECT MAX(a2.score_date) FROM process_metric_employee_actual a2
                              WHERE a2.employee_id = e.id AND a2.process_id = a.process_id AND a2.metric_key = a.metric_key
                                AND a2.actual_value IS NOT NULL AND a2.score_date >= DATE_SUB(CURDATE(), INTERVAL 45 DAY))
-      WHERE e.process_id = ? AND e.active_status = 1
+      WHERE e.process_id = ? AND e.active_status = 1 AND e.branch_id = ?
       ORDER BY (a.actual_value IS NULL), e.employee_code`,
-    [processId, metric, processId],
+    [processId, metric, processId, branchId],
   );
   return rows.map((r) => ({
     employeeCode: String(r.employee_code ?? ""),
