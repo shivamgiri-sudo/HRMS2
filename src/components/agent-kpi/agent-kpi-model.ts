@@ -16,7 +16,17 @@ export type PeriodTotals = {
 export type QueueTotals = { offered: number; answered: number; abandoned: number; abandon_pct: number | null };
 export type QueueBlock = { total: QueueTotals; byCampaign: Array<QueueTotals & { campaign: string }> };
 
-export type AuditRef = { audit_id: number; cq_pct: number | null; feedback: string | null; recording_url: string | null; scenario: string | null };
+/** An agent's acknowledgement of one audit's feedback (insert-only record). */
+export type AckInfo = { acknowledged_at: string; comment: string | null; acknowledged_by_user_id: string };
+
+export type AuditRef = {
+  audit_id: number; cq_pct: number | null; feedback: string | null; recording_url: string | null; scenario: string | null;
+  acknowledgement?: AckInfo | null;
+};
+
+export type FeedbackAckSummary = {
+  available: boolean; can_acknowledge: boolean; with_feedback: number; acknowledged: number; pending: number;
+};
 
 export type CdrCall = {
   id: number;
@@ -51,7 +61,11 @@ export type MyKpiData = {
   weekly: Array<{ week: number; from: string; to: string; handled: number; within_20s: number; sl_pct: number | null; aht_s: number | null }>;
   campaign_mix: Array<{ campaign: string; calls: number }>;
   recent_calls: CdrCall[];
-  recent_feedback: Array<{ audit_id: number; at: string; campaign: string | null; scenario: string | null; cq_pct: number | null; feedback: string | null }>;
+  recent_feedback: Array<{
+    audit_id: number; at: string; campaign: string | null; scenario: string | null; cq_pct: number | null; feedback: string | null;
+    acknowledgement?: AckInfo | null;
+  }>;
+  feedback_ack?: FeedbackAckSummary;
 };
 
 export type CqScore = {

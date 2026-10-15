@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  AlarmClock, ArrowDownRight, ArrowUpRight, Award, CalendarDays, Clock, Frown, Headphones, Lightbulb,
+  AlarmClock, ArrowDownRight, ArrowUpRight, Award, CalendarDays, CheckCircle2, Clock, Frown, Headphones, Lightbulb,
   Loader, Meh, PhoneCall, PhoneIncoming, PhoneMissed, Play, RefreshCcw, ShieldCheck, Smile, Sparkles,
   Target, Timer, TrendingUp, Users, Zap,
 } from "lucide-react";
@@ -370,7 +370,16 @@ export function AgentKpiDashboard() {
           )}
         </Card>
 
-        <Card title="Latest Audit Feedback" action={<LinkButton onClick={() => open({ kind: "feedback" })}>View All</LinkButton>}>
+        <Card title="Latest Audit Feedback" action={
+          <div className="flex items-center gap-2">
+            {d.feedback_ack?.available && (d.feedback_ack.pending > 0
+              ? <button onClick={() => open({ kind: "feedback" })} className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800" title="Audited calls with feedback in the last 30 days not yet acknowledged">
+                  {d.feedback_ack.pending} pending acknowledgement
+                </button>
+              : d.feedback_ack.with_feedback > 0 && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">All acknowledged</span>)}
+            <LinkButton onClick={() => open({ kind: "feedback" })}>View All</LinkButton>
+          </div>
+        }>
           {d.recent_feedback.length === 0 ? <p className="py-10 text-center text-sm text-slate-400">No audited calls in the last 7 days.</p> : (
             <ul className="space-y-2">
               {d.recent_feedback.slice(0, 5).map((f) => {
@@ -385,14 +394,19 @@ export function AgentKpiDashboard() {
                         <span className="line-clamp-1 text-xs text-slate-800">{f.feedback || `${f.scenario ?? "Call"} — no improvement points noted`}</span>
                         <span className="text-[10px] text-slate-400">{f.at.slice(11)} · {f.at.slice(8, 10)}/{f.at.slice(5, 7)} · {f.scenario ?? "—"}</span>
                       </span>
-                      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${style}`}>{fmtPct(f.cq_pct, 0)}</span>
+                      <span className="flex shrink-0 flex-col items-end gap-1">
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${style}`}>{fmtPct(f.cq_pct, 0)}</span>
+                        {d.feedback_ack?.available && (f.acknowledgement
+                          ? <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-600" title={`Acknowledged ${f.acknowledgement.acknowledged_at}`}><CheckCircle2 size={11} /> Ack</span>
+                          : <span className="text-[10px] font-semibold text-amber-600">{d.feedback_ack.can_acknowledge ? "Acknowledge →" : "Pending"}</span>)}
+                      </span>
                     </button>
                   </li>
                 );
               })}
             </ul>
           )}
-          <p className="mt-2 text-[10px] text-slate-400">Feedback is the AI auditor's own comment; colour reflects the call's CQ score.</p>
+          <p className="mt-2 text-[10px] text-slate-400">Feedback is the AI auditor's own comment; colour reflects the call's CQ score.{d.feedback_ack?.can_acknowledge ? " Open an item to acknowledge it." : ""}</p>
         </Card>
       </div>
 

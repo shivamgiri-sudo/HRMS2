@@ -1,10 +1,12 @@
 import { useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Loader } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, CheckCircle2, Clock, Loader } from "lucide-react";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { MyQualityPanel } from "@/components/quality-dashboard/MyQualityPanel";
 import { DailyTrendView } from "./DailyTrendView";
 import {
+  type AckInfo,
   type CdrCall,
   type CallsFilter,
   type DrawerSpec,
@@ -31,7 +33,64 @@ type AuditDetail = {
   recording: { url: string | null };
   transcript: string | null;
   feedback: string | null;
+  acknowledgement: AckInfo | null;
+  ack_available: boolean;
+  can_acknowledge: boolean;
 };
+
+/**
+ * The agent confirms they have read this audit's feedback. Shown as a read-only status to anyone
+ * viewing another agent (QA/admin); the backend independently refuses acknowledgements on someone
+ * else's behalf.
+ */
+function AckPanel({ auditId, detail, agentCode }: { auditId: number; detail: AuditDetail; agentCode?: string }) {
+  const qc = useQueryClient();
+  const [comment, setComment] = useState("");
+  const ack = useMutation({
+    mutationFn: () => hrmsApi.post(`/api/agent/feedback/${auditId}/ack`, { comment: comment.trim() || null }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["agent-kpi"] }); },
+  });
+
+  if (detail.acknowledgement) {
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+        <p className="flex items-center gap-1.5 font-semibold"><CheckCircle2 size={16} /> Acknowledged on {fmtDate(detail.acknowledgement.acknowledged_at)}</p>
+        {detail.acknowledgement.comment && <p className="mt-1 text-xs text-emerald-900">Agent's note: {detail.acknowledgement.comment}</p>}
+      </div>
+    );
+  }
+  if (!detail.ack_available) {
+    return <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Feedback acknowledgement is not set up yet.</p>;
+  }
+  if (!detail.can_acknowledge) {
+    return <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Not yet acknowledged by the agent{agentCode ? ` (${agentCode})` : ""}.</p>;
+  }
+  return (
+    <div className="space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+      <p className="text-xs text-slate-600">Confirm you have read this feedback. You can add a short note (optional).</p>
+      <textarea
+        value={comment}
+        onChange={(e) => setComment(e.target.value.slice(0, 1000))}
+        rows={2}
+        placeholder="e.g. Understood — I will confirm refund timelines on every call."
+        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-indigo-400"
+        aria-label="Note for this acknowledgement"
+      />
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-slate-400">{comment.length}/1000</span>
+        <button
+          onClick={() => ack.mutate()}
+          disabled={ack.isPending}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
+        >
+          {ack.isPending ? <Loader size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+          I acknowledge this feedback
+        </button>
+      </div>
+      {ack.isError && <p className="text-xs text-rose-600">Could not save the acknowledgement. Please try again.</p>}
+    </div>
+  );
+}
 
 function Section({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -153,6 +212,9 @@ function AuditSections({ auditId, agentCode }: { auditId: number; agentCode?: st
       </Section>
       <Section label="Auditor feedback">
         {a.feedback ? <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{a.feedback}</p> : <None />}
+      </Section>
+      <Section label="Acknowledgement">
+        <AckPanel auditId={a.call_id} detail={a} agentCode={agentCode} />
       </Section>
       <Section label={`Parameters (${failed.length} missed)`}>
         <div className="divide-y rounded-lg border border-slate-200">
@@ -281,7 +343,7 @@ function FeedbackList({ agentCode, onOpen }: { agentCode?: string; onOpen: (s: D
   const [offset, setOffset] = useState(0);
   const q = useQuery({
     queryKey: ["agent-kpi", "audited", agentCode, offset],
-    queryFn: () => getData<{ total_calls: number; calls: Array<{ call_id: number; date: string; scenario: string | null; cq_pct: number; has_fatal: boolean }> }>(
+    queryFn: () => getData<{ total_calls: number; ack_available?: boolean; calls: Array<{ call_id: number; date: string; scenario: string | null; cq_pct: number; has_fatal: boolean; acknowledgement?: AckInfo | null }> }>(
       withAgent(`/api/agent/calls-review?limit=20&offset=${offset}&sort=date`, agentCode)),
   });
   if (q.isLoading) return <Loading />;
@@ -292,12 +354,15 @@ function FeedbackList({ agentCode, onOpen }: { agentCode?: string; onOpen: (s: D
       <p className="text-xs text-slate-500">{fmtNum(d.total_calls)} audited calls in the last 30 days</p>
       {d.calls.length === 0 ? <None /> : (
         <table className="w-full rounded-lg border text-xs">
-          <thead className="bg-slate-50 text-left text-slate-500"><tr><th className="px-3 py-2">Audited call</th><th className="px-3 py-2">Scenario</th><th className="px-3 py-2">CQ</th><th className="px-3 py-2">Fatal</th></tr></thead>
+          <thead className="bg-slate-50 text-left text-slate-500"><tr><th className="px-3 py-2">Audited call</th><th className="px-3 py-2">Scenario</th><th className="px-3 py-2">CQ</th><th className="px-3 py-2">Fatal</th><th className="px-3 py-2">Acknowledged</th></tr></thead>
           <tbody>{d.calls.map((c) => (
             <tr key={c.call_id} className="cursor-pointer border-t hover:bg-indigo-50/50" onClick={() => onOpen({ kind: "audit", auditId: Number(c.call_id) })}>
               <td className="px-3 py-2">{fmtDate(String(c.date))}</td><td className="px-3 py-2">{c.scenario ?? "—"}</td>
               <td className={`px-3 py-2 font-semibold ${c.cq_pct >= 90 ? "text-emerald-600" : c.cq_pct >= 70 ? "text-amber-600" : "text-rose-600"}`}>{fmtPct(c.cq_pct)}</td>
               <td className="px-3 py-2">{c.has_fatal ? <span className="text-rose-600">Yes</span> : "No"}</td>
+              <td className="px-3 py-2">{d.ack_available === false ? <span className="text-slate-400">—</span>
+                : c.acknowledgement ? <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 size={12} /> {fmtDate(c.acknowledgement.acknowledged_at)}</span>
+                : <span className="inline-flex items-center gap-1 text-amber-700"><Clock size={12} /> Pending</span>}</td>
             </tr>
           ))}</tbody>
         </table>

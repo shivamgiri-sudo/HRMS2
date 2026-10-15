@@ -62,13 +62,13 @@ export async function requireAgent(
       }
       const target = requested.toUpperCase();
       if (ownMasid && target === ownMasid) {
-        (req as AuthenticatedRequest & { agentCode: string }).agentCode = ownMasid;
+        Object.assign(req, { agentCode: ownMasid, agentIsSelf: true, agentEmployeeId: emp?.id ?? null });
         next();
         return;
       }
       if (await hasRoleForRequest(req.authUser, ...QUALITY_VIEW_ANY_AGENT_ROLES)) {
         logger.info(`[quality-view] user ${req.authUser.id} viewed quality data of agent ${target} (${req.method} ${req.originalUrl})`);
-        (req as AuthenticatedRequest & { agentCode: string }).agentCode = target;
+        Object.assign(req, { agentCode: target, agentIsSelf: false, agentEmployeeId: null });
         next();
         return;
       }
@@ -81,7 +81,7 @@ export async function requireAgent(
       res.status(403).json({ success: false, message: "Forbidden: no call-centre quality data is linked to your account" });
       return;
     }
-    (req as AuthenticatedRequest & { agentCode: string }).agentCode = ownMasid;
+    Object.assign(req, { agentCode: ownMasid, agentIsSelf: true, agentEmployeeId: emp?.id ?? null });
     next();
   } catch (err) {
     logger.error("requireAgent middleware error:", err);

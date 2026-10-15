@@ -32,6 +32,13 @@ import {
 } from "./agent-my-kpi.service.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import {
+  acknowledgeFeedback,
+  getAckMap,
+  getAckSummary,
+  AckNotFoundError,
+  AckUnavailableError,
+} from "./agent-feedback-ack.service.js";
 import { logger } from "../../logger.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { QualityAggregationService } from "./quality-aggregation.service.js";
@@ -104,10 +111,66 @@ qualityAggregationRouter.get(
 );
 
 // ─── My KPIs call-performance dashboard ─────────────────────────────────────
-type AgentReq = AuthenticatedRequest & { agentCode: string };
+type AgentReq = AuthenticatedRequest & { agentCode: string; agentIsSelf?: boolean; agentEmployeeId?: string | null };
 
 qualityAggregationRouter.get("/my-kpi", requireAgent, h(async (req: AgentReq, res) => {
-  res.json({ success: true, data: await getAgentMyKpi(req.agentCode, req.query.date) });
+  const data = await getAgentMyKpi(req.agentCode, req.query.date);
+  // Acknowledgement state is read live (the dashboard payload above is cached for 2 minutes).
+  const auditIds = [
+    ...data.recent_feedback.map((f) => f.audit_id),
+    ...data.recent_calls.map((c) => c.audit?.audit_id ?? 0),
+  ];
+  const [{ available, acks }, summary] = await Promise.all([
+    getAckMap(req.agentCode, auditIds),
+    getAckSummary(req.agentCode, 30),
+  ]);
+  res.json({
+    success: true,
+    data: {
+      ...data,
+      recent_feedback: data.recent_feedback.map((f) => ({ ...f, acknowledgement: acks.get(f.audit_id) ?? null })),
+      recent_calls: data.recent_calls.map((c) => (c.audit
+        ? { ...c, audit: { ...c.audit, acknowledgement: acks.get(c.audit.audit_id) ?? null } }
+        : c)),
+      feedback_ack: { ...summary, available, can_acknowledge: available && req.agentIsSelf === true },
+    },
+  });
+}));
+
+// ─── POST /api/agent/feedback/:auditId/ack ──────────────────────────────────
+/**
+ * The agent acknowledges one audit's feedback. Only the agent themself may do this — a QA/admin
+ * viewing the agent through ?agentCode= gets 403 (agentIsSelf is false) — and the audit must belong
+ * to the agent (checked in the service). Idempotent; rows are never edited or deleted.
+ */
+qualityAggregationRouter.post("/feedback/:auditId/ack", requireAgent, h(async (req: AgentReq, res) => {
+  if (req.agentIsSelf !== true) {
+    return res.status(403).json({ success: false, message: "Only the agent can acknowledge their own feedback" });
+  }
+  const auditId = Number(req.params.auditId);
+  if (!Number.isInteger(auditId) || auditId <= 0) {
+    return res.status(400).json({ success: false, message: "Invalid audit id" });
+  }
+  const rawComment = (req.body as { comment?: unknown } | undefined)?.comment;
+  if (rawComment !== undefined && rawComment !== null && typeof rawComment !== "string") {
+    return res.status(400).json({ success: false, message: "comment must be text" });
+  }
+  try {
+    const result = await acknowledgeFeedback({
+      masid: req.agentCode,
+      auditId,
+      userId: req.authUser!.id,
+      employeeId: req.agentEmployeeId ?? null,
+      comment: typeof rawComment === "string" ? rawComment : null,
+      ip: req.ip ?? null,
+    });
+    logger.info(`[feedback-ack] agent ${req.agentCode} (user ${req.authUser!.id}) acknowledged audit ${auditId}${result.created ? "" : " (already acknowledged)"}`);
+    res.status(result.created ? 201 : 200).json({ success: true, data: { audit_id: auditId, already_acknowledged: !result.created, ...result.ack } });
+  } catch (e) {
+    if (e instanceof AckNotFoundError) return res.status(404).json({ success: false, message: e.message });
+    if (e instanceof AckUnavailableError) return res.status(503).json({ success: false, message: e.message });
+    throw e;
+  }
 }));
 
 qualityAggregationRouter.get("/my-calls", requireAgent, h(async (req: AgentReq, res) => {
@@ -322,10 +385,16 @@ qualityAggregationRouter.get(
 
       limit = Math.min(limit, 50); // Safety cap
       const result = await qualityService.getCallsReview(employeeCode, limit, offset, sort);
+      // Attached after the (cached) review list, so a fresh acknowledgement shows immediately.
+      const { available, acks } = await getAckMap(employeeCode, result.calls.map((c) => Number(c.call_id)));
 
       res.status(200).json({
         success: true,
-        data: result,
+        data: {
+          ...result,
+          ack_available: available,
+          calls: result.calls.map((c) => ({ ...c, acknowledgement: acks.get(Number(c.call_id)) ?? null })),
+        },
       });
     } catch (err) {
       logger.error("Calls Review endpoint error:", err);
@@ -386,10 +455,16 @@ qualityAggregationRouter.get(
       logger.info(`Call Detail request: callId=${callId}, agent=${employeeCode}`);
 
       const result = await qualityService.getCallDetail(callId, employeeCode);
+      const { available, acks } = await getAckMap(employeeCode, [Number(result.call_id)]);
 
       res.status(200).json({
         success: true,
-        data: result,
+        data: {
+          ...result,
+          acknowledgement: acks.get(Number(result.call_id)) ?? null,
+          ack_available: available,
+          can_acknowledge: available && (req as AgentReq).agentIsSelf === true,
+        },
       });
     } catch (err: any) {
       logger.error("Call Detail endpoint error:", err);
