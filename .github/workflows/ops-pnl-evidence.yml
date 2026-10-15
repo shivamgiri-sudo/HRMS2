@@ -60,6 +60,10 @@ on:
         description: "Set to 'yes' to print per-branch component P&L (revenue, agent, DSC, BMC, GRN, OP) and the non-MAS (DialDesk / I-Spark / IDC) leak check for 'periods' (read-only)."
         required: false
         default: ""
+      dbbillcm:
+        description: "A db_bill cost master id: prints its master row(s) and the GRN lines booked to it by month (read-only, no person data)."
+        required: false
+        default: ""
       stmttiming:
         description: "Set to 'yes' to time every P&L Statement dependency (cold and warm) and the whole Statement for 'periods' (read-only)."
         required: false
@@ -132,6 +136,7 @@ jobs:
           INPUT_STATEMENTCHECK: ${{ inputs.statementcheck }}
           INPUT_PROCBRANCH: ${{ inputs.procbranch }}
           INPUT_STMTTIMING: ${{ inputs.stmttiming }}
+          INPUT_DBBILLCM: ${{ inputs.dbbillcm }}
           INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
           INPUT_DIAG: ${{ inputs.diag }}
           INPUT_BRANCHPLAN: ${{ inputs.branchplan }}
@@ -145,7 +150,9 @@ jobs:
           INPUT_BOOTDIAG: ${{ inputs.bootdiag }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_STMTTIMING" = "yes" ]; then
+          if [ -n "$INPUT_DBBILLCM" ]; then
+            npx tsx scripts/dbbill-cost-master-lookup.ts "$INPUT_DBBILLCM"
+          elif [ "$INPUT_STMTTIMING" = "yes" ]; then
             npx tsx scripts/pnl-statement-timing.ts $INPUT_PERIODS
           elif [[ "$INPUT_PROCBRANCH" == search:* ]]; then
             npx tsx scripts/pnl-process-branch-fix.ts "$INPUT_PROCBRANCH"
