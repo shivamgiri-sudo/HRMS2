@@ -18,8 +18,19 @@ const first = `${month}-01`;
 const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPacket[]>(sql, p))[0] as RowDataPacket[];
 const all: any = { mode: "all", ids: [] };
 const scope: any = { companyId: "ops", isSuperAdmin: true, branchScope: all, processScope: all, departmentScope: all, costCentreScope: all, canViewAllEmployees: true, canViewSensitiveFields: false };
-const run = async (f: Record<string, unknown>) =>
-  ((await attendanceRegisterMonthly({ month, employeeStatus: "all", ...f } as any, scope, { limit: 3000, offset: 0, includeTotal: true, mode: "preview" } as any)) as any).rows as any[];
+// Small sequential pages: the register runs per-employee queries concurrently, and one 3000-row call
+// is enough to trip the pool's circuit breaker on the live DB.
+const PAGE = 200;
+const run = async (f: Record<string, unknown>, maxPages = 8) => {
+  const out: any[] = [];
+  for (let i = 0; i < maxPages; i++) {
+    const r = (await attendanceRegisterMonthly({ month, employeeStatus: "all", ...f } as any, scope, { limit: PAGE, offset: i * PAGE, includeTotal: true, mode: "preview" } as any)) as any;
+    out.push(...r.rows);
+    if (r.rows.length < PAGE) break;
+    await new Promise((res) => setTimeout(res, 1500));
+  }
+  return out;
+};
 
 (async () => {
   let bad = 0;
@@ -41,17 +52,17 @@ const run = async (f: Record<string, unknown>) =>
 
   const [lob] = await q(`SELECT lob_id, COUNT(*) n FROM employees WHERE active_status = 1 AND lob_id IS NOT NULL GROUP BY lob_id ORDER BY n DESC LIMIT 1`);
   if (lob) {
-    const r = await run({ lobId: lob.lob_id });
+    const r = await run({ lobId: lob.lob_id }, 2);
     const wrong = r.length ? await q(`SELECT COUNT(*) n FROM employees WHERE id IN (${r.map(() => "?").join(",")}) AND (lob_id <> ? OR lob_id IS NULL)`, [...r.map((x) => x.employee_id), lob.lob_id]) : [{ n: 0 }];
     console.log(`LOB ${lob.lob_id}: ${r.length} rows (of ${rows.length}), off-LOB rows: ${wrong[0].n}`);
-    if (wrong[0].n > 0 || r.length > rows.length) bad++;
+    if (wrong[0].n > 0 || r.length > rows.length && rows.length < PAGE * 8) bad++;
   }
   const [mgr] = await q(`SELECT reporting_manager_id, COUNT(*) n FROM employees WHERE active_status = 1 AND reporting_manager_id IS NOT NULL GROUP BY reporting_manager_id ORDER BY n DESC LIMIT 1`);
   if (mgr) {
-    const r = await run({ managerId: mgr.reporting_manager_id });
+    const r = await run({ managerId: mgr.reporting_manager_id }, 2);
     const wrong = r.length ? await q(`SELECT COUNT(*) n FROM employees WHERE id IN (${r.map(() => "?").join(",")}) AND reporting_manager_id <> ? AND (manager_id IS NULL OR manager_id <> ?)`, [...r.map((x) => x.employee_id), mgr.reporting_manager_id, mgr.reporting_manager_id]) : [{ n: 0 }];
     console.log(`manager ${mgr.reporting_manager_id}: ${r.length} rows, off-manager rows: ${wrong[0].n}`);
-    if (wrong[0].n > 0 || r.length > rows.length) bad++;
+    if (wrong[0].n > 0 || r.length > rows.length && rows.length < PAGE * 8) bad++;
   }
 
   const sa: any = { roles: ["super_admin"], assignments: [] };
