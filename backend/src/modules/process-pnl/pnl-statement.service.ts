@@ -823,6 +823,10 @@ export const defaultDependencies: StatementDependencies = {
   // Must be listed here: an injected getInvoicedRevenue without it reads as "test double, no
   // forecasts" (getStatement), and these defaults inject getInvoicedRevenue.
   getForecastRevenue: (period) => getForecastRevenueActuals(period),
+  // Same reason: getStatement treats an injected getIndirectCost without this reader as "test double,
+  // no open-budget reserve", and these defaults inject getIndirectCost. Without this line the
+  // Statement never carried the unspent headroom of open budget lines in production.
+  getOpenBudgetReserve: (period) => getOpenBudgetReserveActuals(period),
   getSeatRevenue: (period) => getSeatRevenueActuals(period),
   /*
    * Actual payroll first; the recomputed snapshot only if payroll has nothing for the period.
