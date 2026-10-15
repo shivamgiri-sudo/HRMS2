@@ -1,0 +1,36 @@
+name: Ops Address Reassess Dry-Run (manual, read-only)
+
+# Applies the two-signal address assessment to the submissions waiting for HR and prints the outcome counts.
+# Writes nothing.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-address-reassess-dryrun-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  stats:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Stats
+        working-directory: backend
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: npx tsx scripts/address-reassess-dryrun.ts
