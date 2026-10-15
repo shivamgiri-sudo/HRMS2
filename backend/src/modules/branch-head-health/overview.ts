@@ -31,7 +31,7 @@ export async function buildOverview(
   if (!rep) {
     const msg = "No data for this branch";
     return {
-      branch, date, status: "healthy", attention: [], positives: [],
+      branch, date, status: "no_data", attention: [], positives: [],
       people: empty(date, msg), attendance: empty(date, msg), hiring: empty(date, msg),
       finance: empty(date, msg), leaderboard: empty(date, msg),
     };

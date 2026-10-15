@@ -10,11 +10,11 @@ import {
 } from "../../../shared/dashboardAccessRegistry.js";
 
 describe("dashboard access registry", () => {
-  it("defines all thirteen production dashboards with unique routes and page codes", () => {
+  it("defines all fourteen production dashboards with unique routes (BRANCH_HEAD_DASHBOARD shares the MANAGEMENT_DASHBOARD page code)", () => {
     const definitions = Object.values(DASHBOARD_ACCESS_REGISTRY);
 
-    expect(definitions).toHaveLength(13);
-    expect(new Set(definitions.map((item) => item.route)).size).toBe(13);
+    expect(definitions).toHaveLength(14);
+    expect(new Set(definitions.map((item) => item.route)).size).toBe(14);
     expect(new Set(definitions.map((item) => item.pageCode)).size).toBe(13);
   });
 
@@ -48,7 +48,7 @@ describe("dashboard access registry", () => {
       branch_admin: ["EMPLOYEE_SELF_DASHBOARD"],
       interviewer: ["EMPLOYEE_SELF_DASHBOARD"],
       super_admin: Object.keys(DASHBOARD_ACCESS_REGISTRY),
-      ceo: ["CEO_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
+      ceo: ["CEO_DASHBOARD", "BRANCH_HEAD_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
       hr: ["HR_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "RECRUITER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
       wfm: ["WFM_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       payroll: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
@@ -62,7 +62,7 @@ describe("dashboard access registry", () => {
       accounts_head: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       // 2026-09-16 (68d08723a): owner request — branch heads see their branch's WFM
       // dashboards, not just the individual sub-pages they already held.
-      branch_head: ["WFM_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
+      branch_head: ["BRANCH_HEAD_DASHBOARD", "WFM_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
       // 2026-08-22: manager had no WFM_DASHBOARD grant at all and a deactivated
       // QUALITY_DASHBOARD grant (leftover from the 2026-07-25 RBAC cleanup) — neither was
       // deliberate, both fixed to match the parity manager already had on OPERATIONS_DASHBOARD.

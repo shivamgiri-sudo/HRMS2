@@ -10,6 +10,7 @@ export type RoleDashboardVariant =
   | "wfm_attendance"
   | "hr"
   | "ceo"
+  | "branch_head"
   | "payroll"
   | "manager"
   | "super_admin"
@@ -33,6 +34,7 @@ export const ROLE_VARIANT_MAP: Readonly<Record<RoleDashboardVariant, readonly st
 const RESOLUTION_PRIORITY: readonly RoleDashboardVariant[] = [
   "super_admin",
   "ceo",
+  "branch_head",
   "hr",
   "wfm_attendance",
   "wfm",

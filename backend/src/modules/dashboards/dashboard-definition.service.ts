@@ -159,6 +159,8 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // layout in src/pages/dashboards reads metrics.tat or metrics.dpdp — so this removes a
   // query per request as well as a false zero. `nm` stays: candidate_name_match_summary
   // holds real rows (7), just few. Re-add the day their sources start writing.
+  // Branch Health page has its own /api/branch-head-health payload; summary bundle stays minimal.
+  BRANCH_HEAD_DASHBOARD: ["hc", "att"],
   HR_DASHBOARD: [
     "onb", "resign", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
     "hc", "att", "docCompliance", "training", "leaveApprovals", "hiringAlert",

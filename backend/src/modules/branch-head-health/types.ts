@@ -1,4 +1,6 @@
 import type { HeadBranch } from "./scope.js";
+import type { PillarScore } from "./score.js";
+import type { ProcessGroups } from "./processes.js";
 
 export type SectionStatus = "ok" | "empty" | "error";
 
@@ -18,7 +20,7 @@ export interface LeaderboardRow {
 export interface BranchOverview {
   branch: HeadBranch;
   date: string;
-  status: "healthy" | "watch" | "critical";
+  status: "healthy" | "watch" | "critical" | "no_data";
   attention: Array<{ label: string; detail: string; severity: "critical" | "warning" }>;
   positives: Array<{ label: string; detail: string }>;
   people: SectionResult<unknown>;
@@ -26,4 +28,15 @@ export interface BranchOverview {
   hiring: SectionResult<unknown>;
   finance: SectionResult<unknown>;
   leaderboard: SectionResult<LeaderboardRow[]>;
+}
+
+export interface BranchHeadHealthPayload {
+  scope: { viaHomeFallback: boolean; orgWide: boolean; emptyReason: string | null };
+  branches: Array<{
+    branch: HeadBranch;
+    overview: BranchOverview;
+    score: { score: number; pillars: PillarScore[]; excluded: string[] } | null;
+  }>;
+  processes: ProcessGroups;
+  generatedAt: string;
 }

@@ -59,6 +59,7 @@ describe("buildOverview", () => {
     fetchAll.mockResolvedValue({ branchId: null });
     const o = await buildOverview(branch, "2026-10-15");
     expect(build).not.toHaveBeenCalled();
+    expect(o.status).toBe("no_data");
     expect(o.people.status).toBe("empty");
     expect(o.leaderboard.status).toBe("empty");
   });
