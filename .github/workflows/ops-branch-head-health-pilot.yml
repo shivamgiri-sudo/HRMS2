@@ -1,0 +1,107 @@
+# Enables / disables the Branch Head Health page on the production host for a NAMED pilot.
+#
+# Sets BRANCH_HEAD_HEALTH_ENABLED and BRANCH_HEAD_HEALTH_PILOT_USERS in backend/.env, restarts the API
+# process and waits for /api/health. Anyone not on the list keeps their current dashboard (the API answers
+# 404 for them and the frontend falls back). Disable switches the feature off for everyone and clears the
+# list. backend/.env is backed up first and restored automatically if the API does not come back healthy.
+#
+# Runs on the self-hosted runner because backend/.env and pm2 exist only on 192.168.11.225.
+# See backend/src/modules/branch-head-health/pilot.ts for the matching rules (user id, employee code or
+# email, case-insensitive; super_admin always passes).
+
+name: Branch head health page pilot (enable/disable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: "enable or disable the Branch Head Health page"
+        required: true
+        type: choice
+        default: enable
+        options:
+          - enable
+          - disable
+      users:
+        description: "Pilot users: comma-separated employee codes / emails / user ids (required for enable)"
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: branch-head-health-pilot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  flag:
+    name: Set the Branch Head Health pilot on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - name: Set the flags in backend/.env
+        id: env
+        shell: bash
+        env:
+          STATE: ${{ inputs.state }}
+          USERS: ${{ inputs.users }}
+        run: |
+          set -euo pipefail
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          test -f "$ENV_FILE" || { echo "::error::$ENV_FILE not found."; exit 1; }
+          if [[ "$STATE" == "enable" ]]; then
+            ENABLED=true
+            # Entries are matched exactly; allow only characters that appear in codes, emails and uuids.
+            if [[ -z "${USERS// /}" ]]; then echo "::error::enable needs at least one pilot user (an empty list would open it to every branch head)."; exit 1; fi
+            if [[ ! "$USERS" =~ ^[A-Za-z0-9_.@+,\ -]+$ ]]; then echo "::error::users contains characters outside A-Za-z0-9 _ . @ + , - and space."; exit 1; fi
+            LIST="$(printf '%s' "$USERS" | tr -d ' ')"
+          else
+            ENABLED=false
+            LIST=""
+          fi
+          BACKUP="${ENV_FILE}.bak-bh-pilot-$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a "$ENV_FILE" "$BACKUP"
+          echo "Backed up to $BACKUP"
+          if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then printf '\n' >> "$ENV_FILE"; fi
+          sed -i -E '/^BRANCH_HEAD_HEALTH_ENABLED=/d;/^BRANCH_HEAD_HEALTH_PILOT_USERS=/d' "$ENV_FILE"
+          printf 'BRANCH_HEAD_HEALTH_ENABLED=%s\n' "$ENABLED" >> "$ENV_FILE"
+          printf 'BRANCH_HEAD_HEALTH_PILOT_USERS=%s\n' "$LIST" >> "$ENV_FILE"
+          for KEY in BRANCH_HEAD_HEALTH_ENABLED BRANCH_HEAD_HEALTH_PILOT_USERS; do
+            COUNT="$(grep -cE "^${KEY}=" "$ENV_FILE" || true)"
+            if [[ "$COUNT" != "1" ]]; then
+              echo "::error::Expected exactly one ${KEY} line, found ${COUNT}. Restoring the backup."
+              cp -a "$BACKUP" "$ENV_FILE"
+              exit 1
+            fi
+          done
+          echo "$ENV_FILE now sets:"
+          grep -E '^BRANCH_HEAD_HEALTH_(ENABLED|PILOT_USERS)=' "$ENV_FILE"
+          echo "backup=${BACKUP}" >> "$GITHUB_OUTPUT"
+
+      - name: Restart the API process and wait for health
+        shell: bash
+        env:
+          BACKUP: ${{ steps.env.outputs.backup }}
+        run: |
+          set -euo pipefail
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          pm2 restart hrms2-backend --update-env --no-color
+          healthy=0
+          for attempt in $(seq 1 36); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/api/health || true)"
+            echo "health attempt ${attempt}/36: ${code}"
+            if [[ "$code" == "200" ]]; then healthy=1; break; fi
+            sleep 5
+          done
+          if [[ "$healthy" != "1" ]]; then
+            echo "::error::API not healthy after restart. Restoring ${BACKUP} and restarting."
+            cp -a "$BACKUP" "$ENV_FILE"
+            pm2 restart hrms2-backend --update-env --no-color
+            exit 1
+          fi
+          pm2 save --no-color
+          pm2 status hrms2-backend --no-color

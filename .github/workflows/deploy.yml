@@ -149,6 +149,11 @@ jobs:
         timeout-minutes: 10
 
       - name: Build frontend
+        # Compile-time half of the Branch Head Health pilot: the variant can resolve, and the page then asks
+        # /api/branch-head-health/enabled (flag + role + pilot list on the server) before showing. Anyone the
+        # server does not enable falls back to their previous dashboard.
+        env:
+          VITE_BRANCH_HEAD_HEALTH_ENABLED: "true"
         run: npm run build
 
       - name: Build backend
