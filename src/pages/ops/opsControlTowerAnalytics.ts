@@ -104,7 +104,10 @@ export function rowLinks(block: DetailBlockKey, r: { employeeId: string; candida
   // to the same tables the candidate flow does. ?step= opens the right tab.
   const fix = (step: string, label: string) => links.unshift({ label, href: `/employees/${r.employeeId}/complete-profile?step=${step}`, primary: true });
   if (block === "account-details-missing") fix("bank", "Enter bank details");
-  if (block === "penny-drop-missing") fix("bank", "Fix bank / penny drop");
+  if (block === "penny-drop-missing") {
+    fix("bank", "Fix bank / penny drop");
+    links.push({ label: "Manual bank review queue", href: "/payroll/payment-center" });
+  }
   if (block === "docs-pending") { fix("documents", "Upload documents"); links.push({ label: "Joining docs", href: `/employees/${r.employeeId}/joining-documents` }); }
   if (block === "digilocker-pending" || block === "bgv-pending") fix("bgv", "Verification (DigiLocker / BGV)");
   if (block === "esign-pending") links.push({ label: "Joining docs", href: `/employees/${r.employeeId}/joining-documents` });

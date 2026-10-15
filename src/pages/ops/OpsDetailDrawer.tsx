@@ -36,6 +36,14 @@ function rowNote(block: DetailBlockKey, row: Row): string {
   switch (block) {
     case "attendance-mismatch": return guideFor(String((row as unknown as AttendanceMismatchDetailRow).issueType ?? "")).label;
     case "fnf-pending": { const r = row as unknown as FnfDetailRow; return `${r.status} · ₹${Number(r.netPayable ?? 0).toLocaleString("en-IN")}`; }
+    case "penny-drop-missing": {
+      // The raw value is the last penny-drop attempt; say what it means and who holds the next step.
+      const st = String((row as unknown as { status?: string }).status ?? "").toLowerCase();
+      if (st === "not_started" || st === "") return "Bank account not submitted yet - ask the candidate for cheque / passbook";
+      if (st === "name_mismatch") return "Bank returned a different account-holder name - waiting for manual bank review";
+      if (st === "failed") return "Penny drop failed - account number / IFSC needs correcting";
+      return "Penny drop not confirmed - waiting for manual bank review";
+    }
     case "esign-pending": return `Day 3 was ${formatDate((row as unknown as SlaDetailRow).dueDateMs)}`;
     case "appointment-letter": return `Day 7 was ${formatDate((row as unknown as SlaDetailRow).dueDateMs)}`;
     default: return String((row as unknown as NocDetailRow).status ?? "").replace(/_/g, " ");
