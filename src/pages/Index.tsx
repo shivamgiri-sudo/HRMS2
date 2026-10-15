@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
-  BarChart3, Briefcase, Crown, GraduationCap, Receipt, Server, Shield, ShieldCheck, User, UserPlus, Users,
+  Activity, BarChart3, Briefcase, Crown, GraduationCap, Receipt, Server, Shield, ShieldCheck, User, UserPlus, Users,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,6 +18,7 @@ export { resolveRoleDashboardVariant } from "./dashboards/roleDashboardAccess";
 const VARIANT_META: Record<RoleDashboardVariant, { label: string; icon: React.ElementType }> = {
   super_admin:    { label: "Super Admin",  icon: Shield },
   ceo:            { label: "CEO",          icon: Crown },
+  branch_head:    { label: "Branch Health", icon: Activity },
   hr:             { label: "HR",           icon: Users },
   wfm:            { label: "WFM",          icon: BarChart3 },
   wfm_attendance: { label: "WFM Attend.",  icon: BarChart3 },
@@ -30,12 +32,13 @@ const VARIANT_META: Record<RoleDashboardVariant, { label: string; icon: React.El
 };
 
 const ALL_VARIANTS: RoleDashboardVariant[] = [
-  "super_admin", "ceo", "hr", "wfm", "wfm_attendance", "payroll",
+  "super_admin", "ceo", "branch_head", "hr", "wfm", "wfm_attendance", "payroll",
   "quality", "operations", "recruiter", "it_manager", "manager", "employee",
 ];
 
 export default function Index() {
   const { data, isLoading } = useUserRole();
+  const navigate = useNavigate();
   const roleKeys = data?.roleKeys ?? [];
 
   const accessible = ALL_VARIANTS.filter((v) => canAccessRoleDashboard(v, roleKeys));
@@ -69,7 +72,7 @@ export default function Index() {
           <button
             key={variant}
             type="button"
-            onClick={() => setActive(variant)}
+            onClick={() => (variant === "branch_head" ? navigate("/branch-head/dashboard") : setActive(variant))}
             className={[
               "flex shrink-0 items-center gap-2 border-b-[3px] px-5 py-3.5 text-[12px] font-semibold transition-all",
               isActive

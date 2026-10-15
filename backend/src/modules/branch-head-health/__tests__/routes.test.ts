@@ -46,7 +46,7 @@ vi.mock("../dataHealth.js", () => ({ buildDataHealth: (...a: unknown[]) => build
 const today = "2026-10-15";
 vi.mock("../../../shared/istDate.js", () => ({ getCurrentDateIST: () => "2026-10-15" }));
 
-import { branchHeadHealthRouter } from "../routes.js";
+import { branchHeadHealthRouter, clearBranchHeadHealthCaches } from "../routes.js";
 
 const b1 = { branchId: "b1", branchCode: "C1", branchName: "One" };
 const b2 = { branchId: "b2", branchCode: "C2", branchName: "Two" };
@@ -68,6 +68,7 @@ beforeEach(() => {
   computeScore.mockReturnValue({ score: 80, pillars: [], excluded: [] });
   listBranchProcesses.mockResolvedValue({ active: [], unmapped: [] });
   writeSnapshot.mockResolvedValue(undefined);
+  clearBranchHeadHealthCaches();
   buildOpsSections.mockReset();
   buildDataHealth.mockReset();
   buildOpsSections.mockResolvedValue({ operations: section, quality: section, callmaster: section });
@@ -205,5 +206,25 @@ describe("branch-head-health routes", () => {
     const o = r.body.data.branches[0].overview;
     for (const k of ["operations", "quality", "callmaster"]) expect(o[k].status).toBe("error");
     expect(r.body.data.dataHealth.status).toBe("error");
+  });
+
+  it("caches loadReport and ops sections per branch+date within the TTL", async () => {
+    await request(app()).get("/api/branch-head-health/overview?date=2026-10-14");
+    await request(app()).get("/api/branch-head-health/overview?date=2026-10-14");
+    expect(loadReport).toHaveBeenCalledTimes(2); // b1 and b2 once each
+    expect(buildOpsSections).toHaveBeenCalledTimes(2);
+    await request(app()).get("/api/branch-head-health/overview?date=2026-10-13");
+    expect(loadReport).toHaveBeenCalledTimes(4);
+  });
+  it("does not cache failed ops sections", async () => {
+    buildOpsSections.mockResolvedValue({ operations: { status: "error", data: null, asOf: today }, quality: section, callmaster: section });
+    await request(app()).get("/api/branch-head-health/overview?date=2026-10-14&branchIds=b1");
+    await request(app()).get("/api/branch-head-health/overview?date=2026-10-14&branchIds=b1");
+    expect(buildOpsSections).toHaveBeenCalledTimes(2);
+  });
+  it("all requested branchIds out of scope gives a clear emptyReason", async () => {
+    const r = await request(app()).get("/api/branch-head-health/overview?branchIds=zzz");
+    expect(r.body.data.branches).toEqual([]);
+    expect(r.body.data.scope.emptyReason).toBe("No branch in your scope matches the request");
   });
 });

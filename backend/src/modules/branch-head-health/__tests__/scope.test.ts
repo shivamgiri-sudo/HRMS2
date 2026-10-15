@@ -87,4 +87,11 @@ describe("resolveHeadBranches", () => {
     expect(sql).toContain("active_status = 1");
     expect(sql).toContain("close_date IS NULL");
   });
+
+  it("DashboardScopeConfigurationError yields an empty scope with a clear reason", async () => {
+    const e = new Error("no scope"); e.name = "DashboardScopeConfigurationError";
+    resolveDashboardScope.mockRejectedValue(e);
+    const s = await resolveHeadBranches("u1");
+    expect(s).toEqual({ branches: [], viaHomeFallback: false, orgWide: false, emptyReason: "Your role has no branch scope configured" });
+  });
 });

@@ -27,9 +27,9 @@ beforeEach(() => {
   [query, getInboundProjects, getKPIs, getQualityTrend, getCXParameters, getFatalAgentSummary].forEach((m) => m.mockReset());
   query.mockResolvedValue([[]]);
   getInboundProjects.mockResolvedValue([]);
-  getKPIs.mockResolvedValue({ inbound: { total: 5 } });
+  getKPIs.mockResolvedValue({ inbound: { total: 5, avg_quality: 80, fatal_score: 1, avg_cx: 70, avg_compliance: 75 }, outbound: { total: 2, conversion: 10 }, active_agents: 4 });
   getQualityTrend.mockResolvedValue([{ period: "2026-10-01", quality: 80, calls: 3, fatal: 0 }]);
-  getCXParameters.mockResolvedValue([{ key: "x", value: 1 }]);
+  getCXParameters.mockResolvedValue({ params: { express_empathy: 90.5 }, definitions: [{ key: "express_empathy", label: "Empathy Expressed", column: "express_empathy" }] });
   getFatalAgentSummary.mockResolvedValue([]);
 });
 
@@ -150,5 +150,20 @@ describe("buildOpsSections", () => {
     expect(r.operations.status).toBe("error");
     expect(r.quality.status).toBe("error");
     expect(r.callmaster.status).toBe("ok");
+  });
+
+  it("a hung callmaster section times out as error without failing the others", async () => {
+    vi.useFakeTimers();
+    try {
+      getInboundProjects.mockResolvedValue([{ key: "a", processId: "p1", clientId: "409" }]);
+      getKPIs.mockReturnValue(new Promise(() => {}));
+      const p = buildOpsSections([proc("p1")], range);
+      await vi.advanceTimersByTimeAsync(20_001);
+      const r = await p;
+      expect(r.callmaster).toMatchObject({ status: "error", message: "Timed out" });
+      expect(r.operations.status).toBe("ok");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

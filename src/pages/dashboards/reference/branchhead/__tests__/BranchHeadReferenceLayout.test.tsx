@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { BranchHeadHealthPayload } from "../../../../../../backend/src/modules/branch-head-health/types";
+import type { BranchHeadHealthPayload, SectionResult } from "../../../../../../backend/src/modules/branch-head-health/types";
 import type { BranchProcess } from "../../../../../../backend/src/modules/branch-head-health/processes";
 import { BranchHeadReferenceLayout } from "../BranchHeadReferenceLayout";
 import { DrilldownTable, defaultDrillBranch, drillMetricFor } from "../ProcessCoveragePanel";
@@ -10,16 +10,17 @@ import { branchHeadRoute } from "../../../../../config/routes/branchHeadRoute";
 
 vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn() } }));
 
-const ok = (data: unknown) => ({ status: "ok" as const, data, asOf: "2026-10-15" });
+const ok = (data: unknown): SectionResult<any> => ({ status: "ok", data, asOf: "2026-10-15" });
+type Row = BranchHeadHealthPayload["branches"][number];
 const proc = (o: Partial<BranchProcess>): BranchProcess => ({
   processId: "p1", processCode: "P1", processName: "Alpha", costCentres: ["CC1"], viaLink: false,
   mandatedSeats: 10, headcount: 8, tier: "full", latestMetricDate: "2026-10-14", billingMirror: false, branchIds: ["b1"], ...o,
 });
-const branch = (id: string, name: string, status: "healthy" | "watch" | "critical" | "no_data" = "healthy") => ({
+const branch = (id: string, name: string, status: "healthy" | "watch" | "critical" | "no_data" = "healthy"): Row => ({
   branch: { branchId: id, branchCode: id, branchName: name },
   overview: {
     branch: { branchId: id, branchCode: id, branchName: name }, date: "2026-10-15", status,
-    attention: [{ label: "Late arrivals", detail: "12 late today", severity: "warning" as const }],
+    attention: [{ label: "Late arrivals", detail: "12 late today", severity: "warning" }],
     positives: [{ label: "Hiring on track", detail: "3 selected" }],
     people: ok({ totalActive: 120 }), attendance: ok({ present: 90 }), hiring: ok({ openPositions: 4 }),
     finance: ok({ opPct: 12 }), leaderboard: ok([{ manager: "Secret Manager", late: 5, shrinkagePct: null }]),
@@ -149,11 +150,18 @@ describe("BranchHeadReferenceLayout", () => {
     b.overview.operations = ok([{ processCode: "P1", processName: "Alpha Ops", tier: "full", metrics: { AHT: 300, INBOUND_SL_PCT: null, QA_QUALITY_PCT: 71.5 }, latestDate: "2026-09-01", stale: true }]);
     b.overview.quality = ok([{ processCode: "P1", processName: "Alpha Q", tier: "full", QA_QUALITY_PCT: 71.5, latestDate: "2026-09-01", stale: true }]);
     b.overview.callmaster = ok({
-      kpis: ok({ totalCalls: 100 }), qualityTrend: ok([{ date: "2026-10-01", score: 80, agent: "Zed Agent" }]),
-      cx: ok([{ parameter: "Empathy", score: 90 }]), fatal: ok({ totalFatalCalls: 7, agentsWithFatals: 3, truncated: true }),
+      kpis: ok({
+        inbound: { total: 100, avg_quality: 81.2, fatal_score: 3.5, avg_cx: 77, avg_compliance: 88 },
+        outbound: { total: 40, conversion: 12.5, ob_quality: 70, happiness_index: "Medium" },
+        active_agents: 9,
+      }),
+      qualityTrend: ok([{ period: "2026-10-01", quality: 80, calls: 3, fatal: 0, agent: "Zed Agent" }]),
+      cx: ok({ params: { express_empathy: 90.5, call_identified_by_name: null, active_listening: 75 },
+        definitions: [{ key: "express_empathy", label: "Empathy Expressed", column: "express_empathy" }, { key: "active_listening", label: "Active Listening", column: "active_listening" }] }),
+      fatal: ok({ totalFatalCalls: 7, agentsWithFatals: 3, truncated: true }),
     });
     const out = html(payload({ branches: [b] }));
-    for (const t of ["Alpha Ops", "Alpha Q", "Stale", "Sale conversion %", "Total fatal calls", "Agents with fatals", "Empathy",
+    for (const t of ["Alpha Ops", "Alpha Q", "Stale", "Sale conversion %", "Total fatal calls", "Agents with fatals", "Empathy Expressed", "90.5", "Active Listening", "Avg quality", "81.2", "Conversion", "12.5", "Inbound", "Outbound",
       "Showing the most recent 5,000 audit rows - counts are partial"]) expect(out).toContain(t);
     expect(out).not.toContain("Zed Agent");
   });
@@ -164,5 +172,20 @@ describe("BranchHeadReferenceLayout", () => {
     const out = html(payload({ branches: [b] }));
     expect(out).toContain("No operational metrics for this branch");
     expect(out).toContain("No Callmaster client is mapped to this branch");
+  });
+
+  it("hero shows the pillar breakdown and the renormalisation note as text", () => {
+    const b = branch("b1", "Kolkata");
+    b.score = { score: 82, pillars: [{ key: "attendance", weight: 25, score: 90 }, { key: "people", weight: 20, score: 70 }] as any, excluded: ["finance", "hiring"] };
+    const out = html(payload({ branches: [b] }));
+    expect(out).toContain("attendance");
+    expect(out).toContain("90/100");
+    expect(out).toContain("weight 25");
+    expect(out).toContain("Not scored (no data): finance, hiring - remaining weights renormalised");
+  });
+  it("hero omits the not-scored line when nothing is excluded", () => {
+    const b = branch("b1", "Kolkata");
+    b.score = { score: 82, pillars: [{ key: "attendance", weight: 25, score: 90 }] as any, excluded: [] };
+    expect(html(payload({ branches: [b] }))).not.toContain("Not scored");
   });
 });

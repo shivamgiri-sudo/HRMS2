@@ -63,19 +63,43 @@ export function CallmasterPanel({ section }: { section?: SectionResult<unknown> 
     body = <p className="flex items-center gap-2 text-[13px] text-slate-700"><Inbox className="h-4 w-4" aria-hidden="true" />No Callmaster client is mapped to this branch&apos;s processes</p>;
   } else {
     const p = section.data as Parts;
-    const kpis = p.kpis?.status === "ok" ? scalars(p.kpis.data) : [];
+    const kd = p.kpis?.status === "ok" && p.kpis.data && typeof p.kpis.data === "object" ? (p.kpis.data as Record<string, unknown>) : {};
+    const groups: Array<[string, Array<[string, unknown]>]> = [
+      ["Inbound", scalars(kd.inbound)],
+      ["Outbound", scalars(kd.outbound)],
+    ];
+    const hasKpis = groups.some(([, f]) => f.length > 0);
+    const cxd = p.cx?.status === "ok" && p.cx.data && typeof p.cx.data === "object" ? (p.cx.data as { params?: Record<string, unknown>; definitions?: Array<{ key: string; label?: string }> }) : null;
+    const cxRows = Object.entries(cxd?.params ?? {})
+      .filter(([, v]) => typeof v === "number")
+      .map(([k, v]) => [cxd?.definitions?.find((d) => d.key === k)?.label ?? label(k), v as number] as const);
     const fatal = p.fatal?.status === "ok" ? p.fatal.data : null;
     body = (
       <div>
         <Sub title="KPIs" part={p.kpis}>
-          {kpis.length === 0 ? null : (
-            <dl className="mt-1 grid grid-cols-2 gap-3 md:grid-cols-4">
-              {kpis.map(([k, v]) => <div key={k}><dt className="text-[12px] text-slate-700">{label(k)}</dt><dd className="text-[18px] font-bold text-slate-900">{cell(v)}</dd></div>)}
-            </dl>
+          {!hasKpis ? null : (
+            <div>
+              {groups.filter(([, f]) => f.length > 0).map(([g, fields]) => (
+                <div key={g} className="mt-2">
+                  <h4 className="text-[12px] font-semibold uppercase text-slate-700">{g}</h4>
+                  <dl className="mt-1 grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {fields.map(([k, v]) => <div key={k}><dt className="text-[12px] text-slate-700">{label(k)}</dt><dd className="text-[18px] font-bold text-slate-900">{cell(v)}</dd></div>)}
+                  </dl>
+                </div>
+              ))}
+            </div>
           )}
         </Sub>
         <Sub title="Quality trend" part={p.qualityTrend}><RowsTable title="Quality trend by day" data={p.qualityTrend?.data} /></Sub>
-        <Sub title="CX parameters" part={p.cx}><RowsTable title="CX parameters" data={p.cx?.data} /></Sub>
+        <Sub title="CX parameters" part={p.cx}>
+          {cxRows.length === 0 ? null : (
+            <table className="w-full text-left text-[13px]">
+              <caption className="sr-only">CX parameters</caption>
+              <thead><tr className="text-slate-700"><th className="py-1 pr-2">Parameter</th><th className="py-1 pr-2">Score %</th></tr></thead>
+              <tbody>{cxRows.map(([l, v]) => <tr key={l} className="border-t border-slate-100"><td className="py-1.5 pr-2">{l}</td><td className="py-1.5 pr-2">{cell(v)}</td></tr>)}</tbody>
+            </table>
+          )}
+        </Sub>
         <Sub title="Fatal calls" part={p.fatal}>
           {fatal ? (
             <div>

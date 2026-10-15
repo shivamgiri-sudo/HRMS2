@@ -7,6 +7,8 @@ import type { BranchOverview, LeaderboardRow, SectionResult } from "./types.js";
 export async function loadReport(branch: HeadBranch, date: string): Promise<BranchHealthReport | null> {
   const raw = await fetchAllBranchHealthData(branch.branchCode, date);
   if (raw.branchId == null) return null;
+  // The fetcher resolves by name-or-code LIMIT 1 and can land on another branch: never show that data.
+  if (String(raw.branchId) !== branch.branchId) return null;
   return buildBranchHealthReport(branch.branchName, date, raw);
 }
 
@@ -17,6 +19,29 @@ function safe<T>(fn: () => T, asOf: string): SectionResult<T> {
   } catch (err) {
     return { status: "error", data: null, asOf, message: err instanceof Error ? err.message : "Section failed" };
   }
+}
+
+/** Person names present in the raw report; branch level is aggregate, so they must never reach the payload. */
+function personNames(raw: any): string[] {
+  const out = new Set<string>();
+  const add = (v: unknown) => { const t = String(v ?? "").trim(); if (t.length >= 2) out.add(t); };
+  for (const n of raw?.headcount?.joinedNames ?? []) add(n);
+  for (const n of raw?.headcount?.leftNames ?? []) add(n);
+  for (const r of raw?.absence?.rows ?? []) { add(r?.name); add(r?.manager); }
+  for (const r of raw?.lateStats?.byManager ?? []) add(r?.manager);
+  return [...out];
+}
+
+function stripNames<T extends { label: string; detail: string }>(items: T[], names: string[], raw: any): T[] {
+  const lower = names.map((n) => n.toLowerCase());
+  const has = (t: string) => { const l = t.toLowerCase(); return lower.some((n) => l.includes(n)); };
+  return items.map((it) => {
+    const hit = has(it.detail) || has(it.label);
+    if (!hit) return it;
+    const joined = Number(raw?.headcount?.joinedToday) || 0;
+    const detail = /new joiner/i.test(it.label) && joined > 0 ? `${joined} joined today` : "Names are available in the process drill-down";
+    return { ...it, label: has(it.label) ? "Details in process drill-down" : it.label, detail };
+  });
 }
 
 const empty = <T>(asOf: string, message: string): SectionResult<T> =>
@@ -37,12 +62,13 @@ export async function buildOverview(
     };
   }
   const raw = rep.raw;
+  const names = personNames(raw);
   return {
     branch,
     date,
     status: rep.overallStatus,
-    attention: rep.criticalPoints.map((p) => ({ label: p.label, detail: p.detail, severity: p.severity })),
-    positives: rep.positiveAchievements.map((p) => ({ label: p.label, detail: p.detail })),
+    attention: stripNames(rep.criticalPoints.map((p) => ({ label: p.label, detail: p.detail, severity: p.severity })), names, raw),
+    positives: stripNames(rep.positiveAchievements.map((p) => ({ label: p.label, detail: p.detail })), names, raw),
     people: safe(() => {
       const h = raw.headcount;
       return {
@@ -76,9 +102,10 @@ export async function buildOverview(
     leaderboard: safe((): LeaderboardRow[] => {
       const totals = new Map<string, number>();
       for (const r of raw.lateStats.byManager) totals.set(r.manager, (totals.get(r.manager) ?? 0) + r.count);
+      // Aggregate only: managers are anonymised as ranked "Team n" labels (late desc, then name for stability).
       return [...totals.entries()]
-        .map(([manager, late]) => ({ manager, late, shrinkagePct: null }))
-        .sort((a, b) => b.late - a.late);
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([, late], i) => ({ manager: `Team ${i + 1}`, late, shrinkagePct: null }));
     }, date),
   };
 }

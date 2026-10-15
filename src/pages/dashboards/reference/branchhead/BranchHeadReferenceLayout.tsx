@@ -54,6 +54,21 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
               <div className="text-[28px] font-extrabold leading-none text-slate-900">{score ? Math.round(score.score) : "—"}<span className="text-[13px] font-semibold text-slate-700">/100</span></div>
               <div className="text-[12px] text-slate-700">{score ? "Health score" : "Score unavailable"}</div>
             </div>
+            {score && (score.pillars.length > 0 || score.excluded.length > 0) ? (
+              <div className="w-full border-t border-slate-100 pt-3 text-[13px] text-slate-800">
+                <ul aria-label="Score breakdown" className="flex flex-wrap gap-x-5 gap-y-1">
+                  {score.pillars.map((p) => (
+                    <li key={p.key}>
+                      <span className="font-semibold capitalize">{p.key.replace(/_/g, " ")}</span>{" "}
+                      {p.score == null ? "not scored" : `${Math.round(p.score)}/100`} (weight {p.weight})
+                    </li>
+                  ))}
+                </ul>
+                {score.excluded.length > 0 ? (
+                  <p className="mt-1">Not scored (no data): {score.excluded.join(", ")} - remaining weights renormalised</p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <Panel title="Attention and wins"><AttentionList attention={overview.attention} positives={overview.positives} /></Panel>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">

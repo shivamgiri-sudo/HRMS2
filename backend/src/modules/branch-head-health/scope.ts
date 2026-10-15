@@ -37,7 +37,15 @@ async function loadMasBranches(branchIds: string[] | null): Promise<HeadBranch[]
 
 /** Branches a Branch Head sees: MAS Call Net, active, not closed. Never identified by name. */
 export async function resolveHeadBranches(userId: string): Promise<HeadScope> {
-  const scope = await resolveDashboardScope(userId, "branch_head");
+  let scope: Awaited<ReturnType<typeof resolveDashboardScope>>;
+  try {
+    scope = await resolveDashboardScope(userId, "branch_head");
+  } catch (err) {
+    if ((err as Error)?.name === "DashboardScopeConfigurationError") {
+      return { branches: [], viaHomeFallback: false, orgWide: false, emptyReason: "Your role has no branch scope configured" };
+    }
+    throw err;
+  }
   const orgWide = scope.level === "ORG_ALL";
   let ids: string[] | null = orgWide ? null : [...scope.branchIds];
   let viaHomeFallback = false;

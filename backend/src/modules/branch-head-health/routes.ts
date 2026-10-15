@@ -7,6 +7,7 @@ import { buildOverview, loadReport } from "./overview.js";
 import { listBranchProcesses, getProcessDrilldown } from "./processes.js";
 import { buildOpsSections, monthStart } from "./ops.js";
 import { buildDataHealth, type DataHealth } from "./dataHealth.js";
+import { TtlCache, cachedOr } from "./cache.js";
 import { computeScore } from "./score.js";
 import { writeSnapshot, readTrend } from "./snapshot.js";
 import type { BranchHeadHealthPayload, BranchOverview, SectionResult } from "./types.js";
@@ -45,6 +46,11 @@ function errorOverview(branch: HeadBranch, date: string): BranchOverview {
 }
 
 const MAX_CONCURRENCY = 3;
+
+// Branch-level data is the same for every authorised head; scope is always checked before a lookup here.
+const reportCache = new TtlCache<Awaited<ReturnType<typeof loadReport>>>();
+const opsCache = new TtlCache<Awaited<ReturnType<typeof buildOpsSections>>>();
+export function clearBranchHeadHealthCaches(): void { reportCache.clear(); opsCache.clear(); }
 
 /** Order-preserving map with bounded concurrency. */
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -109,10 +115,13 @@ branchHeadHealthRouter.get(
     const branches = requested.length
       ? scope.branches.filter((b) => requested.includes(b.branchId))
       : scope.branches;
+    const emptyReason = requested.length > 0 && branches.length === 0 && scope.branches.length > 0
+      ? "No branch in your scope matches the request"
+      : scope.emptyReason;
 
     const rows = await mapLimit(branches, MAX_CONCURRENCY, async (branch) => {
       try {
-        const report = await loadReport(branch, date);
+        const report = await cachedOr(reportCache, `${branch.branchId}|${date}`, () => loadReport(branch, date));
         const overview = await buildOverview(branch, date, report);
         const score = report ? computeScore(report) : null;
         if (score && date === today) {
@@ -150,7 +159,10 @@ branchHeadHealthRouter.get(
       await mapLimit(rows, MAX_CONCURRENCY, async (row) => {
         const mine = processes.active.filter((p) => !p.billingMirror && p.branchIds.includes(row.branch.branchId));
         try {
-          const s = await buildOpsSections(mine, range);
+          const s = await cachedOr(
+            opsCache, `${row.branch.branchId}|${date}`, () => buildOpsSections(mine, range),
+            (v) => v.operations.status !== "error" && v.quality.status !== "error" && v.callmaster.status !== "error",
+          );
           row.overview = { ...row.overview, ...s };
         } catch (err) {
           console.error("[branch-head-health] ops sections failed", row.branch.branchId, err);
@@ -159,7 +171,7 @@ branchHeadHealthRouter.get(
       });
     }
     const data: BranchHeadHealthPayload = {
-      scope: { viaHomeFallback: scope.viaHomeFallback, orgWide: scope.orgWide, emptyReason: scope.emptyReason },
+      scope: { viaHomeFallback: scope.viaHomeFallback, orgWide: scope.orgWide, emptyReason },
       branches: rows,
       processes,
       dataHealth,

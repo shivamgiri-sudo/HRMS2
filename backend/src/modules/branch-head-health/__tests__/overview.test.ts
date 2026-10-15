@@ -52,7 +52,8 @@ describe("buildOverview", () => {
     const r = raw(); fetchAll.mockResolvedValue(r); build.mockReturnValue(report(r));
     const o = await buildOverview(branch, "2026-10-15");
     expect(o.leaderboard.data).toEqual([
-      { manager: "Mgr Y", late: 4, shrinkagePct: null }, { manager: "Mgr X", late: 3, shrinkagePct: null } ]);
+      { manager: "Team 1", late: 4, shrinkagePct: null }, { manager: "Team 2", late: 3, shrinkagePct: null } ]);
+    expect(JSON.stringify(o)).not.toMatch(/Mgr X|Mgr Y/);
     expect(JSON.stringify(o)).not.toContain("Agent A");
   });
   it("branchId null from the fetcher yields empty sections, not an exception", async () => {
@@ -62,5 +63,29 @@ describe("buildOverview", () => {
     expect(o.status).toBe("no_data");
     expect(o.people.status).toBe("empty");
     expect(o.leaderboard.status).toBe("empty");
+  });
+
+  it("loadReport returns null when the fetcher resolved a different branch", async () => {
+    fetchAll.mockResolvedValue(raw({ branchId: "other" }));
+    const o = await buildOverview(branch, "2026-10-15");
+    expect(o.status).toBe("no_data");
+    expect(build).not.toHaveBeenCalled();
+  });
+  it("no person names in attention, positives or anywhere in the serialized overview", async () => {
+    const r = raw({
+      headcount: { totalActive: 10, joinedToday: 2, leftToday: 1, joinedMtd: 2, leftMtd: 1, upcomingExits: 0, exitsNotClosed: 0, mandateSeatsTotal: null, joinedNames: ["Priya Sharma", "Rahul Verma"], leftNames: ["Old Leaver"] },
+      absence: { total: 1, rows: [{ name: "Absent Person", manager: "Boss Person" }] },
+    });
+    fetchAll.mockResolvedValue(r);
+    build.mockReturnValue({
+      ...report(r),
+      criticalPoints: [{ label: "1 employee absent 3+ days running", detail: "Absent Person (Boss Person)", severity: "warning" }],
+      positiveAchievements: [{ label: "2 new joiners today", detail: "Priya Sharma, Rahul Verma" }],
+    });
+    const o = await buildOverview(branch, "2026-10-15");
+    const json = JSON.stringify(o);
+    for (const n of ["Priya Sharma", "Rahul Verma", "Old Leaver", "Absent Person", "Boss Person", "Mgr X", "Mgr Y"]) expect(json).not.toContain(n);
+    expect(o.positives[0].detail).toBe("2 joined today");
+    expect(o.attention).toHaveLength(1);
   });
 });
