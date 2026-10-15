@@ -119,3 +119,26 @@ describe("P&L Statement — open budget headroom is cost until the line is close
     expect(value(statement, "total_idc", PROC)).toBe(140);
   });
 });
+
+describe("P&L Statement — payroll not attendance-prorated is flagged on the branch column", () => {
+  it("attaches payrollNotProrated to the branch column and leaves the figures unchanged", async () => {
+    const statement = await getStatement({ period: closedMonthOutsideWindow() } as never, "branch",
+      deps({ getUnproratedPayroll: async () => new Map([[BRANCH_ID, { staff: 1009, amount: 20446751 }]]) }));
+    const column = statement.columns.find((c) => c.id === BRANCH_ID) as unknown as { payrollNotProrated?: { staff: number; amount: number } };
+    expect(column.payrollNotProrated).toEqual({ staff: 1009, amount: 20446751 });
+    expect(value(statement, "operating_profit", BRANCH_ID)).toBe(1000 - 640);
+  });
+
+  it("no flag when the run is prorated, and none in the process view", async () => {
+    const withMap = deps({ getUnproratedPayroll: async () => new Map([[BRANCH_ID, { staff: 1, amount: 1 }]]) });
+    const branch = await getStatement({ period: closedMonthOutsideWindow() } as never, "branch", deps());
+    expect((branch.columns[0] as unknown as { payrollNotProrated?: unknown }).payrollNotProrated).toBeUndefined();
+    const process = await getStatement({ period: closedMonthOutsideWindow() } as never, "process", withMap);
+    expect((process.columns[0] as unknown as { payrollNotProrated?: unknown }).payrollNotProrated).toBeUndefined();
+  });
+
+  it("is listed in the production default dependencies", async () => {
+    const { defaultDependencies } = await import("../pnl-statement.service.js");
+    expect(typeof defaultDependencies.getUnproratedPayroll).toBe("function");
+  });
+});

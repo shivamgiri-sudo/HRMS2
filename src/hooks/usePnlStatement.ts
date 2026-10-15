@@ -20,6 +20,8 @@ export interface PnlStatementColumn {
   peopleCostCoveragePct?: number;
   peopleCostActiveEmployees?: number;
   peopleCostCoveredEmployees?: number;
+  /** Branch view: staff paid with no attendance proration (full monthly gross); the figure may be overstated. */
+  payrollNotProrated?: { staff: number; amount: number };
   /**
    * Manual Adjustments: APPROVED Projected Revenue / Penalty / Reward entries for this process,
    * folded into a figure shown ALONGSIDE the system-calculated revenue — never in place of it.

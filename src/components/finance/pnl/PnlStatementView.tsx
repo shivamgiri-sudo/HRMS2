@@ -265,6 +265,10 @@ export function PnlStatementView({
               : ""}
           </p>
         )}
+        <p className="mb-2 text-[11px] text-slate-500" data-testid="statement-scope-note">
+          Operating Profit here is operating profit by branch: Revenue − people cost − GRN (consumed, reserved and open-budget headroom).
+          Interest, provisions, depreciation and other finance-level costs are not allocated to branches and are not in it.
+        </p>
         <div className="overflow-auto rounded-3xl border border-slate-200 bg-white">
           <table className="w-full min-w-max text-sm">
             <thead>
@@ -297,6 +301,14 @@ export function PnlStatementView({
                           title={`Salary cost covers ${column.peopleCostCoveredEmployees} of ${column.peopleCostActiveEmployees} active employees. Operating Profit is overstated until the rest have attendance and salary data for this month.`}
                         >
                           ⚠ {coverage}% salary covered
+                        </span>
+                      )}
+                      {column.payrollNotProrated && (
+                        <span
+                          className="mt-1 block text-[10px] font-medium text-amber-600"
+                          title={`${column.payrollNotProrated.staff} staff on this branch's payroll run carry their full monthly gross (₹${Math.round(column.payrollNotProrated.amount).toLocaleString("en-IN")}) with present days but no payable days, so no attendance proration was applied. People cost is shown as the run stands and may be overstated until payroll confirms it.`}
+                        >
+                          ⚠ {column.payrollNotProrated.staff} staff not attendance-prorated
                         </span>
                       )}
                       {adj && (

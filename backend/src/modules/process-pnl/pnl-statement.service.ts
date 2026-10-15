@@ -16,6 +16,7 @@ import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { getApprovedAdjustmentsByProcess } from "./pnl-manual-adjustment.service.js";
 import { getForecastRevenueActuals, withoutCostCentres, type ForecastRevenueActuals } from "./pnl-forecast-overlay.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 /**
  * P&L redesign (PR 3): transposed statement — components as rows, entities as dynamic columns.
@@ -55,6 +56,13 @@ export interface StatementColumn {
   peopleCostCoveragePct?: number;
   peopleCostActiveEmployees?: number;
   peopleCostCoveredEmployees?: number;
+  /**
+   * Staff paid on this branch's payroll run whose line has present days and gross but no payable
+   * days: the run carries the full monthly gross with no attendance proration (September 2026: all
+   * 1,009 lines). The figure is real as the run stands; the reader must be told it may be overstated.
+   * Branch view only. Absent when the run is prorated.
+   */
+  payrollNotProrated?: { staff: number; amount: number };
   /**
    * Manual Adjustments (Part B, 2026-09-01) — APPROVED projected_revenue/penalty/reward entries
    * for this process/period only, folded into a figure shown ALONGSIDE `recognizedRevenue`, never
@@ -673,6 +681,8 @@ export interface StatementDependencies {
   getRevenueEstimate?: (period: string) => Promise<ActualsByKey>;
   /** Unspent headroom of open budget lines, counted as cost (see enrichColumn). */
   getOpenBudgetReserve?: (period: string) => Promise<ActualsByKey>;
+  /** Branch view: staff paid with no attendance proration, so the column can say so. */
+  getUnproratedPayroll?: (period: string) => Promise<Map<string, { staff: number; amount: number }>>;
   /** GRN Committed (reserved, ex-GST). When a caller injects getIndirectCost but not this, it is
    *  treated as none (a test double for consumed must not silently hit the live reserved reader). */
   getCommittedIndirectCost?: (period: string) => Promise<ActualsByKey>;
@@ -699,6 +709,37 @@ export async function getReconciledBranchRevenue(period: string): Promise<Map<st
   const rec = await getPnlReconciliation(period);
   const out = new Map<string, number>();
   for (const b of rec.branches) if (b.branchId) out.set(String(b.branchId), Number(b.revenue ?? 0));
+  return out;
+}
+
+/**
+ * Payroll lines whose gross is the full monthly figure with no attendance proration: present days
+ * and gross, but zero payable days (the 2026-09 run: 1,009 of 1,009 lines, gross equal to db_bill's
+ * unprorated gross, while July/August carried payable days). Grouped by the employee's branch.
+ * Read-only; any failure (older schema) degrades to "nothing flagged", never to an error.
+ */
+export async function getUnproratedPayrollByBranch(period: string): Promise<Map<string, { staff: number; amount: number }>> {
+  const out = new Map<string, { staff: number; amount: number }>();
+  try {
+    if (!(await tableExists("salary_prep_line")) || !(await tableExists("salary_prep_run"))) return out;
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT e.branch_id AS branch_id, COUNT(DISTINCT l.employee_id) AS staff, SUM(COALESCE(l.gross_salary, 0)) AS amount
+         FROM salary_prep_line l
+         JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
+         JOIN employees e ON e.id = l.employee_id
+        WHERE r.run_month = ?
+          AND COALESCE(l.gross_salary, 0) > 0
+          AND COALESCE(l.present_days, 0) > 0
+          AND COALESCE(l.final_payable_days, 0) = 0
+        GROUP BY e.branch_id`,
+      [period],
+    );
+    for (const row of rows) {
+      if (row.branch_id && Number(row.staff) > 0) out.set(String(row.branch_id), { staff: Number(row.staff), amount: Number(row.amount ?? 0) });
+    }
+  } catch {
+    return new Map();
+  }
   return out;
 }
 
@@ -831,6 +872,8 @@ export const defaultDependencies: StatementDependencies = {
   // reconciled branch revenue", so a running month showed the full-month plan (NOIDA-2 Oct 150.3 L
   // against 56.4 L month-to-date on Live P&L). Branch columns now use Live P&L's revenue in every period.
   getBranchRevenue: (period) => getReconciledBranchRevenue(period),
+  // Same trap as the two readers above: list it here or the warning never reaches production.
+  getUnproratedPayroll: (period) => getUnproratedPayrollByBranch(period),
   getSeatRevenue: (period) => getSeatRevenueActuals(period),
   /*
    * Actual payroll first; the recomputed snapshot only if payroll has nothing for the period.
@@ -915,6 +958,11 @@ export async function getStatement(
   // One revenue per branch across every tab: the reconciled figure (see enrichColumn). A failure keeps the per-source chain.
   const branchRevenueReader = deps.getBranchRevenue ?? (deps.getInvoicedRevenue ? async () => undefined : getReconciledBranchRevenue);
   const branchRevenue = viewBy === "branch" ? await branchRevenueReader(periodCode).catch(() => undefined) : undefined;
+  const unproratedReader = deps.getUnproratedPayroll
+    ?? (deps.getIndirectCost ? async () => new Map<string, { staff: number; amount: number }>() : getUnproratedPayrollByBranch);
+  const unproratedByBranch = viewBy === "branch"
+    ? await unproratedReader(periodCode).catch(() => new Map<string, { staff: number; amount: number }>())
+    : new Map<string, { staff: number; amount: number }>();
   const forecastCcs = forecast ? [...forecast.byCostCentre.keys()] : [];
   const revenue = forecastCcs.length ? withoutCostCentres(driverRevenue, forecastCcs) : driverRevenue;
   const invoicedRevenue = forecastCcs.length ? withoutCostCentres(invoicedRevenueAll, forecastCcs) : invoicedRevenueAll;
@@ -949,6 +997,8 @@ export async function getStatement(
           peopleCostActiveEmployees: data.peopleCostActiveEmployees as number,
           peopleCostCoveredEmployees: data.peopleCostCoveredEmployees as number,
         };
+    const notProrated = viewBy === "branch" ? unproratedByBranch.get(item.column.id) : undefined;
+    if (notProrated) column = { ...column, payrollNotProrated: notProrated };
     // Part B: manual adjustments are process-scoped (see StatementColumn.manualAdjustment doc) —
     // attached only for a "process" view column, keyed on the column id, which IS the processId there.
     if (viewBy === "process") {
