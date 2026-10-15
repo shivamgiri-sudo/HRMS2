@@ -12,7 +12,7 @@ const writeSnapshot = vi.fn();
 const readTrend = vi.fn();
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1" }; next(); },
+  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1", email: "u1@x.in", role: req.headers["x-auth-role"] }; next(); },
 }));
 const requireRoleSpy = vi.hoisted(() => vi.fn());
 vi.mock("../../../middleware/requireRole.js", () => ({
@@ -74,7 +74,7 @@ beforeEach(() => {
   buildOpsSections.mockResolvedValue({ operations: section, quality: section, callmaster: section });
   buildDataHealth.mockResolvedValue(section);
 });
-afterEach(() => { delete process.env.BRANCH_HEAD_HEALTH_ENABLED; });
+afterEach(() => { delete process.env.BRANCH_HEAD_HEALTH_ENABLED; delete process.env.BRANCH_HEAD_HEALTH_PILOT_USERS; });
 
 describe("branch-head-health routes", () => {
   it("400 on invalid date", async () => {
@@ -226,5 +226,29 @@ describe("branch-head-health routes", () => {
     const r = await request(app()).get("/api/branch-head-health/overview?branchIds=zzz");
     expect(r.body.data.branches).toEqual([]);
     expect(r.body.data.scope.emptyReason).toBe("No branch in your scope matches the request");
+  });
+
+  it("GET /enabled: 200 for a passing caller", async () => {
+    const r = await request(app()).get("/api/branch-head-health/enabled");
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ success: true, data: { enabled: true } });
+  });
+  it("GET /enabled: 404 when flag off", async () => {
+    delete process.env.BRANCH_HEAD_HEALTH_ENABLED;
+    expect((await request(app()).get("/api/branch-head-health/enabled")).status).toBe(404);
+  });
+  it("GET /enabled: 404 for a non-pilot caller, 200 for a listed one (by email) and super_admin", async () => {
+    process.env.BRANCH_HEAD_HEALTH_PILOT_USERS = "someone@else.in";
+    const denied = await request(app()).get("/api/branch-head-health/enabled");
+    expect(denied.status).toBe(404);
+    expect(denied.body).toEqual({ success: false, message: "Not found" });
+    expect((await request(app()).get("/api/branch-head-health/overview")).status).toBe(404);
+    process.env.BRANCH_HEAD_HEALTH_PILOT_USERS = "U1@X.in";
+    expect((await request(app()).get("/api/branch-head-health/enabled")).status).toBe(200);
+    process.env.BRANCH_HEAD_HEALTH_PILOT_USERS = "someone@else.in";
+    expect((await request(app()).get("/api/branch-head-health/enabled").set("x-auth-role", "super_admin")).status).toBe(200);
+  });
+  it("GET /enabled: 403 for a wrong role", async () => {
+    expect((await request(app()).get("/api/branch-head-health/enabled").set("x-role", "employee")).status).toBe(403);
   });
 });

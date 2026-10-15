@@ -6,6 +6,8 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserRole } from "@/hooks/useUserRole";
+import { useBranchHeadEnabled } from "@/hooks/useBranchHeadEnabled";
+import { pickBranchHeadVariant } from "./dashboards/branchHeadVariant";
 import ReferenceRoleDashboard from "./dashboards/ReferenceRoleDashboard";
 import {
   canAccessRoleDashboard,
@@ -41,13 +43,21 @@ export default function Index() {
   const navigate = useNavigate();
   const roleKeys = data?.roleKeys ?? [];
 
-  const accessible = ALL_VARIANTS.filter((v) => canAccessRoleDashboard(v, roleKeys));
-  const defaultVariant = resolveRoleDashboardVariant(roleKeys);
+  // canAccessRoleDashboard already includes the build flag: flag-off builds never ask the backend.
+  const branchHeadCandidate = !isLoading && canAccessRoleDashboard("branch_head", roleKeys);
+  const pilot = useBranchHeadEnabled({ enabled: branchHeadCandidate });
+  const accessible = ALL_VARIANTS.filter((v) => canAccessRoleDashboard(v, roleKeys) && (v !== "branch_head" || pilot.enabled));
+  const picked = pickBranchHeadVariant({
+    resolved: resolveRoleDashboardVariant(roleKeys),
+    enabled: pilot.enabled,
+    isLoading: pilot.isLoading,
+    fallback: resolveRoleDashboardVariant(roleKeys, { branchHeadEnabled: false }),
+  });
 
   const [active, setActive] = useState<RoleDashboardVariant | null>(null);
-  const current = active ?? defaultVariant;
+  const current = active ?? (picked === "loading" ? "employee" : picked);
 
-  if (isLoading) {
+  if (isLoading || picked === "loading") {
     return (
       <div className="space-y-4 p-6">
         <Skeleton className="h-10 w-96" />

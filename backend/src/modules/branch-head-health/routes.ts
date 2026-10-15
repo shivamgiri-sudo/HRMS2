@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
+import { isPilotAllowed } from "./pilot.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { resolveHeadBranches, type HeadBranch } from "./scope.js";
@@ -24,6 +25,13 @@ branchHeadHealthRouter.use((_req, res, next) => {
   next();
 });
 branchHeadHealthRouter.use(requireAuth);
+// Named pilot: non-members get the same 404 as flag-off so existence is not revealed.
+branchHeadHealthRouter.use((req: any, res, next) => {
+  isPilotAllowed(req.authUser).then((ok) => {
+    if (!ok) return res.status(404).json({ success: false, message: "Not found" });
+    return next();
+  }, next);
+});
 branchHeadHealthRouter.use(requireRole("branch_head", "ceo", "coo", "super_admin"));
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -96,6 +104,8 @@ function snapshotMetrics(report: any): Record<string, number> {
   }
   return out;
 }
+
+branchHeadHealthRouter.get("/enabled", (_req, res) => res.json({ success: true, data: { enabled: true } }));
 
 branchHeadHealthRouter.get(
   "/overview",
