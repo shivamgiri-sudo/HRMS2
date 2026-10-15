@@ -6,6 +6,8 @@ import type { HeadBranch } from "../../../../../backend/src/modules/branch-head-
 import { AttentionList } from "./AttentionList";
 import { ProcessCoveragePanel } from "./ProcessCoveragePanel";
 import { LeaderboardPanel, SectionPanel } from "./SectionPanels";
+import { CallmasterPanel } from "./CallmasterPanel";
+import { OperationsPanel, QualityPanel } from "./OperationsPanel";
 import { StatusChip } from "./StatusChip";
 import { BranchHeadControls } from "./BranchHeadControls";
 
@@ -61,6 +63,21 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
             <SectionPanel title="Finance" section={overview.finance} />
           </div>
           <LeaderboardPanel section={overview.leaderboard} />
+          {overview.operations || overview.quality || overview.callmaster ? (() => {
+            const panels = (
+              <div className="space-y-4">
+                <OperationsPanel section={overview.operations} />
+                <QualityPanel section={overview.quality} />
+                <CallmasterPanel section={overview.callmaster} />
+              </div>
+            );
+            return data.branches.length > 1 ? (
+              <details data-group={`ops-${branch.branchId}`} className="rounded-lg border border-slate-200">
+                <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-[13px] font-bold text-slate-900">Operations, quality and Callmaster for {branch.branchName}</summary>
+                <div className="p-3">{panels}</div>
+              </details>
+            ) : panels;
+          })() : null}
         </section>
       ))}
 

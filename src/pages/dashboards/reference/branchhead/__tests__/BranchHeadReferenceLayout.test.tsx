@@ -144,4 +144,25 @@ describe("BranchHeadReferenceLayout", () => {
     const out = html(payload({ dataHealth: { status: "error", data: null, asOf: "2026-10-15" } }));
     expect(out).toContain("Data health could not be loaded.");
   });
+  it("renders operations, quality and callmaster panels with stale badge, em dash, counts only and truncation notice", () => {
+    const b = branch("b1", "Kolkata");
+    b.overview.operations = ok([{ processCode: "P1", processName: "Alpha Ops", tier: "full", metrics: { AHT: 300, INBOUND_SL_PCT: null, QA_QUALITY_PCT: 71.5 }, latestDate: "2026-09-01", stale: true }]);
+    b.overview.quality = ok([{ processCode: "P1", processName: "Alpha Q", tier: "full", QA_QUALITY_PCT: 71.5, latestDate: "2026-09-01", stale: true }]);
+    b.overview.callmaster = ok({
+      kpis: ok({ totalCalls: 100 }), qualityTrend: ok([{ date: "2026-10-01", score: 80, agent: "Zed Agent" }]),
+      cx: ok([{ parameter: "Empathy", score: 90 }]), fatal: ok({ totalFatalCalls: 7, agentsWithFatals: 3, truncated: true }),
+    });
+    const out = html(payload({ branches: [b] }));
+    for (const t of ["Alpha Ops", "Alpha Q", "Stale", "Sale conversion %", "Total fatal calls", "Agents with fatals", "Empathy",
+      "Showing the most recent 5,000 audit rows - counts are partial"]) expect(out).toContain(t);
+    expect(out).not.toContain("Zed Agent");
+  });
+  it("shows empty states for operations and callmaster", () => {
+    const b = branch("b1", "Kolkata");
+    b.overview.operations = { status: "empty", data: null, asOf: "2026-10-15" };
+    b.overview.callmaster = { status: "empty", data: null, asOf: "2026-10-15" };
+    const out = html(payload({ branches: [b] }));
+    expect(out).toContain("No operational metrics for this branch");
+    expect(out).toContain("No Callmaster client is mapped to this branch");
+  });
 });
