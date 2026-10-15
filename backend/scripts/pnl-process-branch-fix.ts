@@ -16,7 +16,19 @@ import { ownCompanyBranchSql } from "../src/shared/ownCompanyCostCentre.js";
 
 (async () => {
   const processId = process.argv[2];
-  if (!/^[0-9a-f-]{36}$/i.test(processId ?? "")) throw new Error("pass the process id");
+  if (processId?.startsWith("search:")) {
+    const like = `%${processId.slice(7)}%`;
+    const [found] = await db.query<RowDataPacket[]>(
+      `SELECT pm.id, pm.process_name, pm.process_code, pm.client_name, pm.active_status, bm.branch_name,
+              (SELECT COUNT(*) FROM cost_centre_master c WHERE c.process_id = pm.id) AS cost_centres,
+              (SELECT COUNT(*) FROM employees e WHERE e.process_id = pm.id AND e.active_status = 1) AS staff
+         FROM process_master pm LEFT JOIN branch_master bm ON bm.id = pm.branch_id
+        WHERE pm.process_name LIKE ? OR pm.client_name LIKE ? OR pm.process_code LIKE ?`, [like, like, like]);
+    for (const r of found) console.log("PBF_SEARCH " + JSON.stringify({ id: r.id, name: r.process_name, code: r.process_code, client: r.client_name, branch: r.branch_name, active: r.active_status, costCentres: Number(r.cost_centres), staff: Number(r.staff) }));
+    console.log("PBF_DONE");
+    process.exit(0);
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(processId ?? "")) throw new Error("pass the process id or search:<text>");
   const apply = process.env.PROC_APPLY === "yes";
   const [procs] = await db.query<RowDataPacket[]>(
     `SELECT pm.id, pm.process_name, pm.process_code, pm.client_name, pm.branch_id, bm.branch_name, pm.active_status

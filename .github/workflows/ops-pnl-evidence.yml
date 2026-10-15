@@ -140,7 +140,9 @@ jobs:
           INPUT_BOOTDIAG: ${{ inputs.bootdiag }}
         run: |
           set -euo pipefail
-          if [[ "$INPUT_PROCBRANCH" == dry-run:* ]]; then
+          if [[ "$INPUT_PROCBRANCH" == search:* ]]; then
+            npx tsx scripts/pnl-process-branch-fix.ts "$INPUT_PROCBRANCH"
+          elif [[ "$INPUT_PROCBRANCH" == dry-run:* ]]; then
             npx tsx scripts/pnl-process-branch-fix.ts "${INPUT_PROCBRANCH#dry-run:}"
           elif [[ "$INPUT_PROCBRANCH" == apply:* ]]; then
             PROC_APPLY=yes npx tsx scripts/pnl-process-branch-fix.ts "${INPUT_PROCBRANCH#apply:}"
