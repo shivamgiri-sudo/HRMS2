@@ -8,7 +8,7 @@ import { assessAggregatePunches } from "./cosec-punch-interpretation.service.js"
 import { tableExists } from "../../shared/dbHelpers.js";
 import { logger } from "../../lib/logger.js";
 import type { PunchAssessmentMode } from "./cosec-punch-interpretation.service.js";
-import { buildSourceUserMaps, classifySourceUser } from "./attendance-reconciliation-mapping.js";
+import { buildSourceUserMaps, classifySourceUser, conflictingExclusions } from "./attendance-reconciliation-mapping.js";
 import { queuePayrollRecalculation, drainPayrollRecalcQueue } from "../payroll/payroll-targeted-recalculation.service.js";
 import { CLOSED_RUN_STATUSES_SQL } from "../payroll/run-status.js";
 
@@ -1181,6 +1181,15 @@ export const cosecSyncService = {
         employeeRows[0] as any[],
         (excludedRows[0] as any[]).map((row) => String(row.cosec_user_id ?? "")),
       );
+      const conflicting = conflictingExclusions(sourceMaps);
+      if (conflicting.length > 0) {
+        // These ids are on the hand-maintained exclusion list yet belong to an employee. They are
+        // synced (ownership wins); say so, so the stale list entries get cleaned up.
+        logger.warn(
+          { count: conflicting.length, sample: conflicting.slice(0, 10) },
+          "[COSEC Sync] exclusion list holds ids that belong to employees; treating them as employees",
+        );
+      }
 
       /*
        * Skip the days that have not changed since the last run.

@@ -16,25 +16,28 @@ const env = (n: string) => { const v = process.env[n]?.trim(); if (!v) throw new
   console.table(await q(`SELECT exclusion_reason, created_by, active_status, COUNT(*) n, MIN(created_at) first_at, MAX(created_at) last_at
                            FROM attendance_reconciliation_cosec_exclusion GROUP BY exclusion_reason, created_by, active_status ORDER BY n DESC`));
 
-  console.log("== active exclusions that match a REAL employee (by code, biometric code or enrolment)");
-  const real = await q(
-    `SELECT x.cosec_user_id, x.exclusion_reason, x.created_by, DATE_FORMAT(x.created_at,'%Y-%m-%d') created,
-            e.employee_code, e.employment_status, e.active_status,
-            DATE_FORMAT(e.date_of_joining,'%Y-%m-%d') doj
-       FROM attendance_reconciliation_cosec_exclusion x
-       JOIN employees e ON e.employee_code = x.cosec_user_id OR e.biometric_code = x.cosec_user_id
-        OR e.id IN (SELECT employee_id FROM employee_biometric_enrollment WHERE cosec_user_id = x.cosec_user_id)
-      WHERE x.active_status = 1 ORDER BY e.employee_code`);
-  console.log("count:", real.length);
-  console.table(real.map((r) => ({ id: r.cosec_user_id, reason: String(r.exclusion_reason).slice(0, 40), by: r.created_by, created: r.created, code: r.employee_code, st: `${r.employment_status}/${r.active_status}`, doj: r.doj })));
-
-  console.log("== active exclusions with NO employee behind them:",
-    (await q(`SELECT COUNT(*) n FROM attendance_reconciliation_cosec_exclusion x WHERE x.active_status = 1
-                AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.employee_code = x.cosec_user_id OR e.biometric_code = x.cosec_user_id)
-                AND NOT EXISTS (SELECT 1 FROM employee_biometric_enrollment b WHERE b.cosec_user_id = x.cosec_user_id)`))[0].n);
+  const ex = await q(`SELECT cosec_user_id, exclusion_reason, created_by, DATE_FORMAT(created_at,'%Y-%m-%d') created
+                        FROM attendance_reconciliation_cosec_exclusion WHERE active_status = 1`);
+  const ids = ex.map((r) => String(r.cosec_user_id));
+  console.log("active exclusions:", ids.length);
+  const byCode = ids.length ? await q(`SELECT employee_code, biometric_code, employment_status, active_status, id,
+                                              DATE_FORMAT(date_of_joining,'%Y-%m-%d') doj
+                                         FROM employees WHERE employee_code IN (?) OR biometric_code IN (?)`, [ids, ids]) : [];
+  const enr = ids.length ? await q(`SELECT cosec_user_id, employee_id FROM employee_biometric_enrollment WHERE cosec_user_id IN (?)`, [ids]) : [];
+  const empById = ids.length && enr.length
+    ? await q(`SELECT id, employee_code, employment_status, active_status, DATE_FORMAT(date_of_joining,'%Y-%m-%d') doj FROM employees WHERE id IN (?)`, [enr.map((r) => r.employee_id)])
+    : [];
+  const owner = new Map<string, any>();
+  for (const e of byCode) { owner.set(String(e.employee_code), e); if (e.biometric_code) owner.set(String(e.biometric_code), e); }
+  for (const r of enr) { const e = empById.find((x) => x.id === r.employee_id); if (e) owner.set(String(r.cosec_user_id), e); }
+  const real = ex.filter((r) => owner.has(String(r.cosec_user_id))).map((r) => ({ ...r, emp: owner.get(String(r.cosec_user_id)) }));
+  console.log("active exclusions that belong to a REAL employee:", real.length);
+  console.table(real.map((r) => ({ id: r.cosec_user_id, reason: String(r.exclusion_reason).slice(0, 40), by: r.created_by, created: r.created,
+    code: r.emp.employee_code, st: `${r.emp.employment_status}/${r.emp.active_status}`, doj: r.emp.doj })));
+  console.log("active exclusions with no employee behind them:", ex.length - real.length);
 
   // what it costs: Oct attendance of the affected employees
-  const codes = real.map((r) => r.employee_code);
+  const codes = real.map((r) => String(r.emp.employee_code));
   if (codes.length) {
     console.log("== Oct attendance rows of affected employees (status x source)");
     console.table(await q(

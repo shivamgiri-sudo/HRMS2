@@ -23,6 +23,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSourceUserMaps,
   classifySourceUser,
+  conflictingExclusions,
   isThirdPartyCosecUser,
 } from "../attendance-reconciliation-mapping.js";
 
@@ -76,5 +77,45 @@ describe("classification of a third-party id", () => {
       [],
     );
     expect(classifySourceUser("MAS54791", maps).kind).toBe("inactive");
+  });
+});
+
+describe("an employee's id outranks the hand-maintained exclusion list", () => {
+  // 2026-10-15, WFM email "APR available but punching not showing": 25 NOIDA-2 analysts sat on the
+  // exclusion list while having employee rows, enrolment and biometric codes. Every punch was
+  // discarded, so Cosec showed "-" beside a full APR day and shrinkage counted them absent.
+  const analyst = {
+    employee_id: "e63089", employee_code: "MAS63089", biometric_code: "MAS63089",
+    cosec_user_id: "MAS63089", active_status: 1, employment_status: "Active",
+  };
+
+  it("classifies an excluded id that belongs to an active employee as active", () => {
+    const maps = buildSourceUserMaps([analyst], ["MAS63089"]);
+    expect(classifySourceUser("MAS63089", maps).kind).toBe("active");
+  });
+
+  it("matches by employee_code alone, with no enrolment row", () => {
+    const maps = buildSourceUserMaps([{ employee_id: "e1", employee_code: "MAS70001", active_status: 1, employment_status: "Active" }], ["MAS70001"]);
+    expect(classifySourceUser("MAS70001", maps).kind).toBe("active");
+  });
+
+  it("still reports a leaver as inactive rather than syncing them", () => {
+    const maps = buildSourceUserMaps([{ ...analyst, active_status: 0, employment_status: "inactive" }], ["MAS63089"]);
+    expect(classifySourceUser("MAS63089", maps).kind).toBe("inactive");
+  });
+
+  it("an exclusion with no employee behind it still excludes", () => {
+    const maps = buildSourceUserMaps([analyst], ["GUEST-7"]);
+    expect(classifySourceUser("GUEST-7", maps)).toEqual({ kind: "excluded" });
+  });
+
+  it("an IDC badge stays excluded even if an employee row somehow carried the id", () => {
+    const maps = buildSourceUserMaps([{ employee_id: "x", employee_code: "IDC1", cosec_user_id: "IDC1", active_status: 1 }], []);
+    expect(classifySourceUser("IDC1", maps)).toEqual({ kind: "excluded" });
+  });
+
+  it("conflictingExclusions lists only exclusions that point at employees", () => {
+    const maps = buildSourceUserMaps([analyst], ["MAS63089", "GUEST-7", "IDC9"]);
+    expect(conflictingExclusions(maps)).toEqual(["MAS63089"]);
   });
 });
