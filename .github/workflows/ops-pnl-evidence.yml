@@ -60,6 +60,10 @@ on:
         description: "Set to 'yes' to print per-branch component P&L (revenue, agent, DSC, BMC, GRN, OP) and the non-MAS (DialDesk / I-Spark / IDC) leak check for 'periods' (read-only)."
         required: false
         default: ""
+      leavers:
+        description: "'YYYY-MM|<cost centre code>' (code optional): db_bill-only employees for the month grouped by left / F&F / earned days with what HRMS knows, and the db_bill master row of the cost centre (read-only, aggregates only)."
+        required: false
+        default: ""
       tallyxlsx:
         description: "Set to 'yes' to build the Finance Ledger Tally Excel for the first month in 'periods' and print its sheets, counts and exception reasons (read-only)."
         required: false
@@ -142,6 +146,7 @@ jobs:
           INPUT_STMTTIMING: ${{ inputs.stmttiming }}
           INPUT_DBBILLCM: ${{ inputs.dbbillcm }}
           INPUT_TALLYXLSX: ${{ inputs.tallyxlsx }}
+          INPUT_LEAVERS: ${{ inputs.leavers }}
           INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
           INPUT_DIAG: ${{ inputs.diag }}
           INPUT_BRANCHPLAN: ${{ inputs.branchplan }}
@@ -155,7 +160,10 @@ jobs:
           INPUT_BOOTDIAG: ${{ inputs.bootdiag }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_TALLYXLSX" = "yes" ]; then
+          if [ -n "$INPUT_LEAVERS" ]; then
+            LV_PERIOD="${INPUT_LEAVERS%%|*}"; LV_CC=""; [[ "$INPUT_LEAVERS" == *"|"* ]] && LV_CC="${INPUT_LEAVERS#*|}"
+            npx tsx scripts/dbbill-leavers-and-cc.ts "$LV_PERIOD" "$LV_CC"
+          elif [ "$INPUT_TALLYXLSX" = "yes" ]; then
             npx tsx scripts/ledger-tally-xlsx-check.ts $INPUT_PERIODS
           elif [ -n "$INPUT_DBBILLCM" ]; then
             npx tsx scripts/dbbill-cost-master-lookup.ts "$INPUT_DBBILLCM"
