@@ -47,9 +47,19 @@ const RESOLUTION_PRIORITY: readonly RoleDashboardVariant[] = [
   "employee",
 ];
 
-export function resolveRoleDashboardVariant(roleKeys: readonly string[]): RoleDashboardVariant {
+/** Build-time flag; read at call time so tests can stub it. Off => branch_head variant is invisible. */
+function branchHeadFlagOn(): boolean {
+  return import.meta.env?.VITE_BRANCH_HEAD_HEALTH_ENABLED === "true";
+}
+
+export function resolveRoleDashboardVariant(
+  roleKeys: readonly string[],
+  opts?: { branchHeadEnabled?: boolean },
+): RoleDashboardVariant {
+  const branchHeadEnabled = opts?.branchHeadEnabled ?? branchHeadFlagOn();
   const normalized = new Set(roleKeys.map(normalizeDashboardRole));
   for (const variant of RESOLUTION_PRIORITY) {
+    if (variant === "branch_head" && branchHeadEnabled !== true) continue;
     if (ROLE_VARIANT_MAP[variant].some((role) => normalized.has(role))) return variant;
   }
   return "employee";
@@ -59,6 +69,7 @@ export function canAccessRoleDashboard(
   variant: RoleDashboardVariant,
   roleKeys: readonly string[],
 ): boolean {
+  if (variant === "branch_head" && !branchHeadFlagOn()) return false;
   const normalized = new Set(roleKeys.map((role) => String(role).trim().toLowerCase()));
   const dashboard = DASHBOARD_BY_VARIANT[variant];
   return dashboard ? canAccessDashboard(dashboard.code, [...normalized]) : false;

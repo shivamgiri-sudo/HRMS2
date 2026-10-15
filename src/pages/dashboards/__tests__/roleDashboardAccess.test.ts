@@ -70,8 +70,8 @@ describe("role dashboard access", () => {
     expect(resolveRoleDashboardVariant(["employee", "tq_head"])).toBe("quality");
     // branch_head was added to wfm_attendance's allowedRoleKeys 2026-09-16 (branch heads own
     // everything happening in their branch's WFM/attendance data), and wfm_attendance outranks
-    // manager in RESOLUTION_PRIORITY. The dedicated branch_head variant (2026-10-15) now sits
-    // directly after ceo, so a plain branch_head resolves to the Branch Health dashboard.
-    expect(resolveRoleDashboardVariant(["employee", "branch_head"])).toBe("branch_head");
+    // manager in RESOLUTION_PRIORITY, so a plain branch_head resolves there, not to manager.
+    // (The dedicated branch_head variant is gated behind VITE_BRANCH_HEAD_HEALTH_ENABLED.)
+    expect(resolveRoleDashboardVariant(["employee", "branch_head"])).toBe("wfm_attendance");
   });
 });
