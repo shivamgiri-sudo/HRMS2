@@ -69,6 +69,20 @@ const scope: any = { companyId: "ops", isSuperAdmin: true, branchScope: all, pro
   console.log(`console processes: ${base.processes.length} default, ${wide.processes.length} with from=${first}`);
   console.table(wide.processes.filter((p) => !baseIds.has(p.id)).slice(0, 15));
 
+  // Why is a process NOT in the console dropdown? Group every excluded process by reason.
+  const excluded = await q(
+    `SELECT pm.id, pm.process_name, pm.active_status, pm.close_date, b.branch_name, b.active_status AS b_active, b.close_date AS b_close, b.company_name,
+            (SELECT COUNT(*) FROM employees e WHERE e.process_id = pm.id AND e.active_status = 1) AS active_emps
+       FROM process_master pm LEFT JOIN branch_master b ON b.id = pm.branch_id
+      WHERE pm.id NOT IN (${wide.processes.map(() => "?").join(",") || "''"})
+        AND (SELECT COUNT(*) FROM employees e WHERE e.process_id = pm.id AND e.active_status = 1) > 0
+      ORDER BY active_emps DESC LIMIT 60`, wide.processes.map((p) => p.id));
+  const reason = (r: any) =>
+    Number(r.active_status) !== 1 ? "process inactive" : r.close_date ? "process closed" : !r.branch_name ? "no branch"
+      : Number(r.b_active) !== 1 ? "branch inactive" : r.b_close ? "branch closed" : !/^mascallnet/i.test(String(r.company_name ?? "").replace(/[ .]/g, "")) ? `branch company: ${r.company_name ?? "(none)"}` : "other";
+  console.log(`processes WITH active employees but missing from the dropdown: ${excluded.length}`);
+  console.table(excluded.map((r) => ({ process: r.process_name, branch: r.branch_name, active_emps: r.active_emps, reason: reason(r) })));
+
   const y = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   const sh = await getShiftAdherence(y, 0, undefined, undefined);
   const lobSum = sh.processes.reduce((s, p) => s + p.lobs.reduce((a, l) => a + l.planned, 0), 0);

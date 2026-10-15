@@ -38,8 +38,12 @@ export default function CompliancePanel() {
   const scopeQs = useMemo(() => scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId: filters.lobId }).toString(), [filters.branchId, filters.processId, filters.lobId]);
   const months = useMemo(() => recentMonths(currentMonthIst(), 6), []);
   const [tp, setTp] = useTabParams({ sub: "overview", month: "", kind: "roster", rule: ALL, sev: ALL, q: "" });
-  const month = pickMonth(tp.month, currentMonthIst());
-  const setMonth = (m: string) => setTp({ month: m === currentMonthIst() ? "" : m });
+  // Compliance is scored per calendar month: default to the month of the shared range's end date when it is
+  // one of the selectable months, so changing the console date range moves this tab too.
+  const toMonth = filters.to.slice(0, 7);
+  const defaultMonth = months.includes(toMonth) ? toMonth : currentMonthIst();
+  const month = pickMonth(tp.month, defaultMonth);
+  const setMonth = (m: string) => setTp({ month: m === defaultMonth ? "" : m });
   const kind = pickOne(tp.kind, ["roster", "attendance"] as const, "roster") as FeedKind;
   const ruleId = tp.rule;
   const severity = tp.sev;

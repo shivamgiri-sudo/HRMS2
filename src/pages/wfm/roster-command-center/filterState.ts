@@ -12,7 +12,7 @@ export const TAB_FILTER_SUPPORT: Record<string, FilterKey[]> = {
   "team-roster": ["branch", "process", "lob", "dates"],
   analytics: ["branch", "process", "lob", "dates"],
   trends: ["branch", "process", "lob", "dates"],
-  compliance: ["branch", "process", "lob"],
+  compliance: ["branch", "process", "lob", "dates"],
   shifts: ["branch", "process", "lob", "dates"],
   interventions: ["branch", "process", "lob"],
   audit: ["branch", "process", "lob", "dates"],

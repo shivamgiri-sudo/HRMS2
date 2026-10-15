@@ -175,6 +175,20 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  * 30-day month with 5 Sundays. Anything the engine learns later, this report inherits.
  */
 
+/** Maps in order with at most `limit` callbacks in flight. */
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 export async function attendanceRegisterMonthly(
   filters: ExecFilters,
   scope: ExecScope,
@@ -456,8 +470,12 @@ export async function attendanceRegisterMonthly(
     Array.from(empMap.keys()),
   );
 
-  const pivotRows = await Promise.all(
-    Array.from(empMap.values()).map(async (emp, idx) => {
+  // Each employee needs a payroll-engine DB lookup. Run in bounded waves: an unbounded Promise.all over
+  // ~1000 employees filled the pool's wait queue and tripped its circuit breaker ("Queue limit reached").
+  const pivotRows = await mapWithConcurrency(
+    Array.from(empMap.values()),
+    16,
+    async (emp: any, idx: number) => {
       // Normalise date_of_joining and date_of_exit to midnight for day-boundary comparisons.
       const dojRaw = emp.date_of_joining;
       const doj = dojRaw ? new Date(dojRaw) : null;
@@ -556,7 +574,7 @@ export async function attendanceRegisterMonthly(
         sal_days: salDays,
         total: daysInMonth,
       };
-    }),
+    },
   );
 
   // Screen mode: already paginated via the pre-pagination query — return all pivot rows.
