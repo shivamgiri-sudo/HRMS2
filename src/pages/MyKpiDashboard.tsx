@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer, LabelList } from "recharts";
 import {
@@ -162,7 +163,17 @@ function LightSkeleton() {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+const MY_KPI_TABS = ["performance", "calls", "quality", "learning", "live", "onfido"];
+
 export default function MyKpiDashboard() {
+  // ?tab=calls opens Call KPIs directly (used by the team-leader feedback-acknowledgement alert).
+  // Follows the URL as it changes, so the alert link works when already on this page.
+  const [searchParams] = useSearchParams();
+  const urlTab = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState(() => (urlTab && MY_KPI_TABS.includes(urlTab) ? urlTab : "performance"));
+  useEffect(() => {
+    if (urlTab && MY_KPI_TABS.includes(urlTab)) setActiveTab(urlTab);
+  }, [urlTab, searchParams]);
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -350,7 +361,7 @@ export default function MyKpiDashboard() {
         <div className="px-4 pt-5 pb-9 sm:px-5 lg:px-6">
 
           {/* ── Main Tabs ────────────────────────────────────────────── */}
-          <Tabs defaultValue="performance" className="space-y-5">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
             <TabsList className="bg-white/95 backdrop-blur-sm border border-white/60 rounded-xl p-1 h-auto gap-1 shadow-[0_1px_3px_rgba(37,99,235,0.08),_0_4px_12px_rgba(37,99,235,0.06)]">
               {[
                 { value: "performance", label: "Performance", icon: BarChart3 },

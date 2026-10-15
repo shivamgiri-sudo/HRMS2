@@ -19,6 +19,19 @@ export const QUALITY_VIEW_ANY_AGENT_ROLES = ["qa", "quality_analyst", "tq_head"]
  * It lives in employees.call_centre_code for some employees and in employees.employee_code for
  * others (e.g. employee_code = "MAS60429"), so take whichever column actually holds a MAS code.
  */
+/** True when the agent with this MASID reports directly to the given employee. */
+async function reportsTo(masid: string, managerEmployeeId: string): Promise<boolean> {
+  // Two indexed lookups; an OR across call_centre_code / employee_code defeats both indexes.
+  for (const col of ["call_centre_code", "employee_code"] as const) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM employees a WHERE a.${col} = ? AND COALESCE(a.reporting_manager_id, a.manager_id) = ? LIMIT 1`,
+      [masid, managerEmployeeId],
+    );
+    if (rows.length > 0) return true;
+  }
+  return false;
+}
+
 async function resolveMasid(employeeId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT call_centre_code, employee_code FROM employees WHERE id = ? LIMIT 1`,
@@ -68,6 +81,14 @@ export async function requireAgent(
       }
       if (await hasRoleForRequest(req.authUser, ...QUALITY_VIEW_ANY_AGENT_ROLES)) {
         logger.info(`[quality-view] user ${req.authUser.id} viewed quality data of agent ${target} (${req.method} ${req.originalUrl})`);
+        Object.assign(req, { agentCode: target, agentIsSelf: false, agentEmployeeId: null });
+        next();
+        return;
+      }
+      // Row scope for team leaders / managers: allowed only for an agent who reports directly to
+      // the caller (COALESCE(reporting_manager_id, manager_id) — the TL lookup used app-wide).
+      if (emp?.id && (await reportsTo(target, emp.id))) {
+        logger.info(`[quality-view] user ${req.authUser.id} (manager) viewed quality data of direct report ${target} (${req.method} ${req.originalUrl})`);
         Object.assign(req, { agentCode: target, agentIsSelf: false, agentEmployeeId: null });
         next();
         return;

@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bar, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart, Pie, PieChart,
@@ -102,10 +103,24 @@ function Metric({ icon, label, value, sub, onClick }: { icon: ReactNode; label: 
 export function AgentKpiDashboard() {
   const qc = useQueryClient();
   const [date, setDate] = useState(istToday());
-  const [selectedAgent, setSelectedAgent] = useState("");
+  // Deep link from the team-leader alert: /my-kpi?tab=calls&agent=MAS…&audit=<id>. The backend
+  // still decides whether this viewer may see that agent (self, QA/admin, or the agent's own TL).
+  // Re-read whenever the URL changes, so the link also works when already on /my-kpi.
+  const [searchParams] = useSearchParams();
+  const linkAgentRaw = (searchParams.get("agent") ?? "").trim().toUpperCase();
+  const linkAgent = /^MAS\d+$/.test(linkAgentRaw) ? linkAgentRaw : "";
+  const linkAuditNum = Number(searchParams.get("audit"));
+  const linkAudit = Number.isInteger(linkAuditNum) && linkAuditNum > 0 ? linkAuditNum : null;
+  const [selectedAgent, setSelectedAgent] = useState(linkAgent);
   const [metricTab, setMetricTab] = useState<"today" | "mtd">("today");
   const [recentTab, setRecentTab] = useState<"all" | "audited">("all");
   const [drawer, setDrawer] = useState<DrawerSpec[]>([]);
+  // The audit from the link waiting to be opened once that agent's data has loaded.
+  const [pendingAudit, setPendingAudit] = useState<number | null>(linkAudit);
+  useEffect(() => {
+    if (linkAgent) setSelectedAgent(linkAgent);
+    if (linkAudit) setPendingAudit(linkAudit);
+  }, [linkAgent, linkAudit, searchParams]);
   const agentCode = selectedAgent || undefined;
   const open = (s: DrawerSpec) => setDrawer([s]);
 
@@ -139,6 +154,12 @@ export function AgentKpiDashboard() {
     enabled: kpi.isSuccess,
   });
 
+  useEffect(() => {
+    if (!pendingAudit || !kpi.isSuccess) return;
+    setDrawer([{ kind: "audit", auditId: pendingAudit }]);
+    setPendingAudit(null);
+  }, [pendingAudit, kpi.isSuccess]);
+
   const notAgent = kpi.isError && (kpi.error as { status?: number } | null)?.status === 403;
   const d = kpi.data;
 
@@ -161,6 +182,12 @@ export function AgentKpiDashboard() {
 
   // "My own dashboard" only makes sense once we know the viewer is themselves an agent.
   const selfIsAgent = !selectedAgent ? kpi.isSuccess : true;
+  const viewingChip = !canViewOthers && selectedAgent ? (
+    <span className="flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs text-indigo-800">
+      Viewing team member {selectedAgent}
+      <button onClick={() => { setSelectedAgent(""); setDrawer([]); }} className="font-semibold underline">Back to my dashboard</button>
+    </span>
+  ) : null;
   const picker = canViewOthers ? (
     <div className="w-72">
       <SearchableSelect
@@ -281,7 +308,7 @@ export function AgentKpiDashboard() {
           <span className="text-xs text-slate-500">Last updated : {fmtDate(d.generated_at.slice(0, 10), new Date(d.generated_at).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" }))}</span>
           <button onClick={() => { qc.invalidateQueries({ queryKey: ["agent-kpi"] }); }} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100" aria-label="Refresh"><RefreshCcw size={15} className={kpi.isFetching ? "animate-spin" : ""} /></button>
           {dateInput}
-          {picker}
+          {picker}{viewingChip}
         </div>
       </section>
 

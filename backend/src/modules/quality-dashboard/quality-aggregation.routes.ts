@@ -164,8 +164,11 @@ qualityAggregationRouter.post("/feedback/:auditId/ack", requireAgent, h(async (r
       comment: typeof rawComment === "string" ? rawComment : null,
       ip: req.ip ?? null,
     });
-    logger.info(`[feedback-ack] agent ${req.agentCode} (user ${req.authUser!.id}) acknowledged audit ${auditId}${result.created ? "" : " (already acknowledged)"}`);
-    res.status(result.created ? 201 : 200).json({ success: true, data: { audit_id: auditId, already_acknowledged: !result.created, ...result.ack } });
+    logger.info(`[feedback-ack] agent ${req.agentCode} (user ${req.authUser!.id}) acknowledged audit ${auditId}${result.created ? "" : " (already acknowledged)"}; TL notified=${result.tl.notified}${result.tl.red ? " (red)" : ""}${result.tl.reason ? ` — ${result.tl.reason}` : ""}`);
+    res.status(result.created ? 201 : 200).json({
+      success: true,
+      data: { audit_id: auditId, already_acknowledged: !result.created, ...result.ack, team_leader_notified: result.tl.notified, red_feedback: result.tl.red },
+    });
   } catch (e) {
     if (e instanceof AckNotFoundError) return res.status(404).json({ success: false, message: e.message });
     if (e instanceof AckUnavailableError) return res.status(503).json({ success: false, message: e.message });

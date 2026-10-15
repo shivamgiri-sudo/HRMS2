@@ -8,7 +8,8 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { CQ_SCORE_SQL } from "../../lib/query-builders/quality-queries.js";
+import { CQ_SCORE_SQL, FATAL_SQL } from "../../lib/query-builders/quality-queries.js";
+import { logger } from "../../logger.js";
 
 export const ACK_SOURCE = "quality_audit";
 
@@ -84,9 +85,10 @@ export async function acknowledgeFeedback(input: {
   employeeId: string | null;
   comment: string | null;
   ip: string | null;
-}): Promise<{ created: boolean; ack: AckInfo }> {
+}): Promise<{ created: boolean; ack: AckInfo; tl: TlNotifyResult }> {
   const [audit] = await db.execute<RowDataPacket[]>(
-    `SELECT q.id, q.areas_for_improvement AS feedback, ROUND(${CQ_SCORE_SQL} * 100, 1) AS cq_pct
+    `SELECT q.id, q.areas_for_improvement AS feedback, q.scenario, ROUND(${CQ_SCORE_SQL} * 100, 1) AS cq_pct,
+            COALESCE(${FATAL_SQL}, 0) AS is_fatal
        FROM db_audit.call_quality_assessment q WHERE q.id = ? AND q.User = ?`,
     [input.auditId, input.masid],
   );
@@ -108,9 +110,88 @@ export async function acknowledgeFeedback(input: {
     const { acks } = await getAckMap(input.masid, [input.auditId]);
     const ack = acks.get(input.auditId);
     if (!ack) throw new Error("Acknowledgement was not recorded");
-    return { created, ack };
+    let notified: TlNotifyResult = { notified: false, red: false, reason: "already acknowledged" };
+    if (created) {
+      notified = await notifyTeamLeader({
+        masid: input.masid,
+        auditId: input.auditId,
+        cqPct: audit[0].cq_pct === null ? null : Number(audit[0].cq_pct),
+        isFatal: Number(audit[0].is_fatal) === 1,
+        scenario: audit[0].scenario ?? null,
+        feedback: audit[0].feedback ?? null,
+        comment,
+      });
+    }
+    return { created, ack, tl: notified };
   } catch (e) {
     if (isMissingTable(e)) throw new AckUnavailableError("Feedback acknowledgement is not set up yet");
     throw e;
+  }
+}
+
+// ─── Team-leader notification ────────────────────────────────────────────────
+
+/** Inbox item type for an agent's acknowledgement, read by the TL popup (TeamFeedbackAckPopup). */
+export const TL_ACK_INBOX_TYPE = "quality_feedback_ack";
+
+/** "Red" feedback: the audit scored below 70% CQ, or it is a fatal call. */
+export const RED_CQ_THRESHOLD = 70;
+
+export type TlNotifyResult = { notified: boolean; red: boolean; reason?: string };
+
+async function findAgentAndLeader(masid: string): Promise<{ name: string | null; tlUserId: string | null } | null> {
+  // Two indexed lookups (call_centre_code, then employee_code) rather than an OR across both.
+  for (const col of ["call_centre_code", "employee_code"] as const) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT TRIM(a.full_name) AS name, m.user_id AS tl_user_id
+         FROM employees a
+         LEFT JOIN employees m ON m.id = COALESCE(a.reporting_manager_id, a.manager_id)
+        WHERE a.${col} = ?
+        ORDER BY a.active_status DESC LIMIT 1`,
+      [masid],
+    );
+    if (rows[0]) return { name: rows[0].name ?? null, tlUserId: rows[0].tl_user_id ?? null };
+  }
+  return null;
+}
+
+/**
+ * Puts an inbox item in the agent's team leader's bell, and red feedback is marked urgent so the
+ * TL's popup flags it. Best effort: a failure here is logged and never undoes the acknowledgement.
+ * In-app only — no email is sent.
+ */
+async function notifyTeamLeader(a: {
+  masid: string; auditId: number; cqPct: number | null; isFatal: boolean;
+  scenario: string | null; feedback: string | null; comment: string | null;
+}): Promise<TlNotifyResult> {
+  const red = a.isFatal || (a.cqPct !== null && a.cqPct < RED_CQ_THRESHOLD);
+  try {
+    const who = await findAgentAndLeader(a.masid);
+    if (!who?.tlUserId) return { notified: false, red, reason: "agent has no team leader with a login" };
+    const name = who.name ?? a.masid;
+    const score = a.cqPct === null ? "CQ —" : `CQ ${a.cqPct}%`;
+    const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+    const description = [
+      `${score}${a.isFatal ? " · FATAL call" : ""}${a.scenario ? ` · ${a.scenario}` : ""}`,
+      a.feedback ? `Feedback: ${clip(a.feedback, 280)}` : null,
+      a.comment ? `Agent's note: ${clip(a.comment, 200)}` : null,
+    ].filter(Boolean).join("\n");
+    const { inboxService } = await import("../inbox/inbox.service.js");
+    await inboxService.createItem({
+      user_id: who.tlUserId,
+      type: TL_ACK_INBOX_TYPE,
+      title: red
+        ? `Red feedback acknowledged — ${name} (${a.masid})`
+        : `${name} (${a.masid}) acknowledged quality feedback`,
+      description,
+      entity_type: "quality_audit",
+      entity_id: String(a.auditId),
+      action_url: `/my-kpi?tab=calls&agent=${encodeURIComponent(a.masid)}&audit=${a.auditId}`,
+      priority: red ? "urgent" : "normal",
+    });
+    return { notified: true, red };
+  } catch (e) {
+    logger.error(`[feedback-ack] could not notify team leader of ${a.masid} for audit ${a.auditId}:`, e);
+    return { notified: false, red, reason: "notification failed" };
   }
 }
