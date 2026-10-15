@@ -2422,17 +2422,17 @@ export async function calculatePayrollRunScoped(
 
       const statutoryDeductions = [
         {
-          code: "PF_EMPLOYEE",
-          name: "Provident Fund (Employee)",
+          code: "PF_EMP",
+          name: "PF Employee",
           amount: calc.pf_employee,
         },
         {
-          code: "ESIC_EMPLOYEE",
-          name: "ESI (Employee)",
+          code: "ESIC_EMP",
+          name: "ESIC Employee",
           amount: calc.esic_employee,
         },
         {
-          code: "PROFESSIONAL_TAX",
+          code: "PT",
           name: "Professional Tax",
           amount: calc.professional_tax,
         },
