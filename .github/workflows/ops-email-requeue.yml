@@ -1,0 +1,52 @@
+name: Ops email requeue (dry run by default)
+
+# Re-arms follow-up invite emails that failed only because of the Gmail daily limit / careers login fault. Dry run unless apply=APPLY.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Type APPLY to re-arm the rows; anything else is a dry run"
+        required: false
+        default: ""
+      days:
+        description: "Look back this many days"
+        required: true
+        default: "3"
+
+concurrency:
+  group: ops-email-requeue
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Email requeue
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Audit (read-only)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          APPLY_INPUT: ${{ inputs.apply }}
+          DAYS: ${{ inputs.days }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::production .env not found"; exit 1; }
+          [[ "$DAYS" =~ ^[0-9]{1,2}$ ]] || { echo "::error::days must be a number"; exit 1; }
+          if [[ "$APPLY_INPUT" == "APPLY" ]]; then export APPLY=1; fi
+          npx tsx scripts/email-requeue-failed.ts "$DAYS"
