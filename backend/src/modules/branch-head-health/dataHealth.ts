@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
-import { listBranchProcesses } from "./processes.js";
+import { ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
+import { listBranchProcesses, masCostCentreSql, type ProcessGroups } from "./processes.js";
 import { loadLatestMetrics } from "./ops.js";
 import type { SectionResult } from "./types.js";
 
@@ -12,11 +12,15 @@ export interface DataHealth {
   staleProcesses: number;
 }
 
-const GATE = `cc.branch_id IN (?) AND cc.active_status = 1 AND b.active_status = 1 AND b.close_date IS NULL AND ${ownCompanyBranchSql("b")} AND (NULLIF(TRIM(COALESCE(cc.company_name, '')), '') IS NULL OR ${ownCompanyCostCentreSql("cc")})`;
+const GATE = `cc.branch_id IN (?) AND cc.active_status = 1 AND b.active_status = 1 AND b.close_date IS NULL AND ${ownCompanyBranchSql("b")} AND ${masCostCentreSql("cc")}`;
 
-export async function buildDataHealth(branchIds: string[], date: string): Promise<SectionResult<DataHealth>> {
+/**
+ * costCentresWithoutProcess: active MAS cost centres in the selected branches with no primary process and no active link row.
+ * Aggregated across all selected branches (not per branch).
+ */
+export async function buildDataHealth(branchIds: string[], date: string, groupsIn?: ProcessGroups): Promise<SectionResult<DataHealth>> {
   if (branchIds.length === 0) return { status: "empty", data: null, asOf: date };
-  const groups = await listBranchProcesses(branchIds);
+  const groups = groupsIn ?? (await listBranchProcesses(branchIds));
   const [[noProc], [seatRows]] = await Promise.all([
     db.query<RowDataPacket[]>(
       `SELECT COUNT(*) AS n

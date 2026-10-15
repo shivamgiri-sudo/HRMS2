@@ -117,9 +117,19 @@ describe("buildOpsSections", () => {
     expect(getKPIs).toHaveBeenCalledWith({ startDate: "2026-10-01", endDate: "2026-10-15", clientIds: [409] });
     expect(getQualityTrend.mock.calls[0][0]).toEqual({ startDate: "2026-10-01", endDate: "2026-10-15", clientIds: [409] });
     const cm = r.callmaster.data as any;
-    expect(cm.fatal.data).toEqual({ totalFatalCalls: 3, agentsWithFatals: 1 });
+    expect(cm.fatal.data).toEqual({ totalFatalCalls: 3, agentsWithFatals: 1, truncated: false });
+    expect(getFatalAgentSummary.mock.calls[0][1]).toBe(5000);
     const json = JSON.stringify(cm.fatal);
     expect(json).not.toMatch(/Asha|"agent"|"name"/);
+  });
+
+  it("fatal section flags truncation when the row limit is hit", async () => {
+    getInboundProjects.mockResolvedValue([{ key: "a", processId: "p1", clientId: "409" }]);
+    getFatalAgentSummary.mockResolvedValue(Array.from({ length: 5000 }, (_, i) => ({ date: "d", agent: `A${i}`, client: "C", fatal_calls: 1 })));
+    const r = await buildOpsSections([proc("p1")], range);
+    const f = (r.callmaster.data as any).fatal.data;
+    expect(f).toEqual({ totalFatalCalls: 5000, agentsWithFatals: 5000, truncated: true });
+    expect(JSON.stringify(f)).not.toMatch(/"agent"|"name"|"code"/);
   });
 
   it("a failing sub-section becomes error while the others stay ok", async () => {

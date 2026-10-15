@@ -9,6 +9,7 @@ export const OPS_METRIC_KEYS = ["AHT", "INBOUND_SL_PCT", "INBOUND_AL_PCT", "QA_Q
 export const METRIC_WINDOW_DAYS = 45;
 export const STALE_AFTER_DAYS = 14;
 const QUALITY_LIMIT = 10;
+export const FATAL_ROW_LIMIT = 5000;
 
 export interface OpsProcessRow {
   processCode: string;
@@ -103,7 +104,7 @@ async function safe<T>(asOf: string, fn: () => Promise<SectionResult<T>>, label:
   }
 }
 
-function monthStart(date: string): string {
+export function monthStart(date: string): string {
   return `${date.slice(0, 7)}-01`;
 }
 
@@ -118,15 +119,19 @@ async function buildCallmaster(processIds: string[], range: { startDate: string;
     safe(asOf, async () => ok(await getQualityTrend(filters, "daily"), asOf), "callmaster quality trend"),
     safe(asOf, async () => ok(await getCXParameters(filters), asOf), "callmaster cx"),
     safe(asOf, async () => {
-      const rows = await getFatalAgentSummary(filters);
+      const rows = await getFatalAgentSummary(filters, FATAL_ROW_LIMIT);
       let totalFatalCalls = 0;
       const agents = new Set<string>();
-      for (const r of rows) {
+      for (const r of rows as Array<Record<string, unknown>>) {
         const n = Number(r.fatal_calls) || 0;
-        if (n > 0) { totalFatalCalls += n; agents.add(String(r.agent)); }
+        if (n <= 0) continue;
+        totalFatalCalls += n;
+        // Most stable key the row carries: agent code if present, else name + client.
+        const code = r.agent_code ?? r.user ?? r.agent_id;
+        agents.add(code != null ? `c:${String(code)}` : `n:${String(r.agent)}|${String(r.client)}`);
       }
       // Counts only: names stay in the process drill-down.
-      return ok({ totalFatalCalls, agentsWithFatals: agents.size }, asOf);
+      return ok({ totalFatalCalls, agentsWithFatals: agents.size, truncated: rows.length >= FATAL_ROW_LIMIT }, asOf);
     }, "callmaster fatal"),
   ]);
   const parts = { kpis, qualityTrend, cx, fatal };
@@ -176,5 +181,3 @@ export async function buildOpsSections(
   }
   return { operations, quality, callmaster: await callmasterP };
 }
-
-export { monthStart };

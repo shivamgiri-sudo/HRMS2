@@ -129,4 +129,19 @@ describe("BranchHeadReferenceLayout", () => {
     expect(branchHeadRoute(false, <div />)).toBeNull();
     expect(branchHeadRoute(true, <div />)?.props.path).toBe("/branch-head/dashboard");
   });
+
+  it("renders data health counts and over-mandate table", () => {
+    const out = html(payload({ dataHealth: { status: "ok", asOf: "2026-10-15", data: {
+      unmappedProcesses: 3, costCentresWithoutProcess: 7, staleProcesses: 2,
+      overMandate: [{ costCentre: "CC-OVER", seats: 10, headcount: 13 }],
+    } } }));
+    expect(out).toContain("Data health");
+    expect(out).toContain("Cost centres without a process");
+    expect(out).toContain("CC-OVER");
+    expect(out).toContain("Over by");
+  });
+  it("data health error is shown inline", () => {
+    const out = html(payload({ dataHealth: { status: "error", data: null, asOf: "2026-10-15" } }));
+    expect(out).toContain("Data health could not be loaded.");
+  });
 });

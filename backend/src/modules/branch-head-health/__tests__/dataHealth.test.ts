@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const query = vi.fn();
 vi.mock("../../../db/mysql.js", () => ({ db: { query: (...a: unknown[]) => query(...a) } }));
 const listBranchProcesses = vi.fn();
-vi.mock("../processes.js", () => ({ listBranchProcesses: (...a: unknown[]) => listBranchProcesses(...a) }));
+vi.mock("../processes.js", () => ({
+  listBranchProcesses: (...a: unknown[]) => listBranchProcesses(...a),
+  masCostCentreSql: (a: string) => `(${a}.company_name LIKE '%mascallnet%')`,
+}));
 
 import { buildDataHealth } from "../dataHealth.js";
 
@@ -71,5 +74,11 @@ describe("buildDataHealth", () => {
     expect(sqls).toHaveLength(2);
     for (const s of sqls) expect(s).toContain("LIKE '%mascallnet%'");
     expect(sqls.find((s) => s.includes("cost_centre_process_link"))).toContain("l.active_status = 1");
+  });
+
+  it("uses supplied process groups without listing again", async () => {
+    route({});
+    await buildDataHealth(["b1"], "2026-10-15", { active: [], unmapped: [bp("u")] } as any);
+    expect(listBranchProcesses).not.toHaveBeenCalled();
   });
 });

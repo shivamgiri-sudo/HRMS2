@@ -191,9 +191,11 @@ describe("branch-head-health routes", () => {
     const [o1, o2] = r.body.data.branches.map((x: any) => x.overview);
     expect(buildOpsSections.mock.calls[0][0].map((p: any) => p.processId)).toEqual(["p1"]);
     expect(buildOpsSections.mock.calls[0][1]).toEqual({ startDate: "2026-10-01", endDate: today });
-    for (const k of ["operations", "quality", "callmaster", "dataHealth"]) expect(o1[k].status).toBe("ok");
+    for (const k of ["operations", "quality", "callmaster"]) expect(o1[k].status).toBe("ok");
+    expect(o1.dataHealth).toBeUndefined();
+    expect(r.body.data.dataHealth.status).toBe("ok");
+    expect(buildDataHealth.mock.calls[0][2]).toEqual(r.body.data.processes);
     expect(o2.operations.status).toBe("error");
-    expect(o2.dataHealth.status).toBe("ok");
     expect(buildDataHealth).toHaveBeenCalledTimes(1);
   });
 
@@ -201,6 +203,7 @@ describe("branch-head-health routes", () => {
     listBranchProcesses.mockRejectedValue(new Error("x"));
     const r = await request(app()).get("/api/branch-head-health/overview");
     const o = r.body.data.branches[0].overview;
-    for (const k of ["operations", "quality", "callmaster", "dataHealth"]) expect(o[k].status).toBe("error");
+    for (const k of ["operations", "quality", "callmaster"]) expect(o[k].status).toBe("error");
+    expect(r.body.data.dataHealth.status).toBe("error");
   });
 });

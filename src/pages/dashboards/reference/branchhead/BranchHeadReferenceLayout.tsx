@@ -1,3 +1,4 @@
+import { DataHealthPanel } from "./DataHealthPanel";
 import { Building2, Home } from "lucide-react";
 import { Panel, SectionTitle } from "../../kit";
 import type { BranchHeadHealthPayload } from "../../../../../backend/src/modules/branch-head-health/types";
@@ -66,6 +67,7 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
       {data.branches.length > 0 || data.processesError ? (
         <>
           <SectionTitle>Processes</SectionTitle>
+          <DataHealthPanel section={data.dataHealth} />
           <ProcessCoveragePanel active={data.processes.active} unmapped={data.processes.unmapped} selectedBranchId={selectedBranchId} branchNames={branchNames} error={data.processesError} />
         </>
       ) : null}

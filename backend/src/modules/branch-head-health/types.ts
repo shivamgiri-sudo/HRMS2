@@ -1,6 +1,7 @@
 import type { HeadBranch } from "./scope.js";
 import type { PillarScore } from "./score.js";
 import type { ProcessGroups } from "./processes.js";
+import type { DataHealth } from "./dataHealth.js";
 
 export type SectionStatus = "ok" | "empty" | "error";
 
@@ -31,7 +32,6 @@ export interface BranchOverview {
   operations?: SectionResult<unknown>;
   quality?: SectionResult<unknown>;
   callmaster?: SectionResult<unknown>;
-  dataHealth?: SectionResult<unknown>;
 }
 
 export interface BranchHeadHealthPayload {
@@ -43,5 +43,7 @@ export interface BranchHeadHealthPayload {
   }>;
   processes: ProcessGroups;
   processesError?: boolean;
+  /** Across the selected branches (not per branch). */
+  dataHealth?: SectionResult<DataHealth>;
   generatedAt: string;
 }
