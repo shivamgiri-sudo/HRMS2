@@ -196,4 +196,11 @@ describe("branch-head-health routes", () => {
     expect(o2.dataHealth.status).toBe("ok");
     expect(buildDataHealth).toHaveBeenCalledTimes(1);
   });
+
+  it("processes failure attaches error sections instead of omitting them", async () => {
+    listBranchProcesses.mockRejectedValue(new Error("x"));
+    const r = await request(app()).get("/api/branch-head-health/overview");
+    const o = r.body.data.branches[0].overview;
+    for (const k of ["operations", "quality", "callmaster", "dataHealth"]) expect(o[k].status).toBe("error");
+  });
 });

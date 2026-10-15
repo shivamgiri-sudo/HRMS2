@@ -63,4 +63,13 @@ describe("buildDataHealth", () => {
     const r = await buildDataHealth(["b1"], "2026-10-15");
     expect(r.data?.staleProcesses).toBe(1);
   });
+
+  it("both cost-centre queries carry the company predicate and the active-link check", async () => {
+    route({});
+    await buildDataHealth(["b1"], "2026-10-15");
+    const sqls = query.mock.calls.map((c) => String(c[0])).filter((s) => s.includes("cost_centre_master"));
+    expect(sqls).toHaveLength(2);
+    for (const s of sqls) expect(s).toContain("LIKE '%mascallnet%'");
+    expect(sqls.find((s) => s.includes("cost_centre_process_link"))).toContain("l.active_status = 1");
+  });
 });

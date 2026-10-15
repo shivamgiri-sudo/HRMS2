@@ -1,6 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { notDialDeskProcessSql, ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
+import { notDialDeskProcessSql, ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 
 export type CoverageTier = "full" | "inbound_quality" | "outbound_sale" | "baseline" | "not_wired";
 
@@ -21,6 +21,11 @@ export interface BranchProcess {
 }
 export interface ProcessGroups { active: BranchProcess[]; unmapped: BranchProcess[] }
 export interface DrillRow { employeeCode: string; name: string; value: number | null; metric: string }
+
+/** Owner rule: a cost centre whose recorded company is not MAS Callnet never surfaces (legacy rows with no company stay). */
+export function masCostCentreSql(alias: string): string {
+  return `(NULLIF(TRIM(COALESCE(${alias}.company_name, '')), '') IS NULL OR ${ownCompanyCostCentreSql(alias)})`;
+}
 
 /** Coverage tier from the metric keys that carried a value in the last 45 days. */
 export function coverageTier(metricKeys: string[]): CoverageTier {
@@ -55,7 +60,7 @@ export async function listBranchProcesses(branchIds: string[]): Promise<ProcessG
            FROM cost_centre_process_link l WHERE l.active_status = 1
        ) x ON x.cc_id = cc.id
       WHERE cc.branch_id IN (?) AND cc.active_status = 1 AND b.active_status = 1 AND b.close_date IS NULL
-        AND ${ownCompanyBranchSql("b")}`,
+        AND ${ownCompanyBranchSql("b")} AND ${masCostCentreSql("cc")}`,
     [branchIds],
   );
   const linkedIds = [...new Set(ccRows.map((r) => String(r.process_id)))];
@@ -175,7 +180,7 @@ export async function getProcessDrilldown(branchId: string, processId: string, m
       WHERE p.id = ? AND p.active_status = 1 AND (
         (EXISTS (SELECT 1 FROM cost_centre_master cc JOIN branch_master cb ON cb.id = cc.branch_id
                   WHERE cc.branch_id = ? AND cc.active_status = 1 AND cb.active_status = 1 AND cb.close_date IS NULL
-                    AND ${ownCompanyBranchSql("cb")}
+                    AND ${ownCompanyBranchSql("cb")} AND ${masCostCentreSql("cc")}
                     AND (cc.process_id = p.id OR EXISTS (SELECT 1 FROM cost_centre_process_link l
                           WHERE l.cost_centre_id = cc.id AND l.process_id = p.id AND l.active_status = 1)))
          AND ${notDialDeskProcessSql("p", "nb")})

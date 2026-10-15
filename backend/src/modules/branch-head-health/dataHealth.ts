@@ -1,6 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
+import { ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { listBranchProcesses } from "./processes.js";
 import { loadLatestMetrics } from "./ops.js";
 import type { SectionResult } from "./types.js";
@@ -12,7 +12,7 @@ export interface DataHealth {
   staleProcesses: number;
 }
 
-const GATE = `cc.branch_id IN (?) AND cc.active_status = 1 AND b.active_status = 1 AND b.close_date IS NULL AND ${ownCompanyBranchSql("b")}`;
+const GATE = `cc.branch_id IN (?) AND cc.active_status = 1 AND b.active_status = 1 AND b.close_date IS NULL AND ${ownCompanyBranchSql("b")} AND (NULLIF(TRIM(COALESCE(cc.company_name, '')), '') IS NULL OR ${ownCompanyCostCentreSql("cc")})`;
 
 export async function buildDataHealth(branchIds: string[], date: string): Promise<SectionResult<DataHealth>> {
   if (branchIds.length === 0) return { status: "empty", data: null, asOf: date };
@@ -22,7 +22,7 @@ export async function buildDataHealth(branchIds: string[], date: string): Promis
       `SELECT COUNT(*) AS n
          FROM cost_centre_master cc JOIN branch_master b ON b.id = cc.branch_id
         WHERE ${GATE} AND cc.process_id IS NULL
-          AND NOT EXISTS (SELECT 1 FROM cost_centre_process_link l WHERE l.cost_centre_id = cc.id)`,
+          AND NOT EXISTS (SELECT 1 FROM cost_centre_process_link l WHERE l.cost_centre_id = cc.id AND l.active_status = 1)`,
       [branchIds],
     ),
     db.query<RowDataPacket[]>(

@@ -164,4 +164,27 @@ describe("getProcessDrilldown", () => {
     expect(sql).toContain("e.branch_id = ?");
     expect(params).toContain("b1");
   });
+
+  it("cost-centre queries carry the MAS company predicate; non-MAS cost centre does not make a BSS mirror", async () => {
+    const seen: string[] = [];
+    query.mockImplementation(async (sql: string) => {
+      if (sql.includes("cost_centre_master")) seen.push(sql);
+      if (sql.includes("GROUP BY e.process_id")) return [[]];
+      if (sql.includes("FROM process_metric_actual")) return [[]];
+      if (sql.includes("cost_centre_master cc")) {
+        // DB applies the predicate: the IDC cost centre row is filtered out.
+        return [sql.includes("LIKE '%mascallnet%'") ? [] : [{ cc_id: "idc", branch_id: "b1", cc_code: "IDC1", mandated_seats: "5", process_id: "bss", via_link: 0 }]];
+      }
+      if (sql.includes("FROM process_master p")) return [[{ id: "bss", process_code: "BSS_FLD_X", process_name: "x", headcount: 0 }]];
+      return [[]];
+    });
+    const g = await listBranchProcesses(["b1"]);
+    expect(g.active).toHaveLength(0);
+    expect(g.unmapped[0]).toMatchObject({ processId: "bss", billingMirror: false });
+    expect(seen[0]).toContain("LIKE '%mascallnet%'");
+    query.mockReset();
+    query.mockResolvedValue([[{ id: "p" }]]);
+    await getProcessDrilldown("b1", "p", "AHT");
+    expect(String(query.mock.calls[0][0])).toContain("cc.company_name");
+  });
 });

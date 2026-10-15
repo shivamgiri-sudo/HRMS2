@@ -135,7 +135,11 @@ branchHeadHealthRouter.get(
       processesError = true;
       console.error("[branch-head-health] process list failed", err);
     }
-    if (!processesError) {
+    if (processesError) {
+      for (const row of rows) {
+        row.overview = { ...row.overview, operations: errorSection(date), quality: errorSection(date), callmaster: errorSection(date), dataHealth: errorSection(date) };
+      }
+    } else {
       let dataHealth: SectionResult<unknown>;
       try {
         dataHealth = await buildDataHealth(branches.map((b) => b.branchId), date);
