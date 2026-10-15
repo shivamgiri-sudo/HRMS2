@@ -137,3 +137,42 @@ describe("daysInMonth", () => {
     expect(daysInMonth(2026, 4)).toBe(30);
   });
 });
+
+describe("visibleDayNumbers", () => {
+  it("a single past month shows every day of it", async () => {
+    const { visibleDayNumbers } = await import("@/lib/attendance-register-columns");
+    const d = visibleDayNumbers({ month: "2026-09", today: "2026-10-15" });
+    expect(d.size).toBe(30);
+    expect(d.has(30)).toBe(true);
+    expect(d.has(31)).toBe(false);
+  });
+
+  it("the current month stops at today", async () => {
+    const { visibleDayNumbers } = await import("@/lib/attendance-register-columns");
+    const d = visibleDayNumbers({ month: "2026-10", today: "2026-10-15" });
+    expect([...d].sort((a, b) => a - b)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1));
+  });
+
+  it("a single-day range shows only that day (the '14th shows till 18th' report)", async () => {
+    const { visibleDayNumbers } = await import("@/lib/attendance-register-columns");
+    const d = visibleDayNumbers({ from: "2026-10-14", to: "2026-10-14", today: "2026-10-15" });
+    expect([...d]).toEqual([14]);
+  });
+
+  it("a range into the future is cut at today", async () => {
+    const { visibleDayNumbers } = await import("@/lib/attendance-register-columns");
+    const d = visibleDayNumbers({ from: "2026-10-13", to: "2026-10-31", today: "2026-10-15" });
+    expect([...d].sort((a, b) => a - b)).toEqual([13, 14, 15]);
+  });
+
+  it("a range across two months unions the day numbers", async () => {
+    const { visibleDayNumbers } = await import("@/lib/attendance-register-columns");
+    const d = visibleDayNumbers({ from: "2026-09-29", to: "2026-10-02", today: "2026-10-15" });
+    expect([...d].sort((a, b) => a - b)).toEqual([1, 2, 29, 30]);
+  });
+
+  it("a month still to come shows nothing", async () => {
+    const { visibleDayNumbers } = await import("@/lib/attendance-register-columns");
+    expect(visibleDayNumbers({ month: "2026-12", today: "2026-10-15" }).size).toBe(0);
+  });
+});

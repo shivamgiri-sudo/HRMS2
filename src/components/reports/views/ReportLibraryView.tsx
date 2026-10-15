@@ -33,6 +33,7 @@
  */
 
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { visibleDayNumbers } from "@/lib/attendance-register-columns";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -1046,25 +1047,17 @@ function resolveColLabel(
 function columnsForMonth<T extends { key: string }>(
   columns: T[],
   reportCode: string,
-  activeMonth: string | undefined
+  filters: { month?: string; from?: string; to?: string }
 ): T[] {
-  if (reportCode !== "attendance-register-monthly" || !activeMonth) return columns;
-  const parts = activeMonth.split("-");
-  const yr = Number(parts[0]);
-  const mo = Number(parts[1]);
-  if (!Number.isFinite(yr) || !Number.isFinite(mo) || mo < 1 || mo > 12) return columns;
-  const dim = new Date(yr, mo, 0).getDate();
-  // No column for a day that has not happened yet: in the current month stop at today, and a
-  // month still to come has no day columns at all (a register of blanks reads as "report ignores
-  // my filter"). Today is taken in IST, the calendar the attendance data is kept in.
+  if (reportCode !== "attendance-register-monthly") return columns;
+  // IST calendar day, the one the attendance data is kept in.
   const todayIst = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
-  const monthKey = `${parts[0]}-${String(mo).padStart(2, "0")}`;
-  let lastDay = dim;
-  if (monthKey > todayIst.slice(0, 7)) lastDay = 0;
-  else if (monthKey === todayIst.slice(0, 7)) lastDay = Math.min(dim, Number(todayIst.slice(8, 10)));
+  const days = visibleDayNumbers({ month: filters.month, from: filters.from, to: filters.to, today: todayIst });
+  const hasScope = Boolean(filters.month || filters.from || filters.to);
+  if (!hasScope) return columns;
   return columns.filter((c) => {
     const m = c.key.match(/^day_(\d+)$/);
-    return !m || Number(m[1]) <= lastDay;
+    return !m || days.has(Number(m[1]));
   });
 }
 
@@ -1105,7 +1098,11 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
         ...(rows.some(r => r.report_month != null)
           ? [{ key: "report_month", label: "Month", format: "text", width: 90 } as ColumnDef]
           : []),
-        ...columnsForMonth(selectedReport.columns, selectedReport.code, filterValues.month),
+        ...columnsForMonth(selectedReport.columns, selectedReport.code, {
+          month: filterValues.month,
+          from: (filterValues as Record<string, string>).from,
+          to: (filterValues as Record<string, string>).to,
+        }),
       ]
     : [];
 
