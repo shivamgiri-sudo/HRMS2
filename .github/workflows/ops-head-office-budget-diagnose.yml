@@ -76,5 +76,8 @@ jobs:
             apr-email-diagnose2)
               npx tsx scripts/apr-email-diagnose2.ts
               ;;
+            apr-email-diagnose3)
+              npx tsx scripts/apr-email-diagnose3.ts
+              ;;
             *) echo "unknown script"; exit 1 ;;
           esac
