@@ -16,7 +16,7 @@ import { db } from "../src/db/mysql.js";
   const t0 = Date.now();
   const { buffer, summary } = await buildLedgerTallyXlsx({ month, kind });
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  await wb.xlsx.load(buffer as unknown as ArrayBuffer);
   console.log("XLSX_BUILT " + JSON.stringify({ month, kind, ms: Date.now() - t0, bytes: buffer.byteLength, zip: buffer.subarray(0, 2).toString() === "PK" }));
   for (const ws of wb.worksheets) console.log("XLSX_SHEET " + JSON.stringify({ name: ws.name, rows: ws.rowCount - 1, columns: ws.columnCount }));
   console.log("XLSX_SUMMARY " + JSON.stringify({ counts: summary.counts, totals: summary.totals, masters: summary.masters }));
