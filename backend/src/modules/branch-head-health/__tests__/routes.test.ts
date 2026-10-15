@@ -36,6 +36,13 @@ vi.mock("../snapshot.js", () => ({
   writeSnapshot: (...a: unknown[]) => writeSnapshot(...a),
   readTrend: (...a: unknown[]) => readTrend(...a),
 }));
+const buildOpsSections = vi.fn();
+const buildDataHealth = vi.fn();
+vi.mock("../ops.js", () => ({
+  buildOpsSections: (...a: unknown[]) => buildOpsSections(...a),
+  monthStart: (d: string) => `${d.slice(0, 7)}-01`,
+}));
+vi.mock("../dataHealth.js", () => ({ buildDataHealth: (...a: unknown[]) => buildDataHealth(...a) }));
 const today = "2026-10-15";
 vi.mock("../../../shared/istDate.js", () => ({ getCurrentDateIST: () => "2026-10-15" }));
 
@@ -61,6 +68,10 @@ beforeEach(() => {
   computeScore.mockReturnValue({ score: 80, pillars: [], excluded: [] });
   listBranchProcesses.mockResolvedValue({ active: [], unmapped: [] });
   writeSnapshot.mockResolvedValue(undefined);
+  buildOpsSections.mockReset();
+  buildDataHealth.mockReset();
+  buildOpsSections.mockResolvedValue({ operations: section, quality: section, callmaster: section });
+  buildDataHealth.mockResolvedValue(section);
 });
 afterEach(() => { delete process.env.BRANCH_HEAD_HEALTH_ENABLED; });
 
@@ -166,5 +177,23 @@ describe("branch-head-health routes", () => {
     expect(peak).toBeLessThanOrEqual(3);
     expect(peak).toBeGreaterThan(1);
     expect(r.body.data.branches.map((x: any) => x.branch.branchId)).toEqual(many.map((m) => m.branchId));
+  });
+
+  it("attaches ops sections with the branch's non-mirror processes; failures isolate", async () => {
+    const pr = (id: string, branchIds: string[], billingMirror = false) => ({ processId: id, billingMirror, branchIds });
+    listBranchProcesses.mockResolvedValue({ active: [pr("p1", ["b1"]), pr("p2", ["b2"]), pr("m", ["b1"], true)], unmapped: [] });
+    buildOpsSections.mockImplementation(async (procs: any[]) => {
+      if (procs[0]?.processId === "p2") throw new Error("boom");
+      return { operations: section, quality: section, callmaster: section };
+    });
+    const r = await request(app()).get("/api/branch-head-health/overview");
+    expect(r.status).toBe(200);
+    const [o1, o2] = r.body.data.branches.map((x: any) => x.overview);
+    expect(buildOpsSections.mock.calls[0][0].map((p: any) => p.processId)).toEqual(["p1"]);
+    expect(buildOpsSections.mock.calls[0][1]).toEqual({ startDate: "2026-10-01", endDate: today });
+    for (const k of ["operations", "quality", "callmaster", "dataHealth"]) expect(o1[k].status).toBe("ok");
+    expect(o2.operations.status).toBe("error");
+    expect(o2.dataHealth.status).toBe("ok");
+    expect(buildDataHealth).toHaveBeenCalledTimes(1);
   });
 });

@@ -28,6 +28,10 @@ export interface BranchOverview {
   hiring: SectionResult<unknown>;
   finance: SectionResult<unknown>;
   leaderboard: SectionResult<LeaderboardRow[]>;
+  operations?: SectionResult<unknown>;
+  quality?: SectionResult<unknown>;
+  callmaster?: SectionResult<unknown>;
+  dataHealth?: SectionResult<unknown>;
 }
 
 export interface BranchHeadHealthPayload {

@@ -5,6 +5,8 @@ import { getCurrentDateIST } from "../../shared/istDate.js";
 import { resolveHeadBranches, type HeadBranch } from "./scope.js";
 import { buildOverview, loadReport } from "./overview.js";
 import { listBranchProcesses, getProcessDrilldown } from "./processes.js";
+import { buildOpsSections, monthStart } from "./ops.js";
+import { buildDataHealth } from "./dataHealth.js";
 import { computeScore } from "./score.js";
 import { writeSnapshot, readTrend } from "./snapshot.js";
 import type { BranchHeadHealthPayload, BranchOverview, SectionResult } from "./types.js";
@@ -132,6 +134,26 @@ branchHeadHealthRouter.get(
     } catch (err) {
       processesError = true;
       console.error("[branch-head-health] process list failed", err);
+    }
+    if (!processesError) {
+      let dataHealth: SectionResult<unknown>;
+      try {
+        dataHealth = await buildDataHealth(branches.map((b) => b.branchId), date);
+      } catch (err) {
+        console.error("[branch-head-health] data health failed", err);
+        dataHealth = errorSection(date);
+      }
+      const range = { startDate: monthStart(date), endDate: date };
+      await mapLimit(rows, MAX_CONCURRENCY, async (row) => {
+        const mine = processes.active.filter((p) => !p.billingMirror && p.branchIds.includes(row.branch.branchId));
+        try {
+          const s = await buildOpsSections(mine, range);
+          row.overview = { ...row.overview, ...s, dataHealth };
+        } catch (err) {
+          console.error("[branch-head-health] ops sections failed", row.branch.branchId, err);
+          row.overview = { ...row.overview, operations: errorSection(date), quality: errorSection(date), callmaster: errorSection(date), dataHealth };
+        }
+      });
     }
     const data: BranchHeadHealthPayload = {
       scope: { viaHomeFallback: scope.viaHomeFallback, orgWide: scope.orgWide, emptyReason: scope.emptyReason },
