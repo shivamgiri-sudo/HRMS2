@@ -55,6 +55,15 @@ export function inSendWindow(now: Date): boolean {
   return (dow !== 0 || sundaySends()) && hour >= OPEN_HOUR && hour < CLOSE_HOUR;
 }
 
+/**
+ * One-off, time-boxed override for a backlog: FOLLOWUP_EMAIL_WINDOW_OVERRIDE_UNTIL=<ISO instant>. Until that instant the EMAIL step
+ * ignores the 09:00-20:00 window (every other guard still applies; WhatsApp and calls keep the window). Unset, malformed or past = off.
+ */
+export function emailWindowOverride(now: Date, env: NodeJS.ProcessEnv = process.env): boolean {
+  const until = Date.parse(String(env.FOLLOWUP_EMAIL_WINDOW_OVERRIDE_UNTIL ?? "").trim());
+  return Number.isFinite(until) && now.getTime() < until;
+}
+
 /** The first 09:00 IST at or after `now` on a send day (same rule as nextWindowOpen). */
 export function nextSendWindowOpen(now: Date): Date {
   let open = istMidnight(now.getTime()) + OPEN_HOUR * 3600_000;
@@ -90,7 +99,7 @@ export function checkFollowupGuards(f: GuardFacts): GuardVerdict {
   if (stage === "A" && requisitionOpenReason(f.requisition, { endDateEnforced: f.endDateEnforced, now: f.now })) return no("requisition_end_date", "skip_step");
   if (f.journeyEnded) return no("journey_ended", "end_journey");
   if (!f.transactional) {
-    if (!inSendWindow(f.now)) return no("outside_window", "hold", nextSendWindowOpen(f.now));
+    if (!inSendWindow(f.now) && !(f.step === "email" && emailWindowOverride(f.now))) return no("outside_window", "hold", nextSendWindowOpen(f.now));
     if (f.step === "whatsapp" && f.waUnpromptedToday >= PERSON_WA_DAILY_MAX) return no("person_daily_cap", "hold", nextDayOpen(f.now));
     if (f.step !== "call_file") {
       // A cadence step waits 60 min after the person's last touch; anything else unprompted waits 120 min.
