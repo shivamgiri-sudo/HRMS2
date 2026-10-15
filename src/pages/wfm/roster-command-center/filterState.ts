@@ -8,12 +8,12 @@ export type FilterKey = "branch" | "process" | "lob" | "dates";
 
 /** Which shared filters each tab honours — drives whether the date range shows. */
 export const TAB_FILTER_SUPPORT: Record<string, FilterKey[]> = {
-  live: ["branch", "process", "lob"],
-  "team-roster": ["branch", "process", "lob"],
-  analytics: ["branch", "process", "lob"],
+  live: ["branch", "process", "lob", "dates"],
+  "team-roster": ["branch", "process", "lob", "dates"],
+  analytics: ["branch", "process", "lob", "dates"],
   trends: ["branch", "process", "lob", "dates"],
   compliance: ["branch", "process", "lob"],
-  shifts: ["branch", "process", "lob"],
+  shifts: ["branch", "process", "lob", "dates"],
   interventions: ["branch", "process", "lob"],
   audit: ["branch", "process", "lob", "dates"],
 };

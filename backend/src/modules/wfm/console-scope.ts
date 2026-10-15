@@ -216,7 +216,9 @@ const MAS_ACTIVE_BRANCH =
   "AND LOWER(REPLACE(REPLACE(COALESCE(b.company_name, ''), ' ', ''), '.', '')) LIKE 'mascallnet%'";
 
 /** Branch and Process dropdown options limited to what the caller may see: active, MAS Callnet only. */
-export async function getConsoleOptions(scope: UserBusinessScope): Promise<ConsoleOptions> {
+export async function getConsoleOptions(scope: UserBusinessScope, opts: { from?: string } = {}): Promise<ConsoleOptions> {
+  // A process that closed inside (or after the start of) the selected date range still has data to analyse.
+  const from = opts.from && /^\d{4}-\d{2}-\d{2}$/.test(opts.from) ? opts.from : null;
   const orgWide = isOrgWide(scope);
   const allowed = allowedBranchIds(scope); // null = org-wide
   const processIds = assignedProcessIds(scope);
@@ -235,11 +237,12 @@ export async function getConsoleOptions(scope: UserBusinessScope): Promise<Conso
   const [processes] = await db.execute<RowDataPacket[]>(
     `SELECT pm.id, pm.process_name, pm.branch_id
        FROM process_master pm
-       JOIN branch_master b ON b.id = pm.branch_id
-      WHERE pm.active_status = 1 AND (pm.close_date IS NULL OR pm.close_date >= CURDATE())
-        AND ${MAS_ACTIVE_BRANCH} AND ${ps.sql}
+       LEFT JOIN branch_master b ON b.id = pm.branch_id
+      WHERE (pm.close_date IS NULL OR pm.close_date >= COALESCE(?, CURDATE()))
+        AND (pm.active_status = 1 OR (? IS NOT NULL AND pm.close_date IS NOT NULL))
+        AND (pm.branch_id IS NULL OR (${MAS_ACTIVE_BRANCH})) AND ${ps.sql}
       ORDER BY pm.process_name`,
-    ps.params,
+    [from, from, ...ps.params],
   );
 
   // Branches: the caller's own, plus the branch of any process they are assigned to.

@@ -99,14 +99,14 @@ function downloadCsv(r: Report) {
 
 export function ShiftAdherenceSection() {
   const { filters } = useRosterConsoleFilters();
-  const { branchId, processId, lobId } = filters;
+  const { branchId, processId, lobId, to: day } = filters;
   const [grace, setGrace] = useState(0);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [drill, setDrill] = useState<Drill | null>(null);
 
   const q = useQuery({
-    queryKey: ["command-center", "shift-adherence", branchId, processId, lobId, grace],
-    queryFn: () => hrmsApi.get<Report>(`/api/roster-intelligence/shift-adherence?${scopeParams({ branchId, processId, lobId }, { grace: String(grace) })}`),
+    queryKey: ["command-center", "shift-adherence", branchId, processId, lobId, grace, day],
+    queryFn: () => hrmsApi.get<Report>(`/api/roster-intelligence/shift-adherence?${scopeParams({ branchId, processId, lobId }, { grace: String(grace), date: day })}`),
     refetchInterval: 120_000, staleTime: 60_000, placeholderData: keepPreviousData,
   });
   const r = q.data;
@@ -115,10 +115,10 @@ export function ShiftAdherenceSection() {
   const logoutIssues = (t?.leftEarly ?? 0) + (t?.missedLogout ?? 0);
 
   const empQ = useQuery({
-    queryKey: ["command-center", "shift-adherence-employees", drill, branchId, lobId, grace],
+    queryKey: ["command-center", "shift-adherence-employees", drill, branchId, lobId, grace, day],
     enabled: !!drill,
     queryFn: () => {
-      const p = scopeParams({ branchId, processId: drill!.processId, lobId }, { grace: String(grace), status: drill!.status });
+      const p = scopeParams({ branchId, processId: drill!.processId, lobId }, { grace: String(grace), status: drill!.status, date: day });
       if (drill!.shift) p.set("shift", drill!.shift);
       if (drill!.manager) p.set("manager", drill!.manager);
       return hrmsApi.get<{ total: number; employees: Emp[] }>(`/api/roster-intelligence/shift-adherence/employees?${p}`);

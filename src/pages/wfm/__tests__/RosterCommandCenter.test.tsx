@@ -66,7 +66,8 @@ describe("shell rendering", () => {
   });
 
   it("shows the date range only on tabs that use it", () => {
-    expect(render("?tab=analytics")).not.toContain("Date range");
+    expect(render("?tab=compliance")).not.toContain("Date range");
+    expect(render("?tab=analytics")).toContain("Date range");
     expect(render("?tab=trends")).toContain("Date range");
   });
 

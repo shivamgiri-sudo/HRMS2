@@ -44,8 +44,10 @@ const SEV_CLS = {
 export default function ProcessTeamRosterPanel() {
   const { filters } = useRosterConsoleFilters();
   const [tp, setTp] = useTabParams({ date: "", q: "", status: "" });
-  const date = pickDay(tp.date, todayISO());
-  const setDate = (d: string) => setTp({ date: d === todayISO() ? "" : d });
+  // Default day follows the shared range's end date; a day picked on this tab still wins.
+  const defaultDay = filters.to <= todayISO() ? filters.to : todayISO();
+  const date = pickDay(tp.date, defaultDay);
+  const setDate = (d: string) => setTp({ date: d === defaultDay ? "" : d });
   const search = tp.q;
   const setSearch = (q: string) => setTp({ q });
   const statusFilter = (STATUS_ORDER as readonly string[]).includes(tp.status) ? (tp.status as Status) : null;

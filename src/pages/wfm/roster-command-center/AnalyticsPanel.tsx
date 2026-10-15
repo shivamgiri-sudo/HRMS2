@@ -64,13 +64,17 @@ export default function AnalyticsPanel() {
   const lobId = filters.lobId;
   const branchSelected = branchId !== ALL;
 
-  const thisWeek = currentWeekStart();
+  // Defaults follow the shared range's end date: its week for Shrinkage, its month for Quality / Cost.
+  const toDate = new Date(`${filters.to}T00:00:00`);
+  const thisWeek = currentWeekStart(Number.isNaN(toDate.getTime()) ? new Date() : toDate);
   const periods = useMemo(() => recentPeriods(12), []);
+  const toPeriod = filters.to.slice(0, 7);
+  const defaultPeriod = periods.includes(toPeriod) ? toPeriod : previousMonth();
   const [tp, setTp] = useTabParams({ sub: "shrinkage", week: "", period: "" });
   const weekStart = pickDay(tp.week, thisWeek);
   const setWeekStart = (w: string) => setTp({ week: w === thisWeek ? "" : w });
-  const period = pickOne(tp.period, periods, previousMonth());
-  const setPeriod = (p: string) => setTp({ period: p === previousMonth() ? "" : p });
+  const period = pickOne(tp.period, periods, defaultPeriod);
+  const setPeriod = (p: string) => setTp({ period: p === defaultPeriod ? "" : p });
   const tab = pickOne(tp.sub, TAB_KEYS, "shrinkage");
   const [visited, setVisited] = useState<Set<TabKey>>(() => new Set([tab]));
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null);

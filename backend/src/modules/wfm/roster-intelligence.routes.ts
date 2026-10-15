@@ -88,7 +88,7 @@ router.get('/console-options', requireRole(...CONSOLE_OPTION_ROLES), async (req,
   try {
     const scope = await getScope(req);
     if (!scope) { res.status(401).json({ error: 'Unauthorized' }); return; }
-    res.json(await getConsoleOptions(scope));
+    res.json(await getConsoleOptions(scope, { from: req.query.from ? String(req.query.from) : undefined }));
   } catch (err: any) {
     console.error('[roster-intelligence] console-options error:', err);
     res.status(500).json({ error: 'Failed to load filter options' });

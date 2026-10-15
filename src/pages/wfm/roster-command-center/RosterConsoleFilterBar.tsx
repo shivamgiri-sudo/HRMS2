@@ -58,8 +58,8 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
   // /api/processes, which returned every process in the company, and /api/wfm/roster-imports/branches, which
   // 403'd for branch heads and process managers.)
   const { data: opts } = useQuery({
-    queryKey: ["roster-console", "console-options"],
-    queryFn: () => hrmsApi.get<ConsoleOptions>("/api/roster-intelligence/console-options"),
+    queryKey: ["roster-console", "console-options", filters.from],
+    queryFn: () => hrmsApi.get<ConsoleOptions>(`/api/roster-intelligence/console-options?from=${encodeURIComponent(filters.from)}`),
     staleTime: 5 * 60_000,
   });
   const orgWide = opts?.orgWide ?? true;

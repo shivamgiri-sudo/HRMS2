@@ -57,7 +57,7 @@ function InsightStrip({ insights, loading, onPick }: { insights: Insight[]; load
 
 export default function ShiftEffectivenessPanel() {
   const { filters } = useRosterConsoleFilters();
-  const { branchId, processId, lobId } = filters;
+  const { branchId, processId, lobId, from, to } = filters;
   const [tab, setTab] = useState<TabKey>("shifts");
   const [shiftId, setShiftId] = useState<string | null>(null);
   const [employeeId, setEmployeeId] = useState<string | null>(null);
@@ -65,11 +65,11 @@ export default function ShiftEffectivenessPanel() {
 
   const { mark, consume } = useRefreshFlags();
   const url = (path: string, flag?: string) => {
-    const p = scopeParams({ branchId, processId, lobId });
+    const p = scopeParams({ branchId, processId, lobId }, { from, to });
     if (flag && consume(flag)) p.set("refresh", "1");
     return `${API}/${path}?${p}`;
   };
-  const scopeKey = [branchId || "all", processId || "all", lobId || "all"];
+  const scopeKey = [branchId || "all", processId || "all", lobId || "all", from, to];
 
   // All three are independent and now cheap enough to run together (no waterfall).
   const shiftsQ = useQuery({
@@ -135,7 +135,7 @@ export default function ShiftEffectivenessPanel() {
         <KpiTile label="Adherence" value={fmtPct(avgAdherence)} sub="Present or half-day / working days" icon={Target} tone={tone(avgAdherence, THRESH.adherence)} delta={shiftData?.totals.adherenceDelta ?? undefined} deltaBad="down" spark={adherenceSpark} progress={avgAdherence ?? undefined} onClick={() => setMetric("adherence")} />
         <KpiTile label="Quality" value={fmtPct(avgQuality)} sub={avgQuality == null && !shiftsQ.isPending ? "No scored calls in scope" : "Weighted by scored days"} icon={Star} tone={tone(avgQuality, THRESH.quality)} progress={avgQuality ?? undefined} onClick={() => setMetric("quality")} />
         <KpiTile label="Break compliance" value={fmtPct(bo?.compliancePct)} sub={noBreaks ? "No kiosk break data" : `${bo?.avgBreakMinutes ?? "—"} of ${bo?.budgetMinutes ?? "—"} min avg`} icon={Coffee} tone={tone(bo?.compliancePct ?? null, THRESH.breaks)} delta={bo?.delta ?? undefined} deltaBad="down" spark={breakSpark} progress={bo?.compliancePct ?? undefined} onClick={() => setMetric("breaks")} />
-        <KpiTile label="Over allowance" value={breaksQ.isPending ? "—" : (bo?.overBreakCount ?? 0)} sub="Employees, last 30 days" icon={Timer} tone={(bo?.overBreakCount ?? 0) > 10 ? "red" : (bo?.overBreakCount ?? 0) > 0 ? "amber" : "green"} onClick={() => setMetric("overBreak")} />
+        <KpiTile label="Over allowance" value={breaksQ.isPending ? "—" : (bo?.overBreakCount ?? 0)} sub="Employees, selected range" icon={Timer} tone={(bo?.overBreakCount ?? 0) > 10 ? "red" : (bo?.overBreakCount ?? 0) > 0 ? "amber" : "green"} onClick={() => setMetric("overBreak")} />
         <KpiTile label="Recommendations" value={recsQ.isPending ? "—" : recs.length} sub="Shift changes to review" icon={Lightbulb} tone="violet" onClick={() => setMetric("recs")} />
       </div>
 

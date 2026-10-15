@@ -77,8 +77,27 @@ export interface DateWindow { from: string; to: string }
  * Today and the future are excluded on purpose: a published roster for tomorrow has no attendance
  * yet and used to be counted as 100% absent (roster_date >= today-30 had no upper bound).
  */
-export function analysisWindows(now: Date = new Date(), days = WINDOW_DAYS): { cur: DateWindow; prev: DateWindow } {
+export function analysisWindows(
+  now: Date = new Date(),
+  days = WINDOW_DAYS,
+  range?: { from?: string; to?: string },
+): { cur: DateWindow; prev: DateWindow } {
   const today = ymd(now);
+  const ISO = /^\d{4}-\d{2}-\d{2}$/;
+  if (range?.from && range?.to && ISO.test(range.from) && ISO.test(range.to) && range.from <= range.to) {
+    // Caller-chosen range: capped at yesterday (same "no unattended future" rule) and 92 days; the comparison
+    // window is the equally long span immediately before it.
+    const yesterday = addDays(today, -1);
+    const to = range.to > yesterday ? yesterday : range.to;
+    let from = range.from > to ? to : range.from;
+    const floor = addDays(to, -91);
+    if (from < floor) from = floor;
+    const [fy, fm, fd] = from.split("-").map(Number);
+    const [ty, tm, td] = to.split("-").map(Number);
+    const len = Math.round((new Date(ty, tm - 1, td).getTime() - new Date(fy, fm - 1, fd).getTime()) / 86400000) + 1;
+    const prevTo = addDays(from, -1);
+    return { cur: { from, to }, prev: { from: addDays(prevTo, -(len - 1)), to: prevTo } };
+  }
   const curTo = addDays(today, -1);
   const curFrom = addDays(curTo, -(days - 1));
   const prevTo = addDays(curFrom, -1);

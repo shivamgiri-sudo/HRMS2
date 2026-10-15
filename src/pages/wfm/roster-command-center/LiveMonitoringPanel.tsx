@@ -56,7 +56,7 @@ function SortHead({ label, k, sort, onSort, right }: { label: string; k: SortKey
 
 export default function LiveMonitoringPanel() {
   const { filters } = useRosterConsoleFilters();
-  const { processId, lobId, branchId } = filters;
+  const { processId, lobId, branchId, to: day } = filters;
   const { toast } = useToast();
   const [tp, setTp] = useTabParams({ sev: "" });
   const sevFilter: Severity | null = pickOne(tp.sev, ["critical", "warning", "info"] as const, "" as never) || null;
@@ -66,18 +66,18 @@ export default function LiveMonitoringPanel() {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "shrinkagePct", dir: -1 });
   const [empId, setEmpId] = useState<string | null>(null);
   const [mgrId, setMgrId] = useState<string | null>(null);
-  const scopeKey = [branchId, processId, lobId];
+  const scopeKey = [branchId, processId, lobId, day];
 
   // Both requests start in parallel; filters are applied server-side (branch/process/LOB narrow
   // the RBAC scope for alerts AND digests). No client-side re-filtering.
   const liveQ = useQuery({
     queryKey: ["command-center", "live", ...scopeKey],
-    queryFn: () => hrmsApi.get<LiveAttendanceData>(`/api/roster-intelligence/unplanned-absences?${scopeParams({ branchId, processId, lobId }, { gracePeriod: "15" })}`),
+    queryFn: () => hrmsApi.get<LiveAttendanceData>(`/api/roster-intelligence/unplanned-absences?${scopeParams({ branchId, processId, lobId }, { gracePeriod: "15", date: day })}`),
     refetchInterval: 60_000, staleTime: 30_000, placeholderData: keepPreviousData,
   });
   const digestQ = useQuery({
     queryKey: ["command-center", "digests", ...scopeKey],
-    queryFn: () => hrmsApi.get<DigestsData>(`/api/roster-intelligence/manager-digests?${scopeParams({ branchId, processId, lobId })}`),
+    queryFn: () => hrmsApi.get<DigestsData>(`/api/roster-intelligence/manager-digests?${scopeParams({ branchId, processId, lobId }, { date: day })}`),
     refetchInterval: 120_000, staleTime: 60_000, placeholderData: keepPreviousData,
   });
 
