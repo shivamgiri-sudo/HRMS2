@@ -239,7 +239,7 @@ export interface AddressBgvInitResult {
 
 export async function initiateAddressBgvForCandidate(
   candidateId: string,
-  opts: { forceUnblock?: boolean; unblockerId?: string | null; onlyIfNone?: boolean } = {},
+  opts: { forceUnblock?: boolean; unblockerId?: string | null; onlyIfNone?: boolean; skipEmail?: boolean } = {},
 ): Promise<AddressBgvInitResult> {
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM candidate_bgv_address_verification WHERE candidate_id = ?`,
@@ -275,7 +275,8 @@ export async function initiateAddressBgvForCandidate(
     return { sent: false, skippedReason: "no_address" };
   }
 
-  if (!candRow?.email) {
+  // skipEmail: HR is copying the link to hand over directly (Ops Control Tower), so no mailbox is needed.
+  if (!opts.skipEmail && !candRow?.email) {
     return { sent: false, skippedReason: "no_email" };
   }
 
@@ -306,16 +307,18 @@ export async function initiateAddressBgvForCandidate(
   const appUrl = process.env.APP_URL ?? "https://mcnhrms.teammas.in";
   const link = `${appUrl}/bgv-address-verify/${token}`;
 
-  void sendAddressBgvLinkEmail({
-    candidateId,
-    to: candRow.email as string,
-    candidateName: (candRow.full_name as string) ?? "Candidate",
-    declaredAddress,
-    verificationLink: link,
-    attemptNumber: nextAttempt,
-    maxAttempts: MAX_ATTEMPTS,
-    expiresAt,
-  }).catch(() => {});
+  if (!opts.skipEmail) {
+    void sendAddressBgvLinkEmail({
+      candidateId,
+      to: candRow.email as string,
+      candidateName: (candRow.full_name as string) ?? "Candidate",
+      declaredAddress,
+      verificationLink: link,
+      attemptNumber: nextAttempt,
+      maxAttempts: MAX_ATTEMPTS,
+      expiresAt,
+    }).catch(() => {});
+  }
 
   return {
     sent: true,
@@ -326,6 +329,38 @@ export async function initiateAddressBgvForCandidate(
     attemptNumber: nextAttempt,
     geoResolved: geo !== null,
   };
+}
+
+/**
+ * A link HR can copy and hand to the candidate. Reuses the candidate's live (pending, unexpired) link so
+ * repeated clicks do not burn the 3-attempt allowance; otherwise mints a fresh attempt WITHOUT emailing.
+ */
+export async function getOrCreateAddressVerificationLink(
+  candidateId: string,
+): Promise<
+  | { ok: true; link: string; expiresAt: Date; reused: boolean }
+  | { ok: false; reason: "max_attempts" | "no_address" }
+> {
+  const appUrl = process.env.APP_URL ?? "https://mcnhrms.teammas.in";
+  const [live] = await db.execute<RowDataPacket[]>(
+    `SELECT token, expires_at FROM candidate_bgv_address_verification
+      WHERE candidate_id = ? AND status = 'pending' AND expires_at > NOW()
+      ORDER BY created_at DESC LIMIT 1`,
+    [candidateId],
+  );
+  if (live[0]) {
+    return {
+      ok: true,
+      link: `${appUrl}/bgv-address-verify/${String(live[0].token)}`,
+      expiresAt: new Date(live[0].expires_at as string),
+      reused: true,
+    };
+  }
+  const r = await initiateAddressBgvForCandidate(candidateId, { skipEmail: true });
+  if (!r.sent || !r.link || !r.expiresAt) {
+    return { ok: false, reason: r.skippedReason === "no_address" ? "no_address" : "max_attempts" };
+  }
+  return { ok: true, link: r.link, expiresAt: r.expiresAt, reused: false };
 }
 
 /**

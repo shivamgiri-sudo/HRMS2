@@ -414,6 +414,64 @@ opsControlTowerRouter.post("/onboarding-link", requireRole(...NUDGE_ROLES), asyn
   }
 });
 
+// POST /api/ops-control-tower/address-link { employeeId } - the candidate's geo-selfie address-verification link,
+// copied by HR to hand over directly (WhatsApp / call). Reuses a live link; otherwise mints a new attempt WITHOUT
+// emailing. Same roles and branch scope as the other link actions; audited without the token.
+opsControlTowerRouter.post("/address-link", requireRole(...NUDGE_ROLES), async (req, res) => {
+  try {
+    const { employeeId } = req.body ?? {};
+    if (typeof employeeId !== "string" || !ID_PATTERN.test(employeeId)) {
+      res.status(400).json({ error: "employeeId must be a valid id" });
+      return;
+    }
+    if (!(await mayUseBlock(req, "address-review-pending"))) {
+      res.status(403).json({ error: "Forbidden: this section is not available to your role" });
+      return;
+    }
+    const branchId = await employeeBranchId(employeeId);
+    if (branchId === null) {
+      res.status(404).json({ error: "Employee not found" });
+      return;
+    }
+    const allowed = await allowedBranchIds(req);
+    if (allowed !== null && !allowed.has(branchId)) {
+      res.status(403).json({ error: "Forbidden: this employee is outside your branch / assigned scope" });
+      return;
+    }
+    const [bridge] = await db.execute<import("mysql2").RowDataPacket[]>(
+      "SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? AND candidate_id IS NOT NULL LIMIT 1",
+      [employeeId],
+    );
+    const candidateId = bridge[0]?.candidate_id ? String(bridge[0].candidate_id) : null;
+    if (!candidateId) {
+      res.status(409).json({ error: "This employee has no onboarding candidate record to verify an address for" });
+      return;
+    }
+    const { getOrCreateAddressVerificationLink } = await import("../ats/bgv-address-verification.routes.js");
+    const out = await getOrCreateAddressVerificationLink(candidateId);
+    if (!out.ok) {
+      res.status(409).json({
+        error: out.reason === "no_address"
+          ? "No present address on the candidate's profile to verify against"
+          : "All 3 address-verification attempts are used - unblock the candidate from the BGV report page first",
+      });
+      return;
+    }
+    void logSensitiveAction({
+      actor_user_id: (req as any).authUser?.id,
+      action_type: "ADDRESS_VERIFICATION_LINK_ISSUED",
+      module_key: "ops-control-tower",
+      entity_type: "employee",
+      entity_id: employeeId,
+      change_summary: { reused: out.reused, expires_at: out.expiresAt },
+      req: req as any,
+    });
+    res.json({ link: out.link, expiresAt: out.expiresAt.toISOString(), reused: out.reused });
+  } catch (err) {
+    fail(res, err, "issue the address verification link");
+  }
+});
+
 // POST /api/ops-control-tower/onboarding-link/email { employeeId, issue } - emails the joiner their link.
 // Same roles, branch scope and section limits as the Copy link action; audited without the token.
 opsControlTowerRouter.post("/onboarding-link/email", requireRole(...NUDGE_ROLES), async (req, res) => {

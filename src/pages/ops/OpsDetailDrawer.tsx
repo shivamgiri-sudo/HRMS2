@@ -64,6 +64,17 @@ async function copyOnboardingLink(employeeId: string, issue: DetailBlockKey) {
   }
 }
 
+/** Address review rows: copies the candidate's geo-selfie address-verification link (reused if still live). */
+async function copyAddressLink(employeeId: string) {
+  try {
+    const out = await hrmsApi.post<{ link: string; expiresAt: string; reused: boolean }>(`${BASE}/address-link`, { employeeId });
+    await navigator.clipboard.writeText(out.link);
+    toast.success(`${out.reused ? "Existing" : "New"} address link copied — valid until ${formatDate(Date.parse(out.expiresAt))}`);
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Could not create the address link");
+  }
+}
+
 /** Emails the joiner their onboarding link; the server reports the real delivery outcome. */
 async function emailOnboardingLinkTo(employeeId: string, issue: DetailBlockKey) {
   try {
@@ -106,6 +117,13 @@ export function DetailRowItem({ block, row, supported, pending, onNotify }: {
             <Link key={l.href} to={l.href} className="inline-flex items-center gap-0.5 text-blue-700 hover:underline">{l.label}<ExternalLink className="h-3 w-3" aria-hidden /></Link>
           )
         ))}
+        {selected.block === "address-review-pending" && (
+          <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs"
+            title="Copy the candidate's address-verification (geo-selfie) link; creates a new one if none is live"
+            onClick={() => void copyAddressLink(row.employeeId)}>
+            <Copy className="mr-1 h-3 w-3" aria-hidden /> Copy address link
+          </Button>
+        )}
         {supported && (
           <>
             <span className={neglected(row) ? "font-medium text-red-700" : "text-slate-500"}>{nudgeLabel(row.nudge)}</span>

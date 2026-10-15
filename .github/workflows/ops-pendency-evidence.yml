@@ -1,0 +1,36 @@
+name: Ops Pendency Evidence (manual, read-only)
+
+# Explains why new joiners still show as Penny drop missing and how the Address review queue is distributed.
+# Prints employee codes only, no names or account data. Writes nothing.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-pendency-evidence-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  stats:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Stats
+        working-directory: backend
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: node scripts/ops-pendency-evidence.mjs
