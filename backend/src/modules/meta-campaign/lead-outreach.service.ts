@@ -360,6 +360,7 @@ export async function notifyQualifiedLead(
       const mail = buildLegacyInviteEmail(ctx, slot, link, { stopLink: true });
       const replyTo = replyToFor(link?.token ?? null);
       await emailService.send({
+        pool: "careers",
         to: ctx.email,
         subject: mail.subject,
         html: mail.html,

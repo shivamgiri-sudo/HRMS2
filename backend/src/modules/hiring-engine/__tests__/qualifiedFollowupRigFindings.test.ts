@@ -21,7 +21,7 @@ vi.mock("../../../db/mysql.js", () => ({
   },
 }));
 vi.mock("../../communication/providers/whatsapp/pinbot.provider.js", () => ({ PinbotWhatsAppProvider: class { isConfigured() { return true; } async sendTemplate(...a: unknown[]) { h.pinbot(...a); return { success: true, message_id: "w1" }; } } }));
-vi.mock("../../communication/email.service.js", () => ({ emailService: { isConfigured: () => true, send: async (...a: unknown[]) => { h.mail(...a); return { messageId: "e1" }; } } }));
+vi.mock("../../communication/email.service.js", () => ({ emailService: { canSend: () => true, isConfigured: () => true, send: async (...a: unknown[]) => { h.mail(...a); return { messageId: "e1" }; } } }));
 vi.mock("../he-lead.service.js", () => ({ addEvent: vi.fn(), hasConsent: vi.fn(async () => true), setLeadStatus: vi.fn() }));
 vi.mock("../he-campaign-config.service.js", () => ({ channelAllowed: vi.fn(async () => true) }));
 vi.mock("../he-policy.service.js", () => ({ whatsappRequiresOptIn: vi.fn(async () => false) }));

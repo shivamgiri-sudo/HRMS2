@@ -31,7 +31,29 @@ export type EmailSendInput = {
   html: string;
   text?: string;
   attachments?: EmailAttachment[];
+  /**
+   * Which mailbox pool sends this. Default is the shared HRMS account. "careers" is the pool of
+   * Careers mailboxes (CAREERS_SMTP_ACCOUNTS) used for candidate-facing hiring mail, so that
+   * volume stops sharing - and exhausting - the staff/HRMS account's daily Gmail limit.
+   */
+  pool?: "careers";
 };
+
+/** Thrown without touching SMTP while a mailbox is known to be over its daily sending limit. */
+export class EmailQuotaError extends Error {
+  readonly code = "EMAIL_QUOTA";
+  constructor(message = "Daily email sending limit reached; send deferred") { super(message); }
+}
+
+/** Gmail "550-5.4.5 Daily user sending limit exceeded". Permanent for the day, not a bad address. */
+export function isDailyLimitError(error: unknown): boolean {
+  const msg = String((error as { message?: unknown } | null)?.message ?? error ?? "");
+  const rc = Number((error as { responseCode?: unknown } | null)?.responseCode);
+  return /5\.4\.5|daily user sending (limit|quota)|sending limit exceeded/i.test(msg) || (rc === 550 && /limit/i.test(msg));
+}
+
+/** How long a mailbox is left alone after Gmail reports its daily limit (it resets on a rolling window). */
+const QUOTA_BLOCK_MS = Math.max(5, Number(process.env.SMTP_QUOTA_BLOCK_MINUTES) || 60) * 60_000;
 
 function smtpSecure(): boolean {
   const explicit = String(process.env.SMTP_SECURE || "").trim().toLowerCase();
@@ -52,11 +74,11 @@ function smtpPassword(): string {
   return String(env.SMTP_PASS || "").replace(/\s+/g, "");
 }
 
-function createTransporter() {
+function createTransporter(account?: { host: string; port: number; user: string; pass: string }) {
   const options: SMTPPool.Options = {
-    host: env.SMTP_HOST,
-    port: env.SMTP_PORT,
-    secure: smtpSecure(),
+    host: account?.host ?? env.SMTP_HOST,
+    port: account?.port ?? env.SMTP_PORT,
+    secure: account ? account.port === 465 : smtpSecure(),
     // Pooled. Previously a fresh transport — and therefore a fresh TCP + TLS handshake —
     // was created for every single message; auth-launch.routes.ts:281 loops up to 500
     // sends in a row. Bounded so a burst cannot exhaust the provider's connection limit.
@@ -68,13 +90,9 @@ function createTransporter() {
     rateLimit: smtpRateLimitPerMinute(),
   };
 
-  const pass = smtpPassword();
-  if (env.SMTP_USER && pass) {
-    options.auth = {
-      user: env.SMTP_USER,
-      pass,
-    };
-  }
+  const user = account?.user ?? env.SMTP_USER;
+  const pass = account ? account.pass : smtpPassword();
+  if (user && pass) options.auth = { user, pass };
 
   return nodemailer.createTransport(options);
 }
@@ -94,6 +112,54 @@ function getTransporter() {
 export function resetTransporter(): void {
   try { cachedTransporter?.close(); } catch { /* already closed */ }
   cachedTransporter = null;
+  for (const a of careersAccounts) { try { a.transporter?.close(); } catch { /* closed */ } a.transporter = null; a.blockedUntil = 0; }
+  careersAccounts = [];
+  careersLoaded = false;
+  defaultBlockedUntil = 0;
+}
+
+let defaultBlockedUntil = 0;
+
+type CareersAccount = { user: string; pass: string; transporter: ReturnType<typeof createTransporter> | null; blockedUntil: number };
+let careersAccounts: CareersAccount[] = [];
+let careersLoaded = false;
+let careersCursor = 0;
+
+/**
+ * CAREERS_SMTP_ACCOUNTS = "a@x.com,b@x.com" (each entry "user" or "user|password"); CAREERS_SMTP_PASS is the
+ * shared password for entries that carry none. Host/port default to the main SMTP settings.
+ */
+function loadCareersAccounts(): CareersAccount[] {
+  if (careersLoaded) return careersAccounts;
+  careersLoaded = true;
+  const shared = String(process.env.CAREERS_SMTP_PASS || "").replace(/\s+/g, "");
+  careersAccounts = String(process.env.CAREERS_SMTP_ACCOUNTS || "")
+    .split(",").map((x) => x.trim()).filter(Boolean)
+    .map((entry) => {
+      const [user, pw] = entry.split("|");
+      return { user: user!.trim(), pass: (pw ?? shared).replace(/\s+/g, ""), transporter: null, blockedUntil: 0 };
+    })
+    .filter((a) => a.user && a.pass);
+  return careersAccounts;
+}
+
+function careersConfig() {
+  return {
+    host: String(process.env.CAREERS_SMTP_HOST || env.SMTP_HOST),
+    port: Number(process.env.CAREERS_SMTP_PORT) || env.SMTP_PORT,
+    fromName: String(process.env.CAREERS_SMTP_FROM_NAME || "MAS Careers").replace(/"/g, ""),
+  };
+}
+
+/** Next careers mailbox that is not over its limit (round robin), or null when none is usable. */
+function pickCareersAccount(): CareersAccount | null {
+  const list = loadCareersAccounts();
+  const now = Date.now();
+  for (let i = 0; i < list.length; i++) {
+    const a = list[(careersCursor + i) % list.length]!;
+    if (a.blockedUntil <= now) { careersCursor = (careersCursor + i + 1) % list.length; return a; }
+  }
+  return null;
 }
 
 /**
@@ -151,15 +217,28 @@ export const emailService = {
     return true;
   },
 
+  /** True when some mailbox is configured for the pool (the default account backs an unconfigured careers pool). */
+  hasTransport(pool?: "careers"): boolean {
+    return (pool === "careers" && loadCareersAccounts().length > 0) || this.isConfigured();
+  },
+
+  /** True when the pool a caller would use has a mailbox that is not over its daily limit. */
+  canSend(pool?: "careers"): boolean {
+    if (pool === "careers" && loadCareersAccounts().length) return loadCareersAccounts().some((a) => a.blockedUntil <= Date.now());
+    return this.isConfigured() && defaultBlockedUntil <= Date.now();
+  },
+
   async send(input: EmailSendInput): Promise<{ messageId?: string }> {
-    if (!this.isConfigured()) {
+    const careers = input.pool === "careers" && loadCareersAccounts().length > 0;
+    if (!careers && !this.isConfigured()) {
       throw new Error("SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM.");
     }
 
     assertNoLocalhostLinks(input);
 
-    const result = await withSmtpRetry(() => getTransporter().sendMail({
-      from: fromAddress(),
+    // A mailbox over its daily limit is skipped without an SMTP attempt: retrying only burns login
+    // attempts (Gmail answers "454 Too many login attempts") and marks rows failed for good.
+    const message = {
       to: input.to,
       ...(input.cc ? { cc: input.cc } : {}),
       ...(input.bcc ? { bcc: input.bcc } : {}),
@@ -170,8 +249,34 @@ export const emailService = {
       html: input.html,
       text: input.text,
       attachments: input.attachments,
-    }));
+    };
 
-    return { messageId: result.messageId };
+    if (!careers) {
+      if (defaultBlockedUntil > Date.now()) throw new EmailQuotaError();
+      try {
+        const result = await withSmtpRetry(() => getTransporter().sendMail({ from: fromAddress(), ...message }));
+        return { messageId: result.messageId };
+      } catch (err) {
+        if (isDailyLimitError(err)) {
+          defaultBlockedUntil = Date.now() + QUOTA_BLOCK_MS;
+          throw new EmailQuotaError(String((err as Error).message));
+        }
+        throw err;
+      }
+    }
+
+    // Careers pool: round robin; a mailbox that reports its limit is parked and the next one is tried.
+    for (;;) {
+      const account = pickCareersAccount();
+      if (!account) throw new EmailQuotaError("All careers mailboxes are at their daily sending limit");
+      const transporter = (account.transporter ??= createTransporter({ ...careersConfig(), user: account.user, pass: account.pass }));
+      try {
+        const result = await withSmtpRetry(() => transporter.sendMail({ from: `"${careersConfig().fromName}" <${account.user}>`, ...message }));
+        return { messageId: result.messageId };
+      } catch (err) {
+        if (!isDailyLimitError(err)) throw err;
+        account.blockedUntil = Date.now() + QUOTA_BLOCK_MS;
+      }
+    }
   },
 };

@@ -73,6 +73,8 @@ export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, 
   if (scope) { if (tag !== "dry_run" && s.killSwitch) return counts; }
   else if (rowTag(s) !== tag) return counts;
   if (tag !== "dry_run" && s.sendsPaused) return counts;
+  // Every careers mailbox is at its daily limit: claiming rows now would only churn them. They stay due.
+  if (tag !== "dry_run" && tag !== "test" && !emailService.canSend("careers")) return counts;
   if (tag === "test" && (s.testMisconfigured || !s.testEmail)) return counts;
   const paused = [...s.pausedSources];
   // Best offer is mandatory in the unified method (one owner per person).
@@ -193,11 +195,19 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: Fol
   let providerId: string | null = null;
   try {
     const replyTo = replyToFor(answerToken);
-    const r = await emailService.send({ to: target, subject: isTest ? `[TEST] ${mail.subject}` : mail.subject, html: mail.html, text: mail.text, ...(replyTo ? { replyTo } : {}) });
+    const r = await emailService.send({ pool: "careers", to: target, subject: isTest ? `[TEST] ${mail.subject}` : mail.subject, html: mail.html, text: mail.text, ...(replyTo ? { replyTo } : {}) });
     providerId = r?.messageId ?? null;
   } catch (err) {
     const msg = scrub(err instanceof Error ? err.message : String(err));
     logger.warn({ rowId: row.id, error: msg.slice(0, 200) }, "[qualified-followup] email send failed");
+    if ((err as { code?: unknown })?.code === "EMAIL_QUOTA") {
+      // Over the daily limit is not the candidate's failure: no attempt counted, the row stays due and goes out after the limit resets.
+      await db.execute(
+        "UPDATE qualified_followup SET email_status = NULL, email_due_at = ?, email_error = ?, step_claimed_at = NULL WHERE id = ?",
+        [new Date(now.getTime() + 60 * 60_000), "daily_limit_deferred", row.id]);
+      counts.held++;
+      return;
+    }
     const f = afterFailure(row.emailAttempts, msg, now);
     counts.failed++;
     if (f.status === null) {

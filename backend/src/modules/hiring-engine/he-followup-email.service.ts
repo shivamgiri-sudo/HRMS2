@@ -122,7 +122,7 @@ export async function sendFollowUpEmail(kind: FollowKind, matchId: string, o: { 
   const messageId = randomUUID();
   try {
     const replyTo = replyToFor(m.token ? String(m.token) : null);
-    const r = await emailService.send({ to, subject: mail.subject, html: mail.html, text: mail.text, ...(replyTo ? { replyTo } : {}) });
+    const r = await emailService.send({ pool: "careers", to, subject: mail.subject, html: mail.html, text: mail.text, ...(replyTo ? { replyTo } : {}) });
     await db.execute(`INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id${o.sentBy ? ", sent_by" : ""}) VALUES (?,?,?,?,?,?,?,?,?,?,?${o.sentBy ? ",?" : ""})`,
       [messageId, m.lead_id, m.mobile10, "out", "email", followKey(kind), mail.subject.slice(0, 2000), r?.messageId ?? null, "sent", m.requisition_id, m.drive_id ?? null, ...(o.sentBy ? [o.sentBy] : [])]);
     await addEvent(String(m.lead_id), `sent_${followKey(kind)}`, { channel: "email", driveId: m.drive_id, detail: to.replace(/^(.).*(@.*)$/, "$1***$2") });
