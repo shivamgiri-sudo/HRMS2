@@ -31,6 +31,7 @@ const ISSUE_TEXT: Record<string, string> = {
   REVENUE_ESTIMATED_FROM_SEAT_RATE: "Revenue is estimated from seats x rate, not invoiced",
   GRN_ESTIMATED_FROM_RESERVED: "Some spend is an estimate from approved, not yet billed, GRNs",
   PAYROLL_WITHOUT_COST_CENTRE: "Some payroll has no cost centre",
+  PAYROLL_NOT_PRORATED: "Payroll carries the full monthly gross with no attendance proration; people cost may be overstated until Payroll confirms it",
 };
 const issueText = (i: string) => ISSUE_TEXT[i] ?? i.replaceAll("_", " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 const errText = (e: unknown) => (e as { message?: string })?.message || "Something went wrong";
