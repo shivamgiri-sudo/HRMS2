@@ -748,6 +748,8 @@ export default function ProcessPnlPage() {
               This matrix is per process: each row sits under the branch its process is managed from, and a process's revenue is the
               sum of its cost centres even where one of them belongs to another branch. For a branch total use Live P&amp;L, CEO
               Overview, the P&amp;L Statement (branch view) or Branch Review, which count each cost centre in the branch that runs it.
+              Profit in this matrix is before the open-budget headroom those views subtract, and for a month that is still running
+              it uses planned revenue and projected people cost, so it is not month-to-date: expect it to differ from them.
             </p>
             <ProcessPnlMatrixToolbar
               preset={matrixPreset}
