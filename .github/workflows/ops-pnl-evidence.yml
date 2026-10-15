@@ -60,6 +60,10 @@ on:
         description: "Set to 'yes' to print per-branch component P&L (revenue, agent, DSC, BMC, GRN, OP) and the non-MAS (DialDesk / I-Spark / IDC) leak check for 'periods' (read-only)."
         required: false
         default: ""
+      masprocess:
+        description: "'dry-run|<cost centre code>|<client name>' or 'apply|...': create the MAS process for a cost centre whose process is non-MAS and point the cost centre and its employees at it (dry run read-only; apply guarded, prints revert)."
+        required: false
+        default: ""
       leavers:
         description: "'YYYY-MM|<cost centre code>' (code optional): db_bill-only employees for the month grouped by left / F&F / earned days with what HRMS knows, and the db_bill master row of the cost centre (read-only, aggregates only)."
         required: false
@@ -147,6 +151,7 @@ jobs:
           INPUT_DBBILLCM: ${{ inputs.dbbillcm }}
           INPUT_TALLYXLSX: ${{ inputs.tallyxlsx }}
           INPUT_LEAVERS: ${{ inputs.leavers }}
+          INPUT_MASPROCESS: ${{ inputs.masprocess }}
           INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
           INPUT_DIAG: ${{ inputs.diag }}
           INPUT_BRANCHPLAN: ${{ inputs.branchplan }}
@@ -160,7 +165,11 @@ jobs:
           INPUT_BOOTDIAG: ${{ inputs.bootdiag }}
         run: |
           set -euo pipefail
-          if [ -n "$INPUT_LEAVERS" ]; then
+          if [ -n "$INPUT_MASPROCESS" ]; then
+            IFS='|' read -r MP_MODE MP_CC MP_CLIENT <<< "$INPUT_MASPROCESS"
+            if [ "$MP_MODE" = "apply" ]; then MASPROC_APPLY=yes npx tsx scripts/pnl-mas-process-create.ts "$MP_CC" "$MP_CLIENT"
+            else npx tsx scripts/pnl-mas-process-create.ts "$MP_CC" "$MP_CLIENT"; fi
+          elif [ -n "$INPUT_LEAVERS" ]; then
             LV_PERIOD="${INPUT_LEAVERS%%|*}"; LV_CC=""; [[ "$INPUT_LEAVERS" == *"|"* ]] && LV_CC="${INPUT_LEAVERS#*|}"
             npx tsx scripts/dbbill-leavers-and-cc.ts "$LV_PERIOD" "$LV_CC"
           elif [ "$INPUT_TALLYXLSX" = "yes" ]; then
