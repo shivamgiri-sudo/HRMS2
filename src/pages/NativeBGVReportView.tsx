@@ -874,7 +874,7 @@ export default function NativeBGVReportView() {
                           v.status === 'pending' ? 'bg-amber-400 text-white' :
                           'bg-red-500 text-white'
                         }`}>{v.status.toUpperCase()}</span>
-                        {v.auto_verified === 1 && <span className="text-xs text-emerald-600 font-semibold">✓ Auto-verified ≤10m</span>}
+                        {v.auto_verified === 1 && <span className="text-xs text-emerald-600 font-semibold">✓ Auto-verified</span>}
                       </div>
 
                       {v.submitted_at && (
@@ -884,6 +884,12 @@ export default function NativeBGVReportView() {
                           {v.gps_latitude && <span><strong>Coordinates:</strong> <a href={`https://maps.google.com/?q=${v.gps_latitude},${v.gps_longitude}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">{Number(v.gps_latitude).toFixed(5)}, {Number(v.gps_longitude).toFixed(5)}</a></span>}
                           {v.gps_accuracy_m && <span><strong>GPS Accuracy:</strong> ±{Number(v.gps_accuracy_m).toFixed(0)} m</span>}
                         </div>
+                      )}
+
+                      {v.assessment?.reasons?.length > 0 && (
+                        <ul className="mb-2 list-disc pl-5 text-xs text-slate-600" aria-label="Why this needs a decision">
+                          {v.assessment.reasons.map((r: string) => <li key={r}>{r}</li>)}
+                        </ul>
                       )}
 
                       {/* HR decision controls */}

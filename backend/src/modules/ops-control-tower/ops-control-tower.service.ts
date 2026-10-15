@@ -985,11 +985,8 @@ export async function getAddressReviewPendingDetail(
 ): Promise<OnboardingDetailRow[]> {
   const rows = await query<RowDataPacket>(
     "address-review-pending-detail",
-    `SELECT e.id AS employee_id, e.employee_code, e.full_name, v.submitted_at,
-            CASE WHEN v.gps_distance_m IS NULL THEN 'No GPS captured'
-                 WHEN v.gps_distance_m < 1000 THEN CONCAT(ROUND(v.gps_distance_m), ' m from declared address')
-                 WHEN v.gps_distance_m < 100000 THEN CONCAT(ROUND(v.gps_distance_m / 1000, 1), ' km from declared address')
-                 ELSE CONCAT(ROUND(v.gps_distance_m / 1000), ' km away - different city') END AS status,
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, v.submitted_at, v.candidate_id,
+            v.gps_distance_m, v.gps_accuracy_m,
             DATEDIFF(CURDATE(), DATE(v.submitted_at)) AS days_open
        FROM candidate_bgv_address_verification v
        JOIN ats_onboarding_bridge b ON b.candidate_id = v.candidate_id
@@ -1000,17 +997,29 @@ export async function getAddressReviewPendingDetail(
       LIMIT 400`,
     [branchId, NEW_JOINER_WINDOW_DAYS],
   );
+  const { assessForCandidate } = await import("../ats/address-verification-assessment.js");
   const seen = new Set<string>();
   const out: OnboardingDetailRow[] = [];
   for (const r of rows) {
     const id = String(r.employee_id);
     if (seen.has(id)) continue; // newest attempt per employee
     seen.add(id);
+    let status: string;
+    try {
+      const a = await assessForCandidate(
+        String(r.candidate_id),
+        r.gps_distance_m === null ? null : Number(r.gps_distance_m),
+        r.gps_accuracy_m === null ? null : Number(r.gps_accuracy_m),
+      );
+      status = a.reasons.join(" · ");
+    } catch {
+      status = r.gps_distance_m === null ? "No GPS captured" : `${Math.round(Number(r.gps_distance_m))} m from declared address`;
+    }
     out.push({
       employeeId: id,
       employeeCode: String(r.employee_code ?? ""),
       employeeName: String(r.full_name ?? ""),
-      status: String(r.status),
+      status,
       daysOpen: Number(r.days_open ?? 0),
     });
   }

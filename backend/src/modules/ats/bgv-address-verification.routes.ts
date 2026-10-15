@@ -16,6 +16,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
+import { assessForCandidate, summarise, type AddressAssessment } from "./address-verification-assessment.js";
 
 // Branch scoping (owner ruling 2026-10-01): HR-facing address-verification actions are limited to candidates
 // inside the caller's own branch / assigned scope (org-wide roles unaffected).
@@ -165,6 +166,7 @@ function extractAddressHints(profile: RowDataPacket | null) {
 async function syncAddressBgvCheck(
   candidateId: string,
   status: "verified" | "failed" | "not_run",
+  verifiedRemarks?: string,
 ) {
   const now = status === "verified" ? new Date() : null;
   const summary =
@@ -199,7 +201,7 @@ async function syncAddressBgvCheck(
     const addressStatus = status === "verified" ? "passed" : "failed";
     const addressRemarks =
       status === "verified"
-        ? "Auto-verified via geo-tagged selfie (GPS within threshold) — no manual review required."
+        ? (verifiedRemarks ?? "Auto-verified via geo-tagged selfie (GPS within threshold) — no manual review required.")
         : "Address verification failed after max attempts on the geo-tagged selfie link.";
     await db.execute(
       `UPDATE candidate_bgv_report
@@ -631,6 +633,20 @@ router.post(
       }
     }
 
+    // Second independent signal: what DigiLocker/Aadhaar holds for this candidate. A selfie close to the
+    // pincode centre plus an agreeing government address is verified; anything else is queued for HR with
+    // the reasons attached (see address-verification-assessment.ts). Never fails the submission.
+    let assessment: AddressAssessment | null = null;
+    try {
+      assessment = await assessForCandidate(row.candidate_id as string, distanceM, acc);
+      if (assessment.tier === "verified" && !autoVerified) {
+        autoVerified = true;
+        newStatus = "verified";
+      }
+    } catch (err) {
+      console.error("[address-bgv] assessment failed:", err instanceof Error ? err.message : err);
+    }
+
     await db.execute(
       `UPDATE candidate_bgv_address_verification
           SET submitted_at = NOW(),
@@ -642,7 +658,8 @@ router.post(
               ip_address = ?,
               device_info = ?,
               status = ?,
-              auto_verified = ?
+              auto_verified = ?,
+              hr_notes = ?
         WHERE token = ?`,
       [
         selfiePath,
@@ -654,13 +671,20 @@ router.post(
         device,
         newStatus,
         autoVerified ? 1 : 0,
+        assessment ? `[auto] ${summarise(assessment)}`.slice(0, 1000) : null,
         token,
       ],
     );
 
     const candidateId = row.candidate_id as string;
     if (autoVerified) {
-      void syncAddressBgvCheck(candidateId, "verified").catch(() => {});
+      void syncAddressBgvCheck(
+        candidateId,
+        "verified",
+        assessment && distanceM !== null && distanceM > GPS_PASS_THRESHOLD_M
+          ? `Auto-verified: ${assessment.reasons.join("; ")}`
+          : undefined,
+      ).catch(() => {});
     } else {
       const [allRows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total,
@@ -697,6 +721,8 @@ router.get(
     "branch_hr",
     "process_hr",
     "recruitment_hr",
+    "payroll_head",
+    "payroll_hr",
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { candidateId } = req.params;
@@ -714,9 +740,20 @@ router.get(
       [candidateId],
     );
     const totalAttempts = Number((countRows[0] as RowDataPacket).cnt);
+    const withAssessment = await Promise.all(
+      rows.map(async (r) => {
+        if (r.status !== "submitted" && r.status !== "verified") return r;
+        const a = await assessForCandidate(
+          candidateId,
+          r.gps_distance_m === null || r.gps_distance_m === undefined ? null : Number(r.gps_distance_m),
+          r.gps_accuracy_m === null || r.gps_accuracy_m === undefined ? null : Number(r.gps_accuracy_m),
+        ).catch(() => null);
+        return { ...r, assessment: a };
+      }),
+    );
     return res.json({
       success: true,
-      data: rows,
+      data: withAssessment,
       meta: {
         totalAttempts,
         maxAttempts: MAX_ATTEMPTS,
@@ -738,6 +775,8 @@ router.patch(
     "branch_hr",
     "process_hr",
     "recruitment_hr",
+    "payroll_head",
+    "payroll_hr",
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
@@ -800,6 +839,47 @@ router.patch(
     }
 
     return res.json({ success: true });
+  }),
+);
+
+// ── Admin: re-assess queued submissions with the two-signal rule ────────────────────────────
+// Dry-run by default. apply=true marks 'verified' only those whose assessment is now verified (exact GPS,
+// or same area plus an agreeing DigiLocker address); everything else is left for HR untouched.
+router.post(
+  "/reassess",
+  requireAuth,
+  requireRole("admin", "hr_admin", "ho_hr", "payroll_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const apply = (req.body as { apply?: boolean } | undefined)?.apply === true;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, candidate_id, gps_distance_m, gps_accuracy_m
+         FROM candidate_bgv_address_verification
+        WHERE status = 'submitted' AND hr_decision IS NULL
+        ORDER BY submitted_at DESC LIMIT 500`,
+    );
+    const tally = { verified: 0, needs_hr: 0, conflict: 0 };
+    const verifiedIds: string[] = [];
+    for (const r of rows) {
+      if (!(await canAccessCandidate(req.authUser!.id, String(r.candidate_id)))) continue;
+      const a = await assessForCandidate(
+        String(r.candidate_id),
+        r.gps_distance_m === null ? null : Number(r.gps_distance_m),
+        r.gps_accuracy_m === null ? null : Number(r.gps_accuracy_m),
+      );
+      tally[a.tier]++;
+      if (a.tier !== "verified") continue;
+      verifiedIds.push(String(r.candidate_id));
+      if (apply) {
+        await db.execute(
+          `UPDATE candidate_bgv_address_verification
+              SET status = 'verified', auto_verified = 1, hr_notes = ?
+            WHERE id = ? AND status = 'submitted' AND hr_decision IS NULL`,
+          [`[auto] ${summarise(a)}`.slice(0, 1000), r.id],
+        );
+        await syncAddressBgvCheck(String(r.candidate_id), "verified", `Auto-verified: ${a.reasons.join("; ")}`);
+      }
+    }
+    return res.json({ success: true, applied: apply, examined: rows.length, tally, verifiedCandidateIds: verifiedIds });
   }),
 );
 
