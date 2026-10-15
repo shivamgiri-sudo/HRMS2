@@ -22,13 +22,15 @@ import {
 export interface AdherenceNode extends Tally, ReturnType<typeof deriveMetrics> {}
 export interface AdherenceSlot extends AdherenceNode { shift: string }
 export interface AdherenceManager extends AdherenceNode { managerId: string | null; manager: string }
-export interface AdherenceLob extends AdherenceNode { lobId: string | null; lob: string }
+export interface AdherenceLob extends AdherenceNode { lobId: string | null; lob: string; headcount: number }
 export interface AdherenceProcess extends AdherenceNode {
   processId: string | null;
   process: string;
   slots: AdherenceSlot[];
   managers: AdherenceManager[];
   lobs: AdherenceLob[];
+  /** Active employees in scope; lets the table list processes with nobody rostered that day. */
+  headcount: number;
 }
 export interface ShiftAdherenceReport {
   date: string;
@@ -149,6 +151,31 @@ export async function getShiftAdherence(
     procs.set(key, p);
   }
 
+  // Every in-scope process and LOB is listed, including ones with nobody rostered on the day (they used to
+  // vanish, so a 90-process scope showed ~30 rows). They carry an empty tally and their headcount.
+  const { conds, params } = buildEmployeeScope(scope, filters);
+  const headRows = (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) ? [] : (await db.execute<RowDataPacket[]>(
+    `SELECT e.process_id, COALESCE(pm.process_name, 'Unassigned') AS process_name, e.lob_id,
+            COALESCE(NULLIF(TRIM(lm.lob_name), ''), 'No LOB') AS lob_name, COUNT(*) AS n
+       FROM employees e
+       JOIN process_master pm ON pm.id = e.process_id AND pm.active_status = 1
+       LEFT JOIN lob_master lm ON lm.id = e.lob_id
+      WHERE e.active_status = 1 AND e.process_id IS NOT NULL
+        ${conds.map((c) => `AND ${c}`).join("\n        ")}
+      GROUP BY e.process_id, pm.process_name, e.lob_id, lm.lob_name`,
+    params,
+  ))[0] as RowDataPacket[];
+  const headByProc = new Map<string, number>();
+  const headByLob = new Map<string, number>();
+  for (const h of headRows) {
+    const key = String(h.process_id);
+    headByProc.set(key, (headByProc.get(key) ?? 0) + Number(h.n));
+    headByLob.set(`${key}|${h.lob_name}`, Number(h.n));
+    const p = procs.get(key) ?? { processId: key, name: String(h.process_name), t: emptyTally(), slots: new Map(), mgrs: new Map(), lobs: new Map() };
+    if (!p.lobs.has(String(h.lob_name))) p.lobs.set(String(h.lob_name), { id: h.lob_id ? String(h.lob_id) : null, t: emptyTally() });
+    procs.set(key, p);
+  }
+
   // Worst adherence first, so the processes that need a conversation lead the table. Processes with
   // nothing measurable yet (no planned shifts due) sink to the bottom.
   const processes: AdherenceProcess[] = [...procs.values()]
@@ -159,7 +186,8 @@ export async function getShiftAdherence(
       slots: [...p.slots.entries()].map(([shift, t]) => ({ shift, ...node(t) })).sort((a, b) => a.shift.localeCompare(b.shift)),
       managers: [...p.mgrs.entries()].map(([manager, v]) => ({ managerId: v.id, manager, ...node(v.t) }))
         .sort((a, b) => (a.adherencePct ?? 101) - (b.adherencePct ?? 101) || b.late - a.late),
-      lobs: [...p.lobs.entries()].map(([lob, v]) => ({ lobId: v.id, lob, ...node(v.t) }))
+      headcount: headByProc.get(String(p.processId)) ?? 0,
+      lobs: [...p.lobs.entries()].map(([lob, v]) => ({ lobId: v.id, lob, headcount: headByLob.get(`${p.processId}|${lob}`) ?? 0, ...node(v.t) }))
         .sort((a, b) => (a.adherencePct ?? 101) - (b.adherencePct ?? 101) || b.planned - a.planned),
     }))
     .sort((a, b) => (a.adherencePct ?? 101) - (b.adherencePct ?? 101) || b.planned - a.planned);

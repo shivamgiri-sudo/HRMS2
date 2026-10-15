@@ -30,8 +30,8 @@ interface Node {
 }
 interface Slot extends Node { shift: string }
 interface Mgr extends Node { managerId: string | null; manager: string }
-interface LobNode extends Node { lobId: string | null; lob: string }
-interface Proc extends Node { processId: string | null; process: string; slots: Slot[]; managers: Mgr[]; lobs: LobNode[] }
+interface LobNode extends Node { lobId: string | null; lob: string; headcount: number }
+interface Proc extends Node { processId: string | null; process: string; slots: Slot[]; managers: Mgr[]; lobs: LobNode[]; headcount: number }
 interface Report {
   date: string; graceMinutes: number; generatedAt: string; totals: Node; processes: Proc[];
   lateBuckets: { key: string; label: string }[];
@@ -195,6 +195,7 @@ export function ShiftAdherenceSection() {
                           className="flex cursor-pointer items-center gap-1 text-left font-medium text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                           {isOpen ? <ChevronDown className="h-4 w-4" aria-hidden /> : <ChevronRight className="h-4 w-4" aria-hidden />}
                           {p.process}
+                          {p.planned === 0 && <span className="ml-1 text-xs font-normal text-slate-500">({p.headcount} staff, none rostered)</span>}
                         </button>
                       </td>
                       <td className="p-2 text-right tabular-nums">{p.planned}</td>
