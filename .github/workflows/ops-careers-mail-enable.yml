@@ -1,0 +1,74 @@
+# Points candidate-facing hiring mail (Hiring Engine, Meta drives, ATS candidate mail) at the Careers mailbox pool.
+# The shared password comes from the repository secret CAREERS_SMTP_PASS and is written only to backend/.env on the server
+# (never printed). mode=remove deletes the settings (mail goes back to the main SMTP account).
+#
+# Changes on the prod server: backend/.env CAREERS_SMTP_* keys, then restarts hrms2-backend and hrms2-workers. A backup of .env is kept.
+
+name: Ops careers mailboxes (enable/disable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "live (use the careers pool) | remove (delete the settings)"
+        required: true
+        type: choice
+        default: live
+        options: [live, remove]
+      accounts:
+        description: "Comma separated careers mailboxes"
+        required: true
+        default: "Careers1@teammas.co.in,Careers2@teammas.co.in,Careers3@teammas.co.in,Careers4@teammas.co.in,Careers5@teammas.co.in"
+      host:
+        description: "SMTP host"
+        required: true
+        default: "mail.teammas.co.in"
+      port:
+        description: "SMTP port"
+        required: true
+        default: "25"
+
+concurrency:
+  group: ops-careers-mail-flag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  flag:
+    name: Set careers mailboxes on the prod server
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Set .env and restart
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          ACCOUNTS: ${{ inputs.accounts }}
+          HOST: ${{ inputs.host }}
+          PORT: ${{ inputs.port }}
+          PW: ${{ secrets.CAREERS_SMTP_PASS }}
+        run: |
+          set -euo pipefail
+          [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || { echo "::error::port must be a number"; exit 1; }
+          [[ "$HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "::error::bad host"; exit 1; }
+          [[ "$ACCOUNTS" =~ ^[A-Za-z0-9._@,+-]+$ ]] || { echo "::error::bad accounts list"; exit 1; }
+          if [[ "$MODE" != "remove" ]]; then
+            [[ -n "$PW" ]] || { echo "::error::CAREERS_SMTP_PASS secret is not set"; exit 1; }
+          fi
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          test -f "$ENV_FILE" || { echo "::error::$ENV_FILE not found."; exit 1; }
+          BACKUP="${ENV_FILE}.bak-careers-$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a "$ENV_FILE" "$BACKUP"; echo "Backed up to $BACKUP"
+          if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then printf '\n' >> "$ENV_FILE"; fi
+          sed -i -E "/^CAREERS_SMTP_(ACCOUNTS|PASS|HOST|PORT|FROM_NAME)=/d" "$ENV_FILE"
+          if [[ "$MODE" != "remove" ]]; then
+            printf 'CAREERS_SMTP_ACCOUNTS=%s\nCAREERS_SMTP_PASS=%s\nCAREERS_SMTP_HOST=%s\nCAREERS_SMTP_PORT=%s\n' \
+              "$ACCOUNTS" "$PW" "$HOST" "$PORT" >> "$ENV_FILE"
+          fi
+          echo "Careers settings now:"; grep -E "^CAREERS_SMTP_(ACCOUNTS|HOST|PORT)=" "$ENV_FILE" || echo "(none)"
+          pm2 restart hrms2-backend hrms2-workers --update-env --no-color
+          pm2 save --no-color
+          pm2 status --no-color
