@@ -92,7 +92,7 @@ export function DbPerformancePanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/db-performance", { credentials: "include" });
+      const res = await fetch("/api/super-admin/db-performance", { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setData(json.data);
