@@ -32,6 +32,7 @@ const WfmDashboard             = lazy(() => import("@/pages/dashboards/WfmDashbo
 const HrDashboard              = lazy(() => import("@/pages/dashboards/HrDashboard"));
 const EmployeeSelfDashboard    = lazy(() => import("@/pages/dashboards/EmployeeSelfDashboard"));
 const ManagerDashboard         = lazy(() => import("@/pages/dashboards/ManagerDashboard"));
+const BranchHeadDashboard      = lazy(() => import("@/pages/dashboards/BranchHeadDashboard"));
 // Unified drill-down dashboards (branch → process → team → analyst), replacing the
 // per-role QualityDashboardRole / OperationsDashboardRole pages at these same routes.
 // See docs/superpowers/specs/2026-08-04-unified-quality-operations-dashboards-design.md
@@ -52,6 +53,7 @@ export const dashboardRouteElements = (
       <Route path="/payroll-hr/dashboard" element={<DashboardRouteGate code="PAYROLL_HR_DASHBOARD"><PayrollHrDashboard /></DashboardRouteGate>} />
       <Route path="/wfm/dashboard"      element={<DashboardRouteGate code="WFM_DASHBOARD"><WfmDashboard /></DashboardRouteGate>} />
       <Route path="/hr/dashboard"       element={<DashboardRouteGate code="HR_DASHBOARD"><HrDashboard /></DashboardRouteGate>} />
+      <Route path="/branch-head/dashboard" element={<DashboardRouteGate code="BRANCH_HEAD_DASHBOARD"><BranchHeadDashboard /></DashboardRouteGate>} />
       <Route path="/manager/dashboard"  element={<DashboardRouteGate code="MANAGEMENT_DASHBOARD"><ManagerDashboard /></DashboardRouteGate>} />
       <Route path="/my-dashboard"       element={<DashboardRouteGate code="EMPLOYEE_SELF_DASHBOARD"><EmployeeSelfDashboard /></DashboardRouteGate>} />
 

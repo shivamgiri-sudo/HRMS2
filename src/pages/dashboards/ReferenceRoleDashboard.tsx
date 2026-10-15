@@ -34,6 +34,7 @@ import { CeoReferenceLayout } from "./reference/CeoReferenceLayout";
 import { EmployeeReferenceLayout } from "./reference/EmployeeReferenceLayout";
 import { HrReferenceLayout } from "./reference/HrReferenceLayout";
 import { ManagerReferenceLayout } from "./reference/ManagerReferenceLayout";
+import { BranchHeadDashboard } from "./reference/branchhead/BranchHeadDashboard";
 import { PayrollReferenceLayout } from "./reference/PayrollReferenceLayout";
 import { SuperAdminReferenceLayout } from "./reference/SuperAdminReferenceLayout";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -664,6 +665,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
         {variant === "hr" ? <HrReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "ceo" ? <CeoReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "payroll" ? <PayrollReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "branch_head" ? <BranchHeadDashboard /> : null}
         {variant === "manager" ? <ManagerReferenceLayout data={data} managerName={employeeName} filters={filterControl} /> : null}
         {variant === "super_admin" ? <SuperAdminReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "ceo" || variant === "super_admin" ? <WalkinFunnelPanel className="mt-4" /> : null}
