@@ -110,6 +110,34 @@ export async function partitionByEmployment<T>(
   return { inside, outside };
 }
 
+/**
+ * The refusal text for a date outside the window, with the window itself and the one case the
+ * uploader can act on: joined earlier than the salary start date (training / induction days).
+ * Pure, so the wording is testable. The generic OUTSIDE_EMPLOYMENT_MESSAGE stays for routes that
+ * do not have the employee's dates to hand.
+ */
+export function outsideEmploymentReason(
+  date: string,
+  windows: Window[],
+  dateOfJoining?: string | null,
+  salaryStartDate?: string | null,
+): string {
+  const span = windows
+    .map((w) => `${w.from ?? "the beginning"} to ${w.to ?? "no exit date"}`)
+    .join(" and ");
+  const base = `${date} is outside this employee's employment period (${span}); attendance cannot be recorded for it.`;
+  const joined = dateOfJoining ? String(dateOfJoining).slice(0, 10) : null;
+  const start = salaryStartDate ? String(salaryStartDate).slice(0, 10) : null;
+  if (joined && start && joined < start && date >= joined && date < start) {
+    return `${base} Joined ${joined} but the salary start date is ${start}; if these days must be recorded, correct the salary start date first.`;
+  }
+  const lastEnd = windows.map((w) => w.to).filter((x): x is string => !!x).sort().pop();
+  if (lastEnd && date > lastEnd) {
+    return `${base} The exit date on record is ${lastEnd}; if the employee is still working, the exit record needs correcting first.`;
+  }
+  return base;
+}
+
 /** Message used by routes that refuse a write outside the window. */
 export const OUTSIDE_EMPLOYMENT_MESSAGE =
   "This date is outside the employee's employment period (salary start date to exit date); attendance cannot be recorded for it.";
