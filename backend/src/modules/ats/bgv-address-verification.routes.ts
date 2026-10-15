@@ -163,7 +163,7 @@ function extractAddressHints(profile: RowDataPacket | null) {
   };
 }
 
-async function syncAddressBgvCheck(
+export async function syncAddressBgvCheck(
   candidateId: string,
   status: "verified" | "failed" | "not_run",
   verifiedRemarks?: string,

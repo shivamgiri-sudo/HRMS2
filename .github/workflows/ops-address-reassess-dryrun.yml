@@ -1,10 +1,15 @@
-name: Ops Address Reassess Dry-Run (manual, read-only)
+name: Ops Address Reassess (manual; dry-run unless apply=APPLY)
 
 # Applies the two-signal address assessment to the submissions waiting for HR and prints the outcome counts.
-# Writes nothing.
+# Dry-run writes nothing. With apply=APPLY it marks ONLY the auto-verifiable submissions verified.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Type APPLY to mark the auto-verifiable submissions verified (writes). Anything else = dry-run.'
+        required: false
+        default: ''
 
 concurrency:
   group: ops-address-reassess-dryrun-production
@@ -33,4 +38,5 @@ jobs:
         env:
           DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
           NODE_ENV: production
+          APPLY: ${{ github.event.inputs.apply == 'APPLY' && '1' || '0' }}
         run: npx tsx scripts/address-reassess-dryrun.ts
