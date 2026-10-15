@@ -75,10 +75,10 @@ async function downloadPayslipPdf(payslip: Payslip): Promise<void> {
   const esic = deduction("ESIC_EMPLOYEE") || deduction("ESIC_EMP") || Number(payslip.esic_employee ?? 0);
   const tds = deduction("TDS") || Number(payslip.tds_amount ?? 0);
   const lwpDed = deduction("LWP_DEDUCTION") || Number(payslip.lwp_deduction ?? 0);
-  const loan = deduction("LOAN") || deduction("LOAN_RECOVERY");
+  const loan = deduction("LOAN_EMI") || deduction("LOAN") || deduction("LOAN_RECOVERY");
   const adDed = deduction("ADVANCE") || deduction("ADVANCE_RECOVERY") || deduction("ADV") || Number(payslip.advance_recovery ?? 0);
   const SLOTTED_DED = new Set(["PF_EMPLOYEE", "PF_EMP", "ESIC_EMPLOYEE", "ESIC_EMP",
-    "TDS", "LWP_DEDUCTION", "LWP", "LOAN", "LOAN_RECOVERY",
+    "TDS", "LWP_DEDUCTION", "LWP", "LOAN_EMI", "LOAN", "LOAN_RECOVERY",
     "ADVANCE", "ADVANCE_RECOVERY", "ADV"]);
   const unslottedDeductions = (payslip.deductions ?? [])
     .filter((d) => !SLOTTED_DED.has(d.component_code.toUpperCase()))
@@ -145,10 +145,10 @@ async function downloadPayslipPdfV2(payslip: Payslip): Promise<void> {
   const esic = deduction("ESIC_EMPLOYEE") || deduction("ESIC_EMP") || Number(payslip.esic_employee ?? 0);
   const tds = deduction("TDS") || Number(payslip.tds_amount ?? 0);
   const lwpDed = deduction("LWP_DEDUCTION") || Number(payslip.lwp_deduction ?? 0);
-  const loan = deduction("LOAN") || deduction("LOAN_RECOVERY");
+  const loan = deduction("LOAN_EMI") || deduction("LOAN") || deduction("LOAN_RECOVERY");
   const adDed = deduction("ADVANCE") || deduction("ADVANCE_RECOVERY") || deduction("ADV") || Number(payslip.advance_recovery ?? 0);
   const SLOTTED_DED = new Set(["PF_EMPLOYEE", "PF_EMP", "ESIC_EMPLOYEE", "ESIC_EMP",
-    "TDS", "LWP_DEDUCTION", "LWP", "LOAN", "LOAN_RECOVERY",
+    "TDS", "LWP_DEDUCTION", "LWP", "LOAN_EMI", "LOAN", "LOAN_RECOVERY",
     "ADVANCE", "ADVANCE_RECOVERY", "ADV"]);
   const unslottedDeductions = (payslip.deductions ?? [])
     .filter((d) => !SLOTTED_DED.has(d.component_code.toUpperCase()))
@@ -177,7 +177,7 @@ async function downloadPayslipPdfV2(payslip: Payslip): Promise<void> {
     ma: ytdFor("MA", "MEDICAL_ALLOWANCE"), sa: ytdFor("SPECIAL", "SPECIAL_ALLOWANCE"),
     arrear: ytdFor("ARREAR"), incentive: ytdFor("INCENTIVE"), oa: ytdUnslottedEarnings,
     pf: ytdFor("PF_EMPLOYEE", "PF_EMP"), esic: ytdFor("ESIC_EMPLOYEE", "ESIC_EMP"), tds: ytdFor("TDS"),
-    lwpDeduction: ytdFor("LWP_DEDUCTION", "LWP"), loan: ytdFor("LOAN", "LOAN_RECOVERY"),
+    lwpDeduction: ytdFor("LWP_DEDUCTION", "LWP"), loan: ytdFor("LOAN_EMI", "LOAN", "LOAN_RECOVERY"),
     adDed: ytdFor("ADVANCE", "ADVANCE_RECOVERY", "ADV"), otherDed: ytdUnslottedDeductions,
   } : undefined;
 

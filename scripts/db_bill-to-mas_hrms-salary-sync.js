@@ -66,7 +66,7 @@ const COMPONENT_MAPPING = {
     { db_bill_field: 'ProTaxDeduction', component_code: 'PT', component_name: 'Professional Tax', taxable: false },
     { db_bill_field: 'IncomeTax', component_code: 'TDS', component_name: 'Tax Deducted at Source', taxable: false },
     { db_bill_field: 'AdvPaid', component_code: 'ADV', component_name: 'Advance Recovery', taxable: false },
-    { db_bill_field: 'LoanDed', component_code: 'LOAN', component_name: 'Loan Deduction', taxable: false },
+    { db_bill_field: 'LoanDed', component_code: 'LOAN_EMI', component_name: 'Loan EMI Recovery', taxable: false },
     { db_bill_field: 'LeaveDeduction', component_code: 'LWP', component_name: 'Leave Without Pay', taxable: false },
     { db_bill_field: 'MobileDedcution', component_code: 'MOBILE_DED', component_name: 'Mobile Deduction', taxable: false },
     { db_bill_field: 'AssetRecovery', component_code: 'ASSET_REC', component_name: 'Asset Recovery', taxable: false },
