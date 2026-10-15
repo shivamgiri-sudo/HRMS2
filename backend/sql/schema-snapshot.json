@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1276,
-  "columnCount": 18578,
+  "tableCount": 1277,
+  "columnCount": 18589,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -74,6 +74,19 @@
       "resolved_at",
       "resolution_note",
       "created_at"
+    ],
+    "agent_feedback_acknowledgement": [
+      "id",
+      "source",
+      "source_record_id",
+      "agent_masid",
+      "employee_id",
+      "acknowledged_by_user_id",
+      "agent_comment",
+      "feedback_snapshot",
+      "cq_pct_snapshot",
+      "ip_address",
+      "acknowledged_at"
     ],
     "agent_target_change_log": [
       "id",
