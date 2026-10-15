@@ -70,5 +70,8 @@ jobs:
             attendance-daily-timing)
               npx tsx scripts/attendance-daily-timing.ts
               ;;
+            apr-email-diagnose)
+              npx tsx scripts/apr-email-diagnose.ts
+              ;;
             *) echo "unknown script"; exit 1 ;;
           esac
