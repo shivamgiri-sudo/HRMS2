@@ -69,6 +69,7 @@ import { startInterventionRecommendationScheduler, stopInterventionRecommendatio
 import { startMetaCampaignSyncScheduler, stopMetaCampaignSyncScheduler } from "../modules/meta-campaign/meta-campaign.cron.js";
 import { startRetentionCron } from "./privacy-retention.worker.js";
 import { startUploadBatchRetentionCron } from "./upload-batch-retention.worker.js";
+import { startDbHealthCron, stopDbHealthCron } from "../cron/db-health.cron.js";
 import { startAtsRemindersScheduler } from "../modules/ats/ats-reminders.cron.js";
 import { startOpsNudgeScheduler } from "../modules/ops-control-tower/ops-nudge.cron.js";
 import { startHiringEngineScheduler } from "../modules/hiring-engine/he-engine.cron.js";
@@ -376,6 +377,11 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // Purges by default (7-day retention); UPLOAD_BATCH_RETENTION_MODE=dry_run turns deletion off. See upload-batch-retention.worker.ts.
     name: "upload-batch-retention",
     start: () => { startUploadBatchRetentionCron(); return Promise.resolve(); },
+  },
+  {
+    // Kills sleeping connections idle ≥5 min, logs Threads_running spikes. Every 5 min.
+    name: "db-health",
+    start: () => { startDbHealthCron(); return Promise.resolve(); },
   },
   {
     name: "business-action-sync",
@@ -717,6 +723,7 @@ function shutdown(): void {
   stopPayrollNightlyRecalcWorker();
   stopPayrollRecalcDrainerWorker();
   stopCostCentreProcessResolverWorker();
+  stopDbHealthCron();
   stopPnlRunningSalaryRefreshWorker();
   stopGstExportAutoWorker();
   stopPayrollPrepReminderWorker();
