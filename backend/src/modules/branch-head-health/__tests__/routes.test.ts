@@ -14,9 +14,13 @@ const readTrend = vi.fn();
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1" }; next(); },
 }));
+const requireRoleSpy = vi.hoisted(() => vi.fn());
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole: () => (req: any, res: any, next: any) =>
-    req.headers["x-role"] === "employee" ? res.status(403).json({ success: false, message: "Forbidden" }) : next(),
+  requireRole: (...roles: string[]) => {
+    requireRoleSpy(...roles);
+    return (req: any, res: any, next: any) =>
+      req.headers["x-role"] === "employee" ? res.status(403).json({ success: false, message: "Forbidden" }) : next();
+  },
 }));
 vi.mock("../scope.js", () => ({ resolveHeadBranches: (...a: unknown[]) => resolveHeadBranches(...a) }));
 vi.mock("../overview.js", () => ({
@@ -131,5 +135,36 @@ describe("branch-head-health routes", () => {
     writeSnapshot.mockRejectedValue(new Error("db down"));
     const r = await request(app()).get("/api/branch-head-health/overview");
     expect(r.status).toBe(200);
+  });
+  it("requireRole is configured with exactly the four roles", () => {
+    expect(requireRoleSpy).toHaveBeenCalledWith("branch_head", "ceo", "coo", "super_admin");
+  });
+  it("400 on unknown trend metric and invalid drilldown metric", async () => {
+    expect((await request(app()).get("/api/branch-head-health/trend?branchId=b1&metric=evil")).status).toBe(400);
+    expect((await request(app()).get("/api/branch-head-health/process/p1/drilldown?branchId=b1&metric=a;drop")).status).toBe(400);
+  });
+  it("listBranchProcesses failure is isolated", async () => {
+    listBranchProcesses.mockRejectedValue(new Error("boom"));
+    const r = await request(app()).get("/api/branch-head-health/overview");
+    expect(r.status).toBe(200);
+    expect(r.body.data.processes).toEqual({ active: [], unmapped: [] });
+    expect(r.body.data.processesError).toBe(true);
+    expect(r.body.data.branches).toHaveLength(2);
+  });
+  it("caps loadReport concurrency at 3 and keeps order", async () => {
+    const many = Array.from({ length: 6 }, (_, i) => ({ branchId: `m${i}`, branchCode: `C${i}`, branchName: `N${i}` }));
+    resolveHeadBranches.mockResolvedValue({ branches: many, viaHomeFallback: false, orgWide: true, emptyReason: null });
+    let inFlight = 0; let peak = 0;
+    loadReport.mockImplementation(async () => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 15));
+      inFlight--;
+      return { raw: {} };
+    });
+    const r = await request(app()).get("/api/branch-head-health/overview");
+    expect(r.status).toBe(200);
+    expect(peak).toBeLessThanOrEqual(3);
+    expect(peak).toBeGreaterThan(1);
+    expect(r.body.data.branches.map((x: any) => x.branch.branchId)).toEqual(many.map((m) => m.branchId));
   });
 });

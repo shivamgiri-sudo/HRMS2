@@ -38,5 +38,6 @@ export interface BranchHeadHealthPayload {
     score: { score: number; pillars: PillarScore[]; excluded: string[] } | null;
   }>;
   processes: ProcessGroups;
+  processesError?: boolean;
   generatedAt: string;
 }

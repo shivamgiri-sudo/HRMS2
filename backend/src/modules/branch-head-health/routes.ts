@@ -42,6 +42,28 @@ function errorOverview(branch: HeadBranch, date: string): BranchOverview {
   };
 }
 
+const MAX_CONCURRENCY = 3;
+
+/** Order-preserving map with bounded concurrency. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+const TREND_METRICS = new Set([
+  "score", "shrinkagePct", "totalLate", "totalActive", "joinedMtd", "leftMtd",
+  "upcomingExits", "openPositions", "budgetUtilizationPct", "opPct",
+]);
+const DRILL_METRIC_RE = /^[A-Z0-9_]{1,64}$/;
+
 function numeric(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
@@ -86,7 +108,7 @@ branchHeadHealthRouter.get(
       ? scope.branches.filter((b) => requested.includes(b.branchId))
       : scope.branches;
 
-    const rows = await Promise.all(branches.map(async (branch) => {
+    const rows = await mapLimit(branches, MAX_CONCURRENCY, async (branch) => {
       try {
         const report = await loadReport(branch, date);
         const overview = await buildOverview(branch, date, report);
@@ -101,13 +123,21 @@ branchHeadHealthRouter.get(
         console.error("[branch-head-health] branch load failed", branch.branchId, err);
         return { branch, overview: errorOverview(branch, date), score: null };
       }
-    }));
+    });
 
-    const processes = await listBranchProcesses(branches.map((b) => b.branchId));
+    let processes: BranchHeadHealthPayload["processes"] = { active: [], unmapped: [] };
+    let processesError = false;
+    try {
+      processes = await listBranchProcesses(branches.map((b) => b.branchId));
+    } catch (err) {
+      processesError = true;
+      console.error("[branch-head-health] process list failed", err);
+    }
     const data: BranchHeadHealthPayload = {
       scope: { viaHomeFallback: scope.viaHomeFallback, orgWide: scope.orgWide, emptyReason: scope.emptyReason },
       branches: rows,
       processes,
+      ...(processesError ? { processesError: true } : {}),
       generatedAt: new Date().toISOString(),
     };
     return res.json({ success: true, data });
@@ -123,6 +153,9 @@ branchHeadHealthRouter.get(
       return res.status(403).json({ success: false, message: "Branch not in your scope" });
     }
     const metric = String(req.query.metric || "QA_QUALITY_PCT");
+    if (!DRILL_METRIC_RE.test(metric)) {
+      return res.status(400).json({ success: false, message: "Invalid metric" });
+    }
     const data = await getProcessDrilldown(branchId, String(req.params.processId), metric);
     return res.json({ success: true, data });
   }),
@@ -137,6 +170,9 @@ branchHeadHealthRouter.get(
       return res.status(403).json({ success: false, message: "Branch not in your scope" });
     }
     const metric = String(req.query.metric || "score");
+    if (!TREND_METRICS.has(metric)) {
+      return res.status(400).json({ success: false, message: "Unknown metric" });
+    }
     const parsed = Math.floor(Number(req.query.days));
     const days = Math.max(1, Math.min(90, Number.isFinite(parsed) && parsed > 0 ? parsed : 30));
     const data = await readTrend(branchId, metric, days);

@@ -55,6 +55,10 @@ async function requireDashboardEntitlement(
   if (!definition) {
     throw dashboardAccessError("Dashboard not found", 404);
   }
+  // Feature-flagged dashboard: invisible while BRANCH_HEAD_HEALTH_ENABLED is off (read per request).
+  if (definition.code === "BRANCH_HEAD_DASHBOARD" && process.env.BRANCH_HEAD_HEALTH_ENABLED !== "true") {
+    throw dashboardAccessError("Dashboard not found", 404);
+  }
   // Demo-bypass identities (INTERNAL_DEMO_BYPASS) have no backing row in user_roles,
   // user_assignment_scope, auth_user or employees — getUserRoleContext's DB-driven lookup
   // always misses for them and falls back to ["employee"], regardless of which demo role
@@ -86,6 +90,7 @@ router.get("/access-registry", h(async (req: AuthenticatedRequest, res: any) => 
   const context = await getUserRoleContext(req.authUser!.id);
   const { DASHBOARD_ACCESS_REGISTRY } = await import("../../shared/dashboardAccessRegistry.js");
   const dashboards = Object.values(DASHBOARD_ACCESS_REGISTRY)
+    .filter((item) => item.code !== "BRANCH_HEAD_DASHBOARD" || process.env.BRANCH_HEAD_HEALTH_ENABLED === "true")
     .filter((item) => canAccessDashboard(item.code, context.roleKeys))
     .map(({ allowedRoleKeys: _allowedRoleKeys, ...item }) => item);
   return res.json({ success: true, data: { dashboards } });
