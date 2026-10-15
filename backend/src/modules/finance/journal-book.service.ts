@@ -45,11 +45,17 @@ export const journalBookService = {
       conditions.push(f.sql);
       params.push(...f.params);
     }
+    // Only MAS Callnet entries: company_name contains 'allnet', or branch has no company_name
+    // set yet but is not an Ispark/Dialdesk branch by name.
+    conditions.push(
+      "(bm.company_name LIKE '%allnet%' OR (bm.company_name IS NULL AND bm.branch_name NOT LIKE '%spar%' AND bm.branch_name NOT LIKE '%ialdesk%'))",
+    );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT je.id, je.entry_date, je.narration, je.source_type, je.source_id, je.posted_at, je.reversed_by_entry_id, je.branch_id,
               SUM(l.debit_amount) AS debit, SUM(l.credit_amount) AS credit, COUNT(*) AS line_count
          FROM journal_entry je
          JOIN journal_entry_line l ON l.journal_entry_id = je.id
+         LEFT JOIN branch_master bm ON bm.id = je.branch_id
         WHERE ${conditions.join(" AND ")}
         GROUP BY je.id, je.entry_date, je.narration, je.source_type, je.source_id, je.posted_at, je.reversed_by_entry_id, je.branch_id
         ORDER BY je.entry_date DESC, je.posted_at DESC
