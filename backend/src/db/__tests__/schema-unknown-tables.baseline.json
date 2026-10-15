@@ -2,6 +2,9 @@
   "db/__tests__/schema-column-refs.test.ts": [
     "leave_requests"
   ],
+  "modules/ats/bgv-address-verification.routes.ts": [
+    "address_bgv_reminder_log"
+  ],
   "modules/ats/dra-certificate.service.ts": [
     "candidate_dra_certificate"
   ],
