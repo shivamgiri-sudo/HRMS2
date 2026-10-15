@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  - job_name: node
+    static_configs:
+      - targets: [node-exporter:9100]
+
+  - job_name: mysql
+    static_configs:
+      - targets: [mysqld-exporter:9104]
+
+  - job_name: hrms-blackbox
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          # HRMS_URL is replaced by install.sh; default below is for local test
+          - http://host.docker.internal:5055/api/health
+          - http://host.docker.internal:5055/api/health/ready
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

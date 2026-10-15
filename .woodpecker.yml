@@ -1,0 +1,44 @@
+when:
+  branch: main
+  event: push
+
+steps:
+  backend-typecheck:
+    image: node:20-alpine
+    commands:
+      - cd backend
+      - npm ci --prefer-offline
+      - npx tsc --noEmit
+    when:
+      path:
+        include: [backend/**]
+
+  frontend-build:
+    image: node:20-alpine
+    commands:
+      - npm ci --prefer-offline
+      - npm run build
+    when:
+      path:
+        include: [src/**, index.html, vite.config.ts, tsconfig*.json]
+
+  deploy:
+    image: appleboy/drone-ssh:1.0.0
+    settings:
+      host: 192.168.11.225
+      username: masadmin
+      key:
+        from_secret: SSH_PRIVATE_KEY
+      script:
+        - cd /var/www/HRMS2
+        - git pull origin main
+        - cd backend && npm ci --prefer-offline && npm run build
+        - cd /var/www/HRMS2 && npm ci --prefer-offline && npm run build
+        - pm2 stop hrms2-backend || true
+        - sleep 1
+        - pm2 delete hrms2-backend || true
+        - pm2 start /var/www/HRMS2/backend/dist/src/server.js --name hrms2-backend --cwd /var/www/HRMS2/backend --log /var/www/HRMS2/backend/logs/backend-out.log --error /var/www/HRMS2/backend/logs/backend-err.log
+        - pm2 save
+    depends_on: [backend-typecheck, frontend-build]
+    when:
+      status: [success]

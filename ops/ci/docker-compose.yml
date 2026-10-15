@@ -1,0 +1,89 @@
+name: hrms-ci
+
+services:
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    # Wraps the Docker socket and exposes only the operations the agent needs.
+    # The agent never touches /var/run/docker.sock directly — no host-escape risk.
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      POST: 1
+      BUILD: 1
+      INFO: 1
+      TASKS: 0
+      SERVICES: 0
+      NODES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.1"
+    restart: unless-stopped
+    networks: [socket-proxy]
+
+  woodpecker-server:
+    image: woodpeckerci/woodpecker-server:v2.7.0
+    ports:
+      - "${BIND_IP}:3333:3000"
+      # gRPC (9000) is internal only — no external port binding
+    environment:
+      - WOODPECKER_OPEN=false
+      - WOODPECKER_HOST=http://${BIND_IP}:3333
+      - WOODPECKER_GITHUB=true
+      - WOODPECKER_GITHUB_CLIENT=${GITHUB_CLIENT_ID}
+      - WOODPECKER_GITHUB_SECRET=${GITHUB_CLIENT_SECRET}
+      - WOODPECKER_AGENT_SECRET=${AGENT_SECRET}
+      - WOODPECKER_ADMIN=${GITHUB_ADMIN_USER}
+      - WOODPECKER_REPO_OWNERS=${GITHUB_REPO_OWNER}
+      - WOODPECKER_LOG_LEVEL=info
+    volumes:
+      - woodpecker_data:/var/lib/woodpecker
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.3"
+    restart: unless-stopped
+    networks: [ci]
+
+  woodpecker-agent:
+    image: woodpeckerci/woodpecker-agent:v2.7.0
+    environment:
+      - WOODPECKER_SERVER=woodpecker-server:9000
+      - WOODPECKER_AGENT_SECRET=${AGENT_SECRET}
+      - WOODPECKER_MAX_WORKFLOWS=4
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+    volumes:
+      - woodpecker_agent:/tmp/woodpecker
+    depends_on: [woodpecker-server, docker-socket-proxy]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+    restart: unless-stopped
+    networks: [ci, socket-proxy]
+
+networks:
+  ci:
+    name: hrms-ci
+    driver: bridge
+  socket-proxy:
+    name: hrms-ci-socket-proxy
+    driver: bridge
+    internal: true  # no external routing; agent reaches proxy, proxy reaches host socket
+
+volumes:
+  woodpecker_data:
+  woodpecker_agent:

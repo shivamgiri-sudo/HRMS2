@@ -1,0 +1,173 @@
+name: hrms-metrics
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.3
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-web-config.yml:/etc/prometheus/web-config.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.config.file=/etc/prometheus/web-config.yml
+      - --storage.tsdb.retention.time=30d
+      # --web.enable-lifecycle omitted: use container restart to reload config
+    ports:
+      - "${BIND_IP}:9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+    restart: unless-stopped
+    networks: [metrics]
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    # pid: host removed — accurate PID metrics not needed, avoids host PID namespace exposure
+    # network_mode: host removed — isolated in Docker network; metrics reach Prometheus fine
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro,rslave
+    command:
+      - --path.procfs=/host/proc
+      - --path.rootfs=/rootfs
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+      - --web.listen-address=:9100
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.2"
+    restart: unless-stopped
+    networks: [metrics]
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    # DSN is read from a credentials file, not an env var (env vars appear in /proc/*/environ)
+    volumes:
+      - ./mysql-exporter.cnf:/etc/mysql-exporter.cnf:ro
+    command:
+      - --config.my-cnf=/etc/mysql-exporter.cnf
+      - --collect.info_schema.processlist
+      - --collect.global_status
+      - --collect.global_variables
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.1"
+    restart: unless-stopped
+    networks: [metrics]
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    volumes:
+      - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.1"
+    restart: unless-stopped
+    networks: [metrics]
+
+  loki:
+    image: grafana/loki:3.2.0
+    volumes:
+      - ./loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/config.yaml
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+    restart: unless-stopped
+    networks: [metrics]
+
+  promtail:
+    image: grafana/promtail:3.2.0
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/www/HRMS2/backend/logs:/var/log/hrms:ro
+      - /var/log:/var/log/system:ro
+    command: -config.file=/etc/promtail/config.yaml
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.2"
+    restart: unless-stopped
+    networks: [metrics]
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_SERVER_ROOT_URL=http://${BIND_IP}:3000
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_LOG_LEVEL=warn
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${BIND_IP}:3000:3000"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+    depends_on: [prometheus, loki]
+    restart: unless-stopped
+    networks: [metrics]
+
+networks:
+  metrics:
+    name: hrms-metrics
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:

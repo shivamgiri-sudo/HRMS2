@@ -1,0 +1,48 @@
+name: hrms-keycloak
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: start
+    environment:
+      KC_DB: mysql
+      KC_DB_URL: "jdbc:mysql://${KC_DB_HOST}:${KC_DB_PORT}/${KC_DB_NAME}?sslMode=PREFERRED"
+      KC_DB_USERNAME: ${KC_DB_USER}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+      # KC_HOSTNAME must be the public HTTPS URL (nginx terminates TLS, proxies to this container)
+      KC_HOSTNAME: ${KC_HOSTNAME}
+      KC_HTTP_ENABLED: "true"       # nginx-to-container leg is plain HTTP on localhost
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_PROXY: edge                # tells Keycloak nginx is the TLS edge
+      KC_HTTP_PORT: 8080
+      KEYCLOAK_ADMIN: ${KC_ADMIN_USER}
+      KEYCLOAK_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
+      KC_LOG_LEVEL: info
+    ports:
+      # Bound to 127.0.0.1 — only nginx on the same host can reach port 8180
+      - "127.0.0.1:8180:8080"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [keycloak]
+
+networks:
+  keycloak:
+    name: hrms-keycloak
+    driver: bridge
+
+volumes: {}
