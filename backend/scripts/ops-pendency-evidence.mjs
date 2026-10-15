@@ -62,4 +62,7 @@ await run("Address review queue: distance buckets", `SELECT
     AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification vv WHERE vv.candidate_id = v.candidate_id AND vv.status = 'verified')
   GROUP BY 1,2 ORDER BY n DESC`);
 await run("Address verification overall", `SELECT status, hr_decision, COUNT(*) n FROM candidate_bgv_address_verification GROUP BY 1,2 ORDER BY n DESC`);
+await run("address_bgv_reminder_log by outcome / reminder number", `SELECT reminder_no, outcome, COUNT(*) n, MIN(sent_at) first_at, MAX(sent_at) last_at FROM address_bgv_reminder_log GROUP BY 1,2`);
+await run("migration 2217 applied?", `SELECT COUNT(*) AS applied FROM schema_migrations WHERE filename LIKE '%2217_address_bgv_reminder_log%'`);
+await run("address links by sent_via/status", `SELECT sent_via, status, COUNT(*) n FROM candidate_bgv_address_verification GROUP BY 1,2`);
 await c.end();
