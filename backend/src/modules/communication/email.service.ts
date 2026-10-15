@@ -75,10 +75,16 @@ function smtpPassword(): string {
 }
 
 function createTransporter(account?: { host: string; port: number; user: string; pass: string }) {
+  const port = account?.port ?? env.SMTP_PORT;
+  const isSecurePort = port === 465;
   const options: SMTPPool.Options = {
     host: account?.host ?? env.SMTP_HOST,
-    port: account?.port ?? env.SMTP_PORT,
-    secure: account ? account.port === 465 : smtpSecure(),
+    port,
+    secure: isSecurePort,
+    // Port 25/587 non-SSL: force STARTTLS before credentials are sent.
+    // Without this flag a misconfigured pool can attempt AUTH on a plain connection
+    // and receive 535 even when the server supports STARTTLS.
+    ...(!isSecurePort ? { requireTLS: true, tls: { rejectUnauthorized: false } } : {}),
     // Pooled. Previously a fresh transport — and therefore a fresh TCP + TLS handshake —
     // was created for every single message; auth-launch.routes.ts:281 loops up to 500
     // sends in a row. Bounded so a burst cannot exhaust the provider's connection limit.
