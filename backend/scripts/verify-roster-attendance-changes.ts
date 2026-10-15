@@ -50,14 +50,14 @@ const scope: any = { companyId: "ops", isSuperAdmin: true, branchScope: all, pro
   const [lob] = await q(`SELECT lob_id, COUNT(*) n FROM employees WHERE active_status = 1 AND lob_id IS NOT NULL GROUP BY lob_id ORDER BY n DESC LIMIT 1`);
   if (lob) {
     const r = await reg({ lobId: lob.lob_id }, 25);
-    const wrong = r.rows.length ? await q(`SELECT COUNT(*) n FROM employees WHERE id IN (${r.rows.map(() => "?").join(",")}) AND (lob_id <> ? OR lob_id IS NULL)`, [...r.rows.map((x: any) => x.employee_id), lob.lob_id]) : [{ n: 0 }];
+    const wrong = r.rows.length ? await q(`SELECT COUNT(*) n FROM employees WHERE employee_code IN (${r.rows.map(() => "?").join(",")}) AND (lob_id <> ? OR lob_id IS NULL)`, [...r.rows.map((x: any) => x.emp_code), lob.lob_id]) : [{ n: 0 }];
     console.log(`LOB ${lob.lob_id}: total ${r.rowCount} (of ${total}), page rows ${r.rows.length}, off-LOB: ${wrong[0].n}`);
     if (wrong[0].n > 0 || r.rowCount >= total) bad++;
   }
   const [mgr] = await q(`SELECT reporting_manager_id, COUNT(*) n FROM employees WHERE active_status = 1 AND reporting_manager_id IS NOT NULL GROUP BY reporting_manager_id ORDER BY n DESC LIMIT 1`);
   if (mgr) {
     const r = await reg({ managerId: mgr.reporting_manager_id }, 25);
-    const wrong = r.rows.length ? await q(`SELECT COUNT(*) n FROM employees WHERE id IN (${r.rows.map(() => "?").join(",")}) AND reporting_manager_id <> ? AND (manager_id IS NULL OR manager_id <> ?)`, [...r.rows.map((x: any) => x.employee_id), mgr.reporting_manager_id, mgr.reporting_manager_id]) : [{ n: 0 }];
+    const wrong = r.rows.length ? await q(`SELECT COUNT(*) n FROM employees WHERE employee_code IN (${r.rows.map(() => "?").join(",")}) AND reporting_manager_id <> ? AND (manager_id IS NULL OR manager_id <> ?)`, [...r.rows.map((x: any) => x.emp_code), mgr.reporting_manager_id, mgr.reporting_manager_id]) : [{ n: 0 }];
     console.log(`manager ${mgr.reporting_manager_id}: total ${r.rowCount} (of ${total}), page rows ${r.rows.length}, off-manager: ${wrong[0].n}`);
     if (wrong[0].n > 0 || r.rowCount >= total) bad++;
   }
