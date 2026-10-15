@@ -142,10 +142,42 @@ UPDATE gst_export_row
 SET hsn_sac_code = '998593'
 WHERE hsn_sac_code IN ('N/A', 'NA', 'n/a', 'na', '');
 
--- ─── 6. INDEX on client_master.gstin ────────────────────────────────────────
+-- ─── 6. BACKFILL gstin + pan_number from cost_centre_master ─────────────────
+--
+-- cost_centre_master.vendor_gst_no holds the client GSTIN at process level.
+-- Only take rows where a client has exactly 1 distinct GSTIN across all its
+-- cost centres (unambiguous). Multi-state clients (>1 GSTIN) are skipped.
+-- PAN is always derivable from a valid 15-char GSTIN (chars 3–12).
+
+UPDATE client_master cm
+JOIN (
+  SELECT cc.client_id,
+         MAX(cc.vendor_gst_no)                    AS gstin,
+         LEFT(MAX(cc.vendor_gst_no), 2)            AS billing_state_code,
+         UPPER(SUBSTR(MAX(cc.vendor_gst_no), 3, 10)) AS pan_number
+  FROM cost_centre_master cc
+  JOIN client_master cm2 ON cm2.id = cc.client_id
+  WHERE cc.vendor_gst_no IS NOT NULL AND LENGTH(cc.vendor_gst_no) = 15
+    AND cm2.gstin IS NULL
+  GROUP BY cc.client_id
+  HAVING COUNT(DISTINCT cc.vendor_gst_no) = 1
+) src ON cm.id = src.client_id
+SET cm.gstin             = src.gstin,
+    cm.billing_state_code = src.billing_state_code,
+    cm.pan_number        = src.pan_number
+WHERE cm.gstin IS NULL;
+
+-- Derive PAN for any remaining rows that got GSTIN earlier (gst_export_row backfill)
+-- but had pan_number not yet set.
+UPDATE client_master
+SET pan_number = UPPER(SUBSTR(gstin, 3, 10))
+WHERE gstin IS NOT NULL AND LENGTH(gstin) = 15 AND pan_number IS NULL;
+
+-- ─── 7. INDEX on client_master.gstin ────────────────────────────────────────
 
 SET @s = IF((SELECT COUNT(*) FROM information_schema.STATISTICS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'client_master' AND INDEX_NAME = 'idx_client_master_gstin') = 0,
   'ALTER TABLE client_master ADD INDEX idx_client_master_gstin (gstin)',
   'SELECT 1');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
