@@ -1,0 +1,63 @@
+name: Ops COSEC excluded-employee backfill (dry run by default)
+
+# Repairs October punches for employees whose COSEC id sat on the exclusion list
+# (WFM email 2026-10-15). Dry run lists the affected employees and writes nothing.
+# Apply needs the word APPLY typed into `confirm`; September is never touched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run writes nothing"
+        required: true
+        default: dry-run
+        type: choice
+        options: [dry-run, apply, apply-and-deactivate]
+      confirm:
+        description: "Type APPLY to write (ignored for dry-run)"
+        required: false
+        type: string
+
+concurrency:
+  group: ops-cosec-excluded-backfill
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - name: Refuse an unconfirmed apply
+        if: inputs.mode != 'dry-run'
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          [ "$CONFIRM" = "APPLY" ] || { echo "::error::type APPLY in confirm"; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            dry-run) npx tsx scripts/cosec-excluded-employee-backfill.ts ;;
+            apply) npx tsx scripts/cosec-excluded-employee-backfill.ts --apply ;;
+            apply-and-deactivate) npx tsx scripts/cosec-excluded-employee-backfill.ts --apply --deactivate ;;
+          esac
