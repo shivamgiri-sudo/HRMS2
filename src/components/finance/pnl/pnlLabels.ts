@@ -49,12 +49,12 @@ export const PNL_TERMS = {
   OPERATING_PROFIT: {
     label: "Operating Profit",
     tooltip:
-      "P&L Statement waterfall: Recognised Revenue − Total Cost (Agent + DSC + BMC salary + Indirect Cost), before depreciation, finance cost and tax. Built from the Statement's own cost lines, so it can differ from Operating Profit (contribution) on CEO Overview and Live P&L.",
+      "P&L Statement waterfall: Recognised Revenue − Total Cost (Agent + DSC + BMC salary + Indirect Cost: GRN consumed, reserved and open-budget headroom), before depreciation, finance cost and tax. For a branch it equals Operating Profit (contribution) on CEO Overview and Live P&L; a process column counts only that process's own revenue and cost, so process columns do not add up to the branch.",
   },
   OPERATING_PROFIT_CONTRIBUTION: {
     label: "Operating Profit (contribution)",
     tooltip:
-      "Recognised Revenue − People Cost − Indirect Cost (GRN Consumed + Committed), before depreciation, finance cost and tax. The same figure on CEO Overview and Live P&L; the P&L Statement's Operating Profit is built from its own Agent/DSC/BMC lines and can differ.",
+      "Recognised Revenue − People Cost − Indirect Cost (GRN Consumed + Committed + open-budget headroom), before depreciation, finance cost and tax. The same figure on CEO Overview, Live P&L and, for a branch, the P&L Statement.",
   },
   OPERATING_MARGIN: {
     label: "Operating Margin %",

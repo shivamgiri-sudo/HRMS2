@@ -270,6 +270,12 @@ export function PnlStatementView({
             so no attendance proration was applied. People cost is shown as the run stands and may be overstated until Payroll confirms it.
           </p>
         )}
+        {statement.viewBy === "process" && (
+          <p className="mb-2 text-[11px] text-slate-500" data-testid="statement-process-note">
+            Process view: each column counts only that process&apos;s own revenue, people and GRN, so the columns do not add up to the branch.
+            Switch to the Branch view for the branch total, which is the figure Live P&amp;L and the header show.
+          </p>
+        )}
         <p className="mb-2 text-[11px] text-slate-500" data-testid="statement-scope-note">
           Operating Profit here is operating profit by branch: Revenue − people cost − GRN (consumed, reserved and open-budget headroom).
           Interest, provisions, depreciation and other finance-level costs are not allocated to branches and are not in it.
