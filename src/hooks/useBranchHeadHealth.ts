@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import type { BranchHeadHealthPayload } from "../../backend/src/modules/branch-head-health/types";
 import type { DrillRow } from "../../backend/src/modules/branch-head-health/processes";
@@ -29,8 +29,9 @@ export function useBranchHeadHealth(branchIds: string[], date?: string) {
     queryFn: () => fetchBranchHeadHealth(branchIds, date),
     staleTime: 60_000,
     retry: 1,
+    placeholderData: keepPreviousData,
   });
-  return { data: query.data, isLoading: query.isLoading, error: query.error as Error | null, refetch: query.refetch };
+  return { data: query.data, isLoading: query.isLoading, isFetching: query.isFetching, error: query.error as Error | null, refetch: query.refetch };
 }
 
 export function useProcessDrilldown(branchId: string, processId: string, metric: string, enabled: boolean) {

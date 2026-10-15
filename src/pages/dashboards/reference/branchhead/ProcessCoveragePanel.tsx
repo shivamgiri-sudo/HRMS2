@@ -21,17 +21,24 @@ export function CoverageBadge({ tier }: { tier: CoverageTier }) {
   );
 }
 
-export function DrilldownTable({ rows }: { rows: DrillRow[] }) {
+/** Drill-down metric per coverage tier; null means no agent-level metric exists for the tier. */
+export function drillMetricFor(tier: CoverageTier): { key: string; label: string } | null {
+  if (tier === "full" || tier === "inbound_quality") return { key: "QA_QUALITY_PCT", label: "QA quality %" };
+  if (tier === "outbound_sale") return { key: "FUNNEL_SALE_PCT", label: "Sale conversion %" };
+  return null;
+}
+
+export function DrilldownTable({ rows, valueLabel }: { rows: DrillRow[]; valueLabel?: string | null }) {
   if (rows.length === 0) return <p className="text-[13px] text-slate-700">No agent-level values for this process yet.</p>;
   return (
     <table className="w-full text-left text-[13px]">
       <caption className="sr-only">Agent values for the selected process</caption>
-      <thead><tr className="text-slate-700"><th className="py-1 pr-2">Code</th><th className="py-1 pr-2">Name</th><th className="py-1 text-right">{rows[0].metric}</th></tr></thead>
+      <thead><tr className="text-slate-700"><th className="py-1 pr-2">Code</th><th className="py-1 pr-2">Name</th>{valueLabel ? <th className="py-1 text-right">{valueLabel}</th> : null}</tr></thead>
       <tbody>
         {rows.map((r) => (
           <tr key={r.employeeCode} className="border-t border-slate-100">
             <td className="py-1.5 pr-2">{r.employeeCode}</td><td className="py-1.5 pr-2">{r.name}</td>
-            <td className="py-1.5 text-right font-semibold">{r.value == null ? "—" : r.value}</td>
+            {valueLabel ? <td className="py-1.5 text-right font-semibold">{r.value == null ? "—" : r.value}</td> : null}
           </tr>
         ))}
       </tbody>
@@ -39,15 +46,29 @@ export function DrilldownTable({ rows }: { rows: DrillRow[] }) {
   );
 }
 
-function Drill({ branchId, processId }: { branchId: string; processId: string }) {
-  const q = useProcessDrilldown(branchId, processId, "QA_QUALITY_PCT", true);
+function Drill({ branchId, processId, tier }: { branchId: string; processId: string; tier: CoverageTier }) {
+  const metric = drillMetricFor(tier);
+  // Baseline / not-wired processes have no agent-level metric; the request still lists names (value column hidden).
+  const q = useProcessDrilldown(branchId, processId, metric?.key ?? "QA_QUALITY_PCT", true);
   if (q.isLoading) return <div className="kit-shimmer h-24 rounded-lg" aria-busy="true" aria-label="Loading agent values" />;
   if (q.isError) return <p role="alert" className="text-[13px] text-rose-900">Agent values could not be loaded.</p>;
-  return <DrilldownTable rows={q.data ?? []} />;
+  return (
+    <>
+      {metric ? null : <p className="pb-2 text-[12px] text-slate-700">No agent-level metric for this process type</p>}
+      <DrilldownTable rows={q.data ?? []} valueLabel={metric?.label ?? null} />
+    </>
+  );
 }
 
-function ProcessRow({ p, branchId }: { p: BranchProcess; branchId: string }) {
+/** Default drill branch: the globally selected branch if the process is reachable there, else its first branch. */
+export function defaultDrillBranch(p: BranchProcess, selectedBranchId: string): string {
+  return p.branchIds.includes(selectedBranchId) ? selectedBranchId : p.branchIds[0] ?? "";
+}
+
+function ProcessRow({ p, selectedBranchId, branchNames }: { p: BranchProcess; selectedBranchId: string; branchNames: Record<string, string> }) {
   const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState("");
+  const drillBranch = p.branchIds.includes(picked) ? picked : defaultDrillBranch(p, selectedBranchId);
   const over = p.mandatedSeats != null && p.headcount > p.mandatedSeats;
   return (
     <li className="border-t border-slate-100 first:border-t-0">
@@ -61,12 +82,31 @@ function ProcessRow({ p, branchId }: { p: BranchProcess; branchId: string }) {
           {over ? <span className="ml-1 inline-flex items-center gap-1 font-bold text-rose-900"><ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />Over mandate</span> : null}
         </span>
       </button>
-      {open ? <div className="px-2 pb-3"><Drill branchId={branchId} processId={p.processId} /></div> : null}
+      {open ? (
+        <div className="px-2 pb-3">
+          {p.branchIds.length === 0 ? (
+            <p className="text-[13px] text-slate-700">Agent names are not available: this process has no cost centre or headcount in your selected branches.</p>
+          ) : (
+            <>
+              {p.branchIds.length > 1 ? (
+                <label className="mb-2 block text-[12px] font-semibold text-slate-800">
+                  Branch for agent values
+                  <select value={drillBranch} onChange={(e) => setPicked(e.target.value)}
+                    className="mt-1 block min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-[14px] text-slate-900">
+                    {p.branchIds.map((b) => <option key={b} value={b}>{branchNames[b] ?? b}</option>)}
+                  </select>
+                </label>
+              ) : null}
+              <Drill branchId={drillBranch} processId={p.processId} tier={p.tier} />
+            </>
+          )}
+        </div>
+      ) : null}
     </li>
   );
 }
 
-function Group({ id, title, note, rows, branchId }: { id: string; title: string; note?: string; rows: BranchProcess[]; branchId: string }) {
+function Group({ id, title, note, rows, selectedBranchId, branchNames }: { id: string; title: string; note?: string; rows: BranchProcess[]; selectedBranchId: string; branchNames: Record<string, string> }) {
   if (rows.length === 0) return null;
   return (
     <details data-group={id} className="mt-3 rounded-lg border border-slate-200">
@@ -75,14 +115,14 @@ function Group({ id, title, note, rows, branchId }: { id: string; title: string;
       </summary>
       <div className="px-3 pb-2">
         {note ? <p className="flex items-start gap-1.5 pb-2 text-[12px] text-slate-700"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{note}</p> : null}
-        <ul>{rows.map((p) => <ProcessRow key={p.processId} p={p} branchId={branchId} />)}</ul>
+        <ul>{rows.map((p) => <ProcessRow key={p.processId} p={p} selectedBranchId={selectedBranchId} branchNames={branchNames} />)}</ul>
       </div>
     </details>
   );
 }
 
-export function ProcessCoveragePanel({ active, unmapped, branchId, error }: {
-  active: BranchProcess[]; unmapped: BranchProcess[]; branchId: string; error?: boolean;
+export function ProcessCoveragePanel({ active, unmapped, selectedBranchId = "", branchNames = {}, error }: {
+  active: BranchProcess[]; unmapped: BranchProcess[]; selectedBranchId?: string; branchNames?: Record<string, string>; error?: boolean;
 }) {
   const normal = active.filter((p) => !p.billingMirror);
   const mirrors = active.filter((p) => p.billingMirror);
@@ -90,9 +130,9 @@ export function ProcessCoveragePanel({ active, unmapped, branchId, error }: {
     <Panel title="Process coverage" subtitle="Which processes report quality and sales data. Agent names appear only when you open a process.">
       {error ? <p role="alert" className="mb-2 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-[13px] text-amber-900"><Info className="h-4 w-4" aria-hidden="true" />Process coverage could not be loaded. Other sections are unaffected.</p> : null}
       {normal.length === 0 && !error ? <p className="text-[13px] text-slate-700">No active processes for this branch.</p> : null}
-      <ul>{normal.map((p) => <ProcessRow key={p.processId} p={p} branchId={branchId} />)}</ul>
-      <Group id="mirrors" title="Billing mirrors (BSS_*)" rows={mirrors} branchId={branchId} />
-      <Group id="unmapped" title="Not mapped to a cost centre" note="Most of these are idle billing mirrors with no cost centre; they are listed for completeness." rows={unmapped} branchId={branchId} />
+      <ul>{normal.map((p) => <ProcessRow key={p.processId} p={p} selectedBranchId={selectedBranchId} branchNames={branchNames} />)}</ul>
+      <Group id="mirrors" title="Billing mirrors (BSS_*)" rows={mirrors} selectedBranchId={selectedBranchId} branchNames={branchNames} />
+      <Group id="unmapped" title="Not mapped to a cost centre" note="Most of these are idle billing mirrors with no cost centre; they are listed for completeness." rows={unmapped} selectedBranchId={selectedBranchId} branchNames={branchNames} />
     </Panel>
   );
 }

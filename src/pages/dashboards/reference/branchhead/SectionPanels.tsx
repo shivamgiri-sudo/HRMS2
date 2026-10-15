@@ -2,11 +2,24 @@ import { AlertCircle, Inbox } from "lucide-react";
 import { Panel } from "../../kit";
 import type { LeaderboardRow, SectionResult } from "../../../../../backend/src/modules/branch-head-health/types";
 
-const humanize = (k: string) => k.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase()).trim();
+function humanize(k: string): string {
+  let out = "";
+  for (const ch of k) {
+    const upper = ch >= "A" && ch <= "Z";
+    if (ch === "_") out += " ";
+    else out += upper && out.length > 0 ? ` ${ch}` : ch;
+  }
+  return out.length > 0 ? out[0].toUpperCase() + out.slice(1) : out;
+}
 function fmt(v: unknown): string {
   if (v == null) return "—";
   if (typeof v === "number") return Number.isInteger(v) ? v.toLocaleString("en-IN") : v.toFixed(1);
   return String(v);
+}
+
+function scalarEntries(data: unknown): Array<[string, unknown]> {
+  if (data == null || typeof data !== "object") return [];
+  return Object.entries(data as Record<string, unknown>).filter(([, v]) => typeof v !== "object" || v === null);
 }
 
 export function SectionError({ name, message }: { name: string; message?: string }) {
@@ -22,10 +35,10 @@ export function SectionError({ name, message }: { name: string; message?: string
 export function SectionPanel({ title, section }: { title: string; section: SectionResult<unknown> }) {
   let body;
   if (section.status === "error") body = <SectionError name={title} message={section.message} />;
-  else if (section.status === "empty" || section.data == null) {
+  else if (section.status === "empty" || section.data == null || scalarEntries(section.data).length === 0) {
     body = <p className="flex items-center gap-2 text-[13px] text-slate-700"><Inbox className="h-4 w-4" aria-hidden="true" />{section.message ?? "No data for this date"}</p>;
   } else {
-    const entries = Object.entries(section.data as Record<string, unknown>).filter(([, v]) => typeof v !== "object" || v === null);
+    const entries = scalarEntries(section.data);
     body = (
       <dl className="grid grid-cols-2 gap-3">
         {entries.map(([k, v]) => (

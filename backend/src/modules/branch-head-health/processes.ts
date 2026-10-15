@@ -16,6 +16,8 @@ export interface BranchProcess {
   latestMetricDate: string | null;
   /** Idle BSS_* process that only mirrors a cost centre for billing. */
   billingMirror: boolean;
+  /** Selected branch ids from which this process is drillable (active MAS cost centre, primary or link, or headcount there). */
+  branchIds: string[];
 }
 export interface ProcessGroups { active: BranchProcess[]; unmapped: BranchProcess[] }
 export interface DrillRow { employeeCode: string; name: string; value: number | null; metric: string }
@@ -42,7 +44,7 @@ export async function listBranchProcesses(branchIds: string[]): Promise<ProcessG
 
   // Cost centres of the selected MAS branches, with the process each one bills (directly or via link).
   const [ccRows] = await db.query<RowDataPacket[]>(
-    `SELECT cc.id AS cc_id, cc.cost_centre_code AS cc_code, cc.mandated_seats, x.process_id, x.via_link
+    `SELECT cc.id AS cc_id, cc.branch_id AS branch_id, cc.cost_centre_code AS cc_code, cc.mandated_seats, x.process_id, x.via_link
        FROM cost_centre_master cc
        JOIN branch_master b ON b.id = cc.branch_id
        JOIN (
@@ -84,6 +86,24 @@ export async function listBranchProcesses(branchIds: string[]): Promise<ProcessG
         [ids],
       )
     : [[] as RowDataPacket[]];
+
+  // Branches (among the selected ones) where each process has headcount: one query for all processes.
+  const [hcRows] = ids.length
+    ? await db.query<RowDataPacket[]>(
+        `SELECT e.process_id, e.branch_id
+           FROM employees e
+          WHERE e.active_status = 1 AND e.branch_id IN (?) AND e.process_id IN (?)
+          GROUP BY e.process_id, e.branch_id`,
+        [branchIds, ids],
+      )
+    : [[] as RowDataPacket[]];
+  const branchesBy = new Map<string, Set<string>>();
+  const addBranch = (pid: string, bid: unknown) => {
+    if (bid == null) return;
+    (branchesBy.get(pid) ?? branchesBy.set(pid, new Set()).get(pid)!).add(String(bid));
+  };
+  for (const r of ccRows) addBranch(String(r.process_id), r.branch_id);
+  for (const r of hcRows) addBranch(String(r.process_id), r.branch_id);
 
   const keysBy = new Map<string, string[]>();
   const latestBy = new Map<string, string>();
@@ -137,6 +157,7 @@ export async function listBranchProcesses(branchIds: string[]): Promise<ProcessG
       tier: coverageTier(keys),
       latestMetricDate: latestBy.get(pid) ?? null,
       billingMirror: mirror && hasPrimary(pid),
+      branchIds: branchIds.filter((b) => branchesBy.get(pid)?.has(String(b))),
     };
     const isActive = mirror ? hasPrimary(pid) : (ccs && ccs.size > 0) || headcount > 0;
     (isActive ? active : unmapped).push(bp);

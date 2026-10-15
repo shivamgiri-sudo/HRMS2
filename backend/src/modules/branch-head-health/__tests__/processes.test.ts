@@ -6,9 +6,10 @@ vi.mock("../../../db/mysql.js", () => ({ db: { query: (...a: unknown[]) => query
 import { coverageTier, getProcessDrilldown, listBranchProcesses } from "../processes.js";
 
 type Row = Record<string, unknown>;
-function route(r: { cc?: Row[]; proc?: Row[]; metrics?: Row[]; drill?: Row[]; owns?: Row[] }) {
+function route(r: { cc?: Row[]; proc?: Row[]; metrics?: Row[]; drill?: Row[]; owns?: Row[]; hcb?: Row[] }) {
   query.mockImplementation(async (sql: string) => {
     if (sql.includes("LIMIT 1")) return [r.owns ?? []];
+    if (sql.includes("GROUP BY e.process_id")) return [r.hcb ?? []];
     if (sql.includes("FROM process_metric_actual")) return [r.metrics ?? []];
     if (sql.includes("cost_centre_master cc")) return [r.cc ?? []];
     if (sql.includes("FROM employees e") && sql.includes("e.first_name")) return [r.drill ?? []];
@@ -35,7 +36,7 @@ describe("listBranchProcesses", () => {
 
   it("link-only process is active with viaLink true", async () => {
     route({
-      cc: [{ cc_id: "c1", cc_code: "CC1", mandated_seats: "10", process_id: "p1", via_link: 1 }],
+      cc: [{ cc_id: "c1", branch_id: "b1", cc_code: "CC1", mandated_seats: "10", process_id: "p1", via_link: 1 }],
       proc: [p("p1", "P1")],
       metrics: [{ process_id: "p1", metric_key: "SHRINKAGE_PCT", latest: "2026-10-14" }],
     });
@@ -71,6 +72,23 @@ describe("listBranchProcesses", () => {
     expect(g.active).toHaveLength(1);
     expect(g.active[0].mandatedSeats).toBe(10);
     expect(g.active[0].costCentres).toEqual(["CC1", "CC2"]);
+  });
+
+  it("lists every selected branch the process is reachable in (cost centre or headcount) once", async () => {
+    route({
+      cc: [{ cc_id: "c1", branch_id: "b1", cc_code: "CC1", mandated_seats: "10", process_id: "p1", via_link: 0 }],
+      proc: [p("p1", "P1", 2)],
+      hcb: [{ process_id: "p1", branch_id: "b2" }, { process_id: "p1", branch_id: "b1" }],
+    });
+    const g = await listBranchProcesses(["b1", "b2", "b3"]);
+    expect(g.active).toHaveLength(1);
+    expect(g.active[0].branchIds).toEqual(["b1", "b2"]);
+  });
+
+  it("process with no cost centre or headcount has empty branchIds", async () => {
+    route({ proc: [p("p2", "P2")] });
+    const g = await listBranchProcesses(["b1"]);
+    expect(g.unmapped[0].branchIds).toEqual([]);
   });
 
   it("non-numeric-only seats give null", async () => {

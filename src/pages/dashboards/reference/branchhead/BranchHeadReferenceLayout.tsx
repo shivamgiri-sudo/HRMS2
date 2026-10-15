@@ -1,4 +1,4 @@
-import { Building2, Home, RefreshCw } from "lucide-react";
+import { Building2, Home } from "lucide-react";
 import { Panel, SectionTitle } from "../../kit";
 import type { BranchHeadHealthPayload } from "../../../../../backend/src/modules/branch-head-health/types";
 import type { HeadBranch } from "../../../../../backend/src/modules/branch-head-health/scope";
@@ -6,6 +6,7 @@ import { AttentionList } from "./AttentionList";
 import { ProcessCoveragePanel } from "./ProcessCoveragePanel";
 import { LeaderboardPanel, SectionPanel } from "./SectionPanels";
 import { StatusChip } from "./StatusChip";
+import { BranchHeadControls } from "./BranchHeadControls";
 
 export interface BranchHeadLayoutProps {
   data: BranchHeadHealthPayload;
@@ -16,37 +17,13 @@ export interface BranchHeadLayoutProps {
   date?: string;
   onDateChange?: (date: string) => void;
   onRefresh?: () => void;
+  /** True while newer data is loading and the page still shows the previous result. */
+  stale?: boolean;
 }
 
-export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchId = "", onBranchChange, date, onDateChange, onRefresh }: BranchHeadLayoutProps) {
+export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchId = "", onBranchChange, date, onDateChange, onRefresh, stale }: BranchHeadLayoutProps) {
   const options = branchOptions ?? data.branches.map((b) => b.branch);
-  const showSwitcher = options.length >= 2;
-  const drillBranchId = selectedBranchId || data.branches[0]?.branch.branchId || "";
-
-  const controls = (
-    <div className="flex flex-wrap items-end gap-3">
-      {showSwitcher ? (
-        <label className="text-[12px] font-semibold text-slate-800">
-          Branch
-          <select value={selectedBranchId} onChange={(e) => onBranchChange?.(e.target.value)}
-            className="mt-1 block min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-[14px] text-slate-900">
-            <option value="">All my branches</option>
-            {options.map((b) => <option key={b.branchId} value={b.branchId}>{b.branchName}</option>)}
-          </select>
-        </label>
-      ) : null}
-      <label className="text-[12px] font-semibold text-slate-800">
-        Date
-        <input type="date" value={date ?? ""} onChange={(e) => onDateChange?.(e.target.value)}
-          className="mt-1 block min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-[14px] text-slate-900" />
-      </label>
-      {onRefresh ? (
-        <button type="button" onClick={onRefresh} className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-[13px] font-semibold text-slate-900">
-          <RefreshCw className="h-4 w-4" aria-hidden="true" />Refresh
-        </button>
-      ) : null}
-    </div>
-  );
+  const branchNames = Object.fromEntries(options.map((o) => [o.branchId, o.branchName]));
 
   return (
     <div className="space-y-4">
@@ -57,7 +34,7 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
             <p className="mt-0.5 flex items-center gap-1.5 text-[13px] text-slate-700"><Home className="h-4 w-4" aria-hidden="true" />Showing your home branch</p>
           ) : null}
         </div>
-        {controls}
+        <BranchHeadControls options={options} selectedBranchId={selectedBranchId} onBranchChange={onBranchChange} date={date} onDateChange={onDateChange} onRefresh={onRefresh} stale={stale} />
       </header>
 
       {data.scope.emptyReason ? (
@@ -89,7 +66,7 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
       {data.branches.length > 0 || data.processesError ? (
         <>
           <SectionTitle>Processes</SectionTitle>
-          <ProcessCoveragePanel active={data.processes.active} unmapped={data.processes.unmapped} branchId={drillBranchId} error={data.processesError} />
+          <ProcessCoveragePanel active={data.processes.active} unmapped={data.processes.unmapped} selectedBranchId={selectedBranchId} branchNames={branchNames} error={data.processesError} />
         </>
       ) : null}
     </div>

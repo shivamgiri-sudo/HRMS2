@@ -5,14 +5,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { BranchHeadHealthPayload } from "../../../../../../backend/src/modules/branch-head-health/types";
 import type { BranchProcess } from "../../../../../../backend/src/modules/branch-head-health/processes";
 import { BranchHeadReferenceLayout } from "../BranchHeadReferenceLayout";
-import { DrilldownTable } from "../ProcessCoveragePanel";
+import { DrilldownTable, defaultDrillBranch, drillMetricFor } from "../ProcessCoveragePanel";
+import { branchHeadRoute } from "../../../../../config/routes/branchHeadRoute";
 
 vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn() } }));
 
 const ok = (data: unknown) => ({ status: "ok" as const, data, asOf: "2026-10-15" });
 const proc = (o: Partial<BranchProcess>): BranchProcess => ({
   processId: "p1", processCode: "P1", processName: "Alpha", costCentres: ["CC1"], viaLink: false,
-  mandatedSeats: 10, headcount: 8, tier: "full", latestMetricDate: "2026-10-14", billingMirror: false, ...o,
+  mandatedSeats: 10, headcount: 8, tier: "full", latestMetricDate: "2026-10-14", billingMirror: false, branchIds: ["b1"], ...o,
 });
 const branch = (id: string, name: string, status: "healthy" | "watch" | "critical" | "no_data" = "healthy") => ({
   branch: { branchId: id, branchCode: id, branchName: name },
@@ -83,7 +84,7 @@ describe("BranchHeadReferenceLayout", () => {
     expect(out).not.toContain("Asha Roy");
   });
   it("drill-down table shows names once rows are supplied", () => {
-    const out = renderToStaticMarkup(<DrilldownTable rows={[{ employeeCode: "E1", name: "Asha Roy", value: 71.5, metric: "QA_QUALITY_PCT" }]} />);
+    const out = renderToStaticMarkup(<DrilldownTable rows={[{ employeeCode: "E1", name: "Asha Roy", value: 71.5, metric: "QA_QUALITY_PCT" }]} valueLabel="QA quality %" />);
     expect(out).toContain("Asha Roy");
     expect(out).toContain("71.5");
   });
@@ -99,5 +100,33 @@ describe("BranchHeadReferenceLayout", () => {
   it("flags seats over the mandate in text", () => {
     const out = html(payload({ processes: { active: [proc({ mandatedSeats: 5, headcount: 8 })], unmapped: [] } }));
     expect(out).toContain("Over mandate");
+  });
+  it("drill branch defaults to the selected branch if reachable, else the process's first branch", () => {
+    const p2 = proc({ branchIds: ["b2", "b3"] });
+    expect(defaultDrillBranch(p2, "b3")).toBe("b3");
+    expect(defaultDrillBranch(p2, "")).toBe("b2");
+    expect(defaultDrillBranch(p2, "b1")).toBe("b2");
+    expect(defaultDrillBranch(proc({ branchIds: [] }), "b1")).toBe("");
+  });
+  it("drill metric per tier uses human labels; baseline and not_wired have none", () => {
+    expect(drillMetricFor("full")?.label).toBe("QA quality %");
+    expect(drillMetricFor("inbound_quality")?.key).toBe("QA_QUALITY_PCT");
+    expect(drillMetricFor("outbound_sale")).toEqual({ key: "FUNNEL_SALE_PCT", label: "Sale conversion %" });
+    expect(drillMetricFor("baseline")).toBeNull();
+    expect(drillMetricFor("not_wired")).toBeNull();
+  });
+  it("drill-down table hides the value column without a metric label", () => {
+    const out = renderToStaticMarkup(<DrilldownTable rows={[{ employeeCode: "E1", name: "Asha Roy", value: null, metric: "X" }]} valueLabel={null} />);
+    expect(out).toContain("Asha Roy");
+    expect(out).not.toContain("QA quality");
+  });
+  it("section with only nested data shows the empty state, not an empty list", () => {
+    const b = branch("b1", "Kolkata");
+    b.overview.hiring = ok({ nested: { a: 1 } });
+    expect(html(payload({ branches: [b] }))).toContain("No data for this date");
+  });
+  it("route is omitted when the flag is off and present when on", () => {
+    expect(branchHeadRoute(false, <div />)).toBeNull();
+    expect(branchHeadRoute(true, <div />)?.props.path).toBe("/branch-head/dashboard");
   });
 });

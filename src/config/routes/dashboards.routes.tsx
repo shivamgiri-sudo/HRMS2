@@ -1,5 +1,6 @@
 import { Route } from "react-router-dom";
 import { lazy } from "./lazy";
+import { branchHeadRoute, branchHeadRouteEnabled } from "./branchHeadRoute";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
 import {
@@ -53,7 +54,7 @@ export const dashboardRouteElements = (
       <Route path="/payroll-hr/dashboard" element={<DashboardRouteGate code="PAYROLL_HR_DASHBOARD"><PayrollHrDashboard /></DashboardRouteGate>} />
       <Route path="/wfm/dashboard"      element={<DashboardRouteGate code="WFM_DASHBOARD"><WfmDashboard /></DashboardRouteGate>} />
       <Route path="/hr/dashboard"       element={<DashboardRouteGate code="HR_DASHBOARD"><HrDashboard /></DashboardRouteGate>} />
-      <Route path="/branch-head/dashboard" element={<DashboardRouteGate code="BRANCH_HEAD_DASHBOARD"><BranchHeadDashboard /></DashboardRouteGate>} />
+      {branchHeadRoute(branchHeadRouteEnabled(), <DashboardRouteGate code="BRANCH_HEAD_DASHBOARD"><BranchHeadDashboard /></DashboardRouteGate>)}
       <Route path="/manager/dashboard"  element={<DashboardRouteGate code="MANAGEMENT_DASHBOARD"><ManagerDashboard /></DashboardRouteGate>} />
       <Route path="/my-dashboard"       element={<DashboardRouteGate code="EMPLOYEE_SELF_DASHBOARD"><EmployeeSelfDashboard /></DashboardRouteGate>} />
 
