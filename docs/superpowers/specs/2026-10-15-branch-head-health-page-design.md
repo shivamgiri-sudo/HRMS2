@@ -1,6 +1,6 @@
 # Branch Head Health Page — Design
 
-Status: draft for review, 2026-10-15. No code written. Next step after approval: `writing-plans`.
+Status: approved by owner 2026-10-15 (decisions in section 9). No code written. Next step: `writing-plans`.
 
 ## 1. Intent
 
@@ -105,8 +105,8 @@ Registered in `runPendingMigrations.ts`. Migration number is the next free one a
   `backend/src/shared/dashboardAccessRegistry.ts`. Today `branch_head` has no variant of its own: it is only an allowed role on several (manager, wfm, quality, operations, employee ...).
 - New `src/pages/dashboards/reference/branchhead/BranchHeadReferenceLayout.tsx`, built from the
   existing `kit/` (PulseTile, Panel, SignalList, ActionCenter, Sparkline).
-- Resolution priority (decision needed, section 9): after `super_admin` and `ceo`, before `hr`, `wfm`
-  and `manager`, with a visible switch to the other dashboards the user is allowed.
+- Resolution priority (decided, section 9): `branch_head` ranks after `super_admin` and `ceo` and before
+  `hr`, `wfm` and `manager`, with a visible switch to the other dashboards the user is allowed.
 
 ## 5. Page layout
 
@@ -127,7 +127,7 @@ Registered in `runPendingMigrations.ts`. Migration number is the next free one a
    GRN tie-out. Uses the hidden-branch scope so IDC / Pikquick cost centres never appear.
 8. **Operations and quality**: per active process, a **coverage badge** (Full / Baseline only / Not
    wired) so empty tiles are explained, not blank. Call quality, QA, fatals, AHT, SL / AL, CX
-   parameters, top and bottom agents (names per redaction rules, section 9).
+   parameters, top and bottom agents (names in the process drill-down only, section 9).
 9. **Team leaderboard**: managers and TLs by shrinkage, late, attrition.
 10. **Data health** (head and HO only): processes with no cost centre, cost centres with no process,
     over-mandate seats, stale metrics (> N days).
@@ -167,19 +167,25 @@ scroll. Every tile drills to the existing detail page or a side-panel table.
 - Ship behind a feature flag, visible first to 2-3 pilot heads. No ALTER on hot tables; migration
   registered and verified on prod after deploy.
 
-## 9. Open decisions
+## 9. Decisions (owner, 2026-10-15)
 
-1. **Variant priority** for a person who is branch head and also hr / wfm / manager (section 4.3).
-2. **Agent names** in quality and fatal lists: show names, or process-level aggregates only.
-3. **Heads with the role but no scope row** (MAS60358): confirm home-branch fallback.
-4. **IDAM / Bella-Vita billing**: are the "BVO Chat" lines on cost centre 647 invoiced to the same
-   legal entity as IDAM? If not, Bella-Vita needs its own cost centre (billing owner decision).
-5. **GNC** has no cost centre or invoice evidence; stays "unmapped" until the db_bill trace via the ops
-   workflow (no db_bill credentials on the dev box).
-6. **Data hygiene** awaiting row-level approval, none applied: cost centres 1031 / 1032 (branch vs
-   code), 1048 / 1054 (no process), 984 (code mismatch), 978 (DialDesk process on a MAS cost centre),
-   `BO/` seats value `'o'`, and 622 history rows with NULL process (38 active MAS).
-7. **Score weights** and the trend window (7 / 30 days).
+1. **Variant priority**: branch head first. A person who is branch head and also hr / wfm / manager opens
+   this page by default, with a visible switch to their other dashboards.
+2. **Names**: agent names are shown in the **process-level drill-down** (quality, fatal, attendance
+   lists). Branch-level tiles and the leaderboard stay aggregate.
+3. **Role without a scope row** (MAS60358): falls back to the employee's home branch.
+4. **IDAM / Bella-Vita (cost centre 647)**: the "BVO Chat" lines are billed to the same legal entity as
+   IDAM (owner: yes), so no separate Bella-Vita cost centre is created. The link table stays as is.
+5. **Score**: starting weights (section 6) and the 7 / 30 day trend window accepted, tuned later on real
+   branches.
+
+### Still open (not blocking v1)
+
+- **GNC** has no cost centre or invoice evidence. It stays "unmapped" until the db_bill trace via the
+  ops workflow (no db_bill credentials on the dev box).
+- **Data hygiene**, none applied, needs row-level approval: cost centres 1031 / 1032 (branch vs code),
+  1048 / 1054 (no process), 984 (code mismatch), 978 (DialDesk process on a MAS cost centre), `BO/`
+  seats value `'o'`, and 622 history rows with NULL process (38 active MAS).
 
 ## 10. Known risks
 
