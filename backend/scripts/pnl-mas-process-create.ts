@@ -41,35 +41,59 @@ import { notDialDeskProcessSql, ownCompanyBranchSql, ownCompanyCostCentreSql } f
   const [emps] = await db.query<RowDataPacket[]>(
     "SELECT COUNT(*) AS n FROM employees WHERE cost_centre_id = ? AND active_status = 1", [cc.id]);
 
+  // Resume: a previous apply may have created the process and stopped before pointing the staff at it. The same code,
+  // name and branch is that row; reuse it and finish the remaining updates instead of inserting a second one.
+  const [same] = await db.query<RowDataPacket[]>(
+    "SELECT id FROM process_master WHERE process_code = ? AND branch_id <=> ? AND UPPER(TRIM(process_name)) = UPPER(TRIM(?))", [code, cc.branch_id, client]);
+  const existingId = same.length === 1 ? String(same[0].id) : null;
   const blockers: string[] = [];
   if (!Number(cc.own_cc)) blockers.push("cost centre company is not MAS Callnet");
   if (!Number(cc.own_branch)) blockers.push("cost centre branch is not a MAS branch");
-  if (Number(cc.cur_is_mas)) blockers.push("current process is already a MAS process");
-  if (dupe.length) blockers.push(`process code or name already exists (${dupe.map((d) => `${d.process_code}/${d.active_status}`).join(", ")})`);
+  if (Number(cc.cur_is_mas) && !existingId) blockers.push("current process is already a MAS process");
+  if (dupe.length && !existingId) blockers.push(`process code or name already exists (${dupe.map((d) => `${d.process_code}/${d.active_status}`).join(", ")})`);
   if (!tmpl.length) blockers.push("no sibling process on the branch to copy defaults from");
   console.log("MPC_PLAN " + JSON.stringify({
     costCentre: ccCode, branch: cc.branch_name, currentProcess: cc.cur_process, newProcess: { name: client, code, client, branch: cc.branch_name },
     activeEmployeesOnCostCentre: Number(emps[0]?.n ?? 0), template: tmpl[0] ? { name: tmpl[0].process_name, code: tmpl[0].process_code } : null,
-    blockers, mode: apply ? "APPLY" : "DRY-RUN",
+    resumingExistingProcess: existingId, blockers, mode: apply ? "APPLY" : "DRY-RUN",
   }));
   if (blockers.length || !apply) { console.log("MPC_DONE"); process.exit(0); }
 
-  const cols = Object.keys(tmpl[0]).filter((c) => !["id", "created_at", "updated_at", "bill_source_id"].includes(c));
-  const values: Record<string, unknown> = { ...Object.fromEntries(cols.map((c) => [c, tmpl[0][c]])) };
-  const newId = randomUUID();
-  Object.assign(values, { process_name: client, process_code: code, client_name: client, branch_id: cc.branch_id, active_status: 1 });
-  const colList = ["id", ...cols];
-  await db.query(`INSERT INTO process_master (${colList.map((c) => `\`${c}\``).join(",")}) VALUES (${colList.map(() => "?").join(",")})`, [newId, ...cols.map((c) => values[c])]);
-  const [u1]: any = await db.query("UPDATE cost_centre_master SET process_id = ? WHERE id = ? AND process_id <=> ?", [newId, cc.id, cc.process_id]);
-  const [u2]: any = await db.query("UPDATE employees SET process_id = ? WHERE cost_centre_id = ? AND process_id <=> ?", [newId, cc.id, cc.process_id]);
-  console.log("MPC_APPLIED " + JSON.stringify({
-    newProcessId: newId, costCentreRows: Number(u1?.affectedRows ?? 0), employeeRows: Number(u2?.affectedRows ?? 0),
-    revert: [
-      `UPDATE employees SET process_id = ${cc.process_id ? `'${cc.process_id}'` : "NULL"} WHERE cost_centre_id = '${cc.id}' AND process_id = '${newId}';`,
-      `UPDATE cost_centre_master SET process_id = ${cc.process_id ? `'${cc.process_id}'` : "NULL"} WHERE id = '${cc.id}' AND process_id = '${newId}';`,
-      `DELETE FROM process_master WHERE id = '${newId}';`,
-    ],
-  }));
+  let newId = existingId;
+  if (!newId) {
+    const cols = Object.keys(tmpl[0]).filter((c) => !["id", "created_at", "updated_at", "bill_source_id"].includes(c));
+    const values: Record<string, unknown> = { ...Object.fromEntries(cols.map((c) => [c, tmpl[0][c]])) };
+    newId = randomUUID();
+    Object.assign(values, { process_name: client, process_code: code, client_name: client, branch_id: cc.branch_id, active_status: 1 });
+    const colList = ["id", ...cols];
+    await db.query(`INSERT INTO process_master (${colList.map((c) => `\`${c}\``).join(",")}) VALUES (${colList.map(() => "?").join(",")})`, [newId, ...cols.map((c) => values[c])]);
+    console.log("MPC_INSERTED " + JSON.stringify({ newProcessId: newId, revert: `DELETE FROM process_master WHERE id = '${newId}';` }));
+  }
+  const oldProcessId = existingId ? null : (cc.process_id ? String(cc.process_id) : null);
+  const [u1]: any = await db.query("UPDATE cost_centre_master SET process_id = ? WHERE id = ? AND process_id <> ?", [newId, cc.id, newId]);
+  console.log("MPC_COSTCENTRE " + JSON.stringify({ affectedRows: Number(u1?.affectedRows ?? 0), nowOnNewProcess: true, revertFrom: oldProcessId }));
+
+  // Staff on this cost centre whose process is still a non-MAS one: updated by primary key (the employees table is hot;
+  // a scan by cost centre can wait on other readers), one row at a time, retried on a lock wait.
+  const [staff] = await db.query<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.process_id FROM employees e
+       JOIN process_master pm ON pm.id = e.process_id LEFT JOIN branch_master pbm ON pbm.id = pm.branch_id
+      WHERE e.cost_centre_id = ? AND e.process_id <> ? AND NOT ${notDialDeskProcessSql("pm", "pbm")}`, [cc.id, newId]);
+  let moved = 0;
+  for (const e of staff) {
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const [u]: any = await db.query("UPDATE employees SET process_id = ? WHERE id = ? AND process_id = ?", [newId, e.id, e.process_id]);
+        moved += Number(u?.affectedRows ?? 0);
+        console.log("MPC_EMPLOYEE " + JSON.stringify({ employeeCode: e.employee_code, affectedRows: Number(u?.affectedRows ?? 0), attempt, revert: `UPDATE employees SET process_id = '${e.process_id}' WHERE id = '${e.id}' AND process_id = '${newId}';` }));
+        break;
+      } catch (err) {
+        if (attempt === 4 || !/LOCK_WAIT|Lock wait/i.test(String(err))) throw err;
+        await new Promise((r) => setTimeout(r, 3000 * attempt));
+      }
+    }
+  }
+  console.log("MPC_APPLIED " + JSON.stringify({ newProcessId: newId, employeesMoved: moved }));
   console.log("MPC_DONE");
   process.exit(0);
 })();
