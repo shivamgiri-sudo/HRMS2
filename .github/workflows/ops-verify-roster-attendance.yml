@@ -1,0 +1,47 @@
+name: Ops Verify Roster + Attendance Register changes (manual, read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "Attendance register month YYYY-MM (blank = current)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ops-verify-roster-attendance-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify against production data
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run (SELECTs only)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          MONTH: ${{ inputs.month }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          npx tsx scripts/verify-roster-attendance-changes.ts $MONTH
