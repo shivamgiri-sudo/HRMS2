@@ -140,6 +140,7 @@ export {
   minutesOfDay,
   clockTimeToMinutes,
   formatDuration,
+  formatHHMMSS,
   type TimeOfDay,
 } from "./timeOfDay";
 

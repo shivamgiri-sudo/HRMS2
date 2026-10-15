@@ -6,7 +6,7 @@
  *
  * Generated: 2026-07-22
  */
-import { formatTime24 } from "@/lib/utils";
+import { formatTime24, formatHHMMSS } from "@/lib/utils";
 
 export type ColumnFormat =
   | "text" | "number" | "currency" | "percentage"
@@ -147,20 +147,14 @@ export function formatValue(value: unknown, format: ColumnFormat): string {
       return formatTime24(str, str);
 
     case "duration":
-      // Expected format: HH:mm:ss or minutes as number
-      if (typeof value === "number") {
-        const hrs = Math.floor(value / 60);
-        const mins = Math.round(value % 60);
-        return `${hrs}:${String(mins).padStart(2, "0")}`;
-      }
-      return str;
+      if (typeof value === "number") return formatHHMMSS(value);
+      // Already a MySQL TIME string — reformat with full HH:MM:SS padding
+      return formatHHMMSS(str);
 
     case "minutes": {
       const mins = Number(value);
       if (isNaN(mins)) return str;
-      const h = Math.floor(mins / 60);
-      const m = Math.round(mins % 60);
-      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+      return formatHHMMSS(mins);
     }
 
     case "boolean": {

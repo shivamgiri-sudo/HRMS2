@@ -47,6 +47,23 @@ function sanitise(value: unknown): string {
   return /^[=+\-@\t\r]/.test(str) ? "'" + str : str;
 }
 
+/** Convert minutes (number) or a MySQL TIME string to "HH:MM:SS". */
+function minutesToHHMMSS(raw: unknown): string {
+  if (raw == null || raw === '') return '--';
+  const n = Number(raw);
+  if (Number.isFinite(n)) {
+    const total = Math.max(0, Math.round(n));
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+  }
+  const match = /^(\d{1,3}):(\d{2})(?::(\d{2}))?$/.exec(String(raw).trim());
+  if (match) {
+    return `${String(Number(match[1])).padStart(2, '0')}:${match[2]}:${match[3] ?? '00'}`;
+  }
+  return String(raw);
+}
+
 export async function buildCatalogWorkbook(params: CatalogWorkbookParams): Promise<Buffer> {
   const { rows, columns, sheetName } = params;
 
@@ -84,6 +101,8 @@ export async function buildCatalogWorkbook(params: CatalogWorkbookParams): Promi
         const n = Number(raw);
         cell.value = Number.isFinite(n) ? Math.round(n * 100) / 100 : sanitise(raw);
         if (Number.isFinite(n)) cell.numFmt = Number.isInteger(Math.round(n * 100) / 100) ? '0' : '0.##';
+      } else if (c.format === 'duration' || c.format === 'minutes') {
+        cell.value = minutesToHHMMSS(raw);
       } else {
         cell.value = sanitise(raw);
         if (TEXT_KEYS.test(c.key)) cell.numFmt = '@';

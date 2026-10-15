@@ -90,3 +90,22 @@ export function formatDuration(minutes?: number | null): string {
   const m = total % 60;
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
+
+/**
+ * Format a duration value as "HH:MM:SS" for report display.
+ *   - number input → treated as total minutes; seconds always "00"
+ *   - string input → parsed as MySQL TIME ("HH:MM:SS") or ISO datetime, then padded
+ */
+export function formatHHMMSS(value?: number | string | null): string {
+  if (value == null || value === "") return "--";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "--";
+    const total = Math.max(0, Math.round(value));
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+  }
+  const t = extractTimeOfDay(value);
+  if (t) return `${String(t.hours).padStart(2, "0")}:${t.minutes}:${t.seconds}`;
+  return "--";
+}
