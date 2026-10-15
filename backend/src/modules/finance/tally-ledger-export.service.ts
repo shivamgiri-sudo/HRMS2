@@ -1,7 +1,8 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { grnBranchCode } from "./grn-tally-context.js";
-import { loadGrnTallyDownload } from "./grn-tally-download.service.js";
+import ExcelJS from "exceljs";
+import { grnImportRows, GRN_IMPORT_COLUMNS, loadGrnTallyDownload } from "./grn-tally-download.service.js";
 import { readGrnTallyConfig } from "./grn-tally-export.service.js";
 import { monthEnd, wrapTallyEnvelope, xmlEscape } from "./grn-tally-voucher.js";
 import { grnLedgerGroup, TallyMasters, type TallyGroup } from "./tally-ledger-masters.js";
@@ -261,8 +262,7 @@ async function directImprestTopUps(month: string, masters: TallyMasters, excepti
   return out;
 }
 
-export async function buildLedgerTallyExport(opts: { month: string; kind: LedgerTallyKind }): Promise<{ xml: string; summary: LedgerTallySummary }> {
-  const { month, kind } = opts;
+async function collectLedgerTally(month: string) {
   const masters = new TallyMasters();
   const exceptions: LedgerTallySummary["exceptions"] = [];
   const vouchers: Voucher[] = [];
@@ -280,24 +280,136 @@ export async function buildLedgerTallyExport(opts: { month: string; kind: Ledger
   }
 
   vouchers.push(...(await glVouchers({ month }, masters, exceptions)), ...(await directImprestTopUps(month, masters, exceptions)));
+  return { masters, exceptions, vouchers, grn };
+}
 
-  const wanted = (k: Voucher["kind"]) => kind === "all" || kind === k;
-  const messages: string[] = [];
-  if (kind === "all" || kind === "masters") messages.push(...masters.messages());
-  if (wanted("grn")) messages.push(...grn.vouchersXml);
-  for (const v of vouchers) if (v.kind !== "grn" && wanted(v.kind)) messages.push(ledgerVoucherXml(v));
-
+function summarise(month: string, c: Awaited<ReturnType<typeof collectLedgerTally>>): LedgerTallySummary {
+  const { masters, exceptions, vouchers, grn } = c;
   const count = (k: Voucher["kind"]) => vouchers.filter((v) => v.kind === k).length;
   const total = (k: Voucher["kind"]) =>
     r2(vouchers.filter((v) => v.kind === k).reduce((s, v) => s + v.lines.filter((l) => l.dr).reduce((a, l) => a + l.amount, 0), 0));
-  const summary: LedgerTallySummary = {
+  return {
     month,
     counts: { grn: count("grn"), payments: count("payments"), journals: count("journals"), exceptions: exceptions.length },
     totals: { grn: r2(grn.rows.filter((r) => !r.exception).reduce((s, r) => s + r.gross, 0)), payments: total("payments"), journals: total("journals") },
     masters: masters.counts,
     exceptions,
   };
+}
+
+export async function buildLedgerTallyExport(opts: { month: string; kind: LedgerTallyKind }): Promise<{ xml: string; summary: LedgerTallySummary }> {
+  const { month, kind } = opts;
+  const collected = await collectLedgerTally(month);
+  const { masters, vouchers, grn } = collected;
+  const wanted = (k: Voucher["kind"]) => kind === "all" || kind === k;
+  const messages: string[] = [];
+  if (kind === "all" || kind === "masters") messages.push(...masters.messages());
+  if (wanted("grn")) messages.push(...grn.vouchersXml);
+  for (const v of vouchers) if (v.kind !== "grn" && wanted(v.kind)) messages.push(ledgerVoucherXml(v));
+
+  const summary = summarise(month, collected);
   return { xml: wrapTallyEnvelope(messages, tallyCompanyName()), summary };
+}
+
+const KIND_LABEL: Record<Voucher["kind"], string> = { grn: "GRN purchase", payments: "Payment / receipt / contra", journals: "Journal / bank adjustment" };
+
+/**
+ * The same month, same vouchers and same exceptions as the Tally XML, as an Excel workbook:
+ *   Import      the legacy import sheet's columns, one row per ledger line (GRN, payments, journals as chosen)
+ *   Vouchers    one row per voucher: kind, number, date, type, Dr total, Cr total, remote id (the Tally REMOTEID)
+ *   Masters     ledgers with their group, cost centres, categories and voucher types the XML would create
+ *   Summary     counts and totals; Exceptions: what was left out and why
+ * Only GRNs raised in HRMS are in it (grn-tally-download.service.ts: hrmsRaisedGrnSql): legacy db_bill imports are not.
+ * Read-only.
+ */
+export async function buildLedgerTallyXlsx(opts: { month: string; kind: LedgerTallyKind }): Promise<{ buffer: Buffer; summary: LedgerTallySummary }> {
+  const { month, kind } = opts;
+  const collected = await collectLedgerTally(month);
+  const { masters, vouchers, grn, exceptions } = collected;
+  const summary = summarise(month, collected);
+  const wanted = (k: Voucher["kind"]) => kind === "all" || kind === k;
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "MAS PeopleOS";
+  wb.created = new Date();
+  const asDate = (d: string) => { const [y, m, dd] = d.split("-").map(Number); return new Date(Date.UTC(y, m - 1, dd)); };
+  const safe = (v: unknown) => (typeof v === "string" && /^[=+\-@]/.test(v) ? `'${v}` : v);
+  const head = (ws: ExcelJS.Worksheet) => { ws.getRow(1).font = { bold: true }; ws.views = [{ state: "frozen", ySplit: 1 }]; };
+
+  if (kind !== "masters") {
+    const imp = wb.addWorksheet("Import");
+    imp.addRow([...GRN_IMPORT_COLUMNS]);
+    if (wanted("grn")) {
+      for (const row of grnImportRows(grn)) {
+        imp.addRow(row.map((v, i) => (i === 1 || i === 2 ? asDate(String(v)) : safe(v))));
+      }
+    }
+    for (const v of vouchers) {
+      if (v.kind === "grn" || !wanted(v.kind)) continue;
+      for (const l of v.lines) {
+        imp.addRow([v.number, asDate(v.date), asDate(v.date), l.ledger, l.dr ? l.amount : "", l.dr ? "" : l.amount,
+          l.costCategory ?? "", l.costCentre ?? "", "", safe(v.narration), v.type]);
+      }
+    }
+    [1, 2].forEach((i) => (imp.getColumn(i + 1).numFmt = "dd-mmm-yy"));
+    [4, 5].forEach((i) => (imp.getColumn(i + 1).numFmt = "0.00"));
+    [34, 11, 11, 40, 14, 14, 22, 16, 40, 70, 12].forEach((w, i) => (imp.getColumn(i + 1).width = w));
+    head(imp);
+
+    const vs = wb.addWorksheet("Vouchers");
+    vs.addRow(["Kind", "Voucher No", "Date", "Voucher Type", "Debit Total", "Credit Total", "Tally REMOTEID", "Narration"]);
+    if (wanted("grn")) {
+      for (const r of grn.rows) {
+        if (r.exception || !r.header) continue;
+        const dr = r2(r.entries.filter((e) => e.side === "Dr").reduce((s, e) => s + e.amount, 0));
+        const cr = r2(r.entries.filter((e) => e.side === "Cr").reduce((s, e) => s + e.amount, 0));
+        vs.addRow([KIND_LABEL.grn, r.header.voucherNumber, asDate(r.header.date), r.header.voucherType, dr, cr, `HRMS-GRN-${r.grnId}`, safe(r.header.narration)]);
+      }
+    }
+    for (const v of vouchers) {
+      if (v.kind === "grn" || !wanted(v.kind)) continue;
+      const dr = r2(v.lines.filter((l) => l.dr).reduce((s, l) => s + l.amount, 0));
+      const cr = r2(v.lines.filter((l) => !l.dr).reduce((s, l) => s + l.amount, 0));
+      vs.addRow([KIND_LABEL[v.kind], v.number, asDate(v.date), v.type, dr, cr, v.remoteId, safe(v.narration)]);
+    }
+    vs.getColumn(3).numFmt = "dd-mmm-yy";
+    [5, 6].forEach((i) => (vs.getColumn(i).numFmt = "0.00"));
+    [26, 30, 11, 14, 14, 14, 40, 80].forEach((w, i) => (vs.getColumn(i + 1).width = w));
+    head(vs);
+  }
+
+  if (kind === "all" || kind === "masters") {
+    const list = masters.listing;
+    const ms = wb.addWorksheet("Masters");
+    ms.addRow(["Type", "Name", "Parent / group", "Cost centres on"]);
+    for (const l of list.ledgers) ms.addRow(["Ledger", safe(l.name), l.group, l.costCentres ? "Yes" : ""]);
+    for (const c of list.costCategories) ms.addRow(["Cost category", safe(c), "", ""]);
+    for (const c of list.costCentres) ms.addRow(["Cost centre", safe(c.name), c.category, ""]);
+    for (const t of list.voucherTypes) ms.addRow(["Voucher type", safe(t.name), t.parent, ""]);
+    [16, 60, 32, 16].forEach((w, i) => (ms.getColumn(i + 1).width = w));
+    head(ms);
+  }
+
+  const ss = wb.addWorksheet("Summary");
+  ss.addRow(["Item", "Count", "Amount"]);
+  ss.addRow(["Month", month, ""]);
+  ss.addRow(["Scope", kind, ""]);
+  ss.addRow(["GRN purchase vouchers (raised in HRMS only; legacy db_bill imports are not exported)", summary.counts.grn, summary.totals.grn]);
+  ss.addRow(["Payments, receipts, contra", summary.counts.payments, summary.totals.payments]);
+  ss.addRow(["Journal vouchers & bank adjustments", summary.counts.journals, summary.totals.journals]);
+  ss.addRow(["Masters: ledgers", summary.masters.ledgers, ""]);
+  ss.addRow(["Masters: cost centres", summary.masters.costCentres, ""]);
+  ss.addRow(["Left out (see Exceptions)", summary.counts.exceptions, ""]);
+  ss.getColumn(1).width = 78; ss.getColumn(2).width = 14; ss.getColumn(3).width = 18; ss.getColumn(3).numFmt = "#,##0.00";
+  head(ss);
+
+  const ex = wb.addWorksheet("Exceptions");
+  ex.addRow(["Section", "Voucher / GRN", "Why it is left out"]);
+  for (const e of exceptions) ex.addRow([e.kind, safe(e.ref), safe(e.reason)]);
+  [14, 30, 90].forEach((w, i) => (ex.getColumn(i + 1).width = w));
+  head(ex);
+
+  return { buffer: Buffer.from(await wb.xlsx.writeBuffer()), summary };
 }
 
 /**

@@ -30,6 +30,11 @@ const h = vi.hoisted(() => {
 });
 vi.mock("../../../db/mysql.js", () => ({ db: { query: h.run, execute: h.run } }));
 vi.mock("../grn-tally-download.service.js", () => ({
+  GRN_IMPORT_COLUMNS: ["Vch No", "Date", "Effective Date", "Details", "Debit Amount", "Credit Amount", "Cost Category", "Cost Centre", "Narration for Each Entry", "Narration", "VchType"],
+  grnImportRows: (data: any) => data.rows.flatMap((r: any) => r.exception || !r.header ? [] : r.entries.map((e: any) => [
+    r.header.voucherNumber, r.header.date, r.header.effectiveDate, e.ledger, e.side === "Dr" ? e.amount : "", e.side === "Cr" ? e.amount : "",
+    r.header.costCategory, r.header.costCentre, r.header.narrationEntry ?? "", r.header.narration ?? "", r.header.voucherType,
+  ])),
   loadGrnTallyDownload: async () => ({
     rows: [{
       grnNumber: "MAS/09/26/0001", grnType: "vendor", exception: null, gross: 517902,
@@ -48,7 +53,8 @@ vi.mock("../grn-tally-download.service.js", () => ({
   }),
 }));
 
-import { buildLedgerTallyExport, buildPaymentVoucherTallyXml } from "../tally-ledger-export.service.js";
+import ExcelJS from "exceljs";
+import { buildLedgerTallyExport, buildLedgerTallyXlsx, buildPaymentVoucherTallyXml } from "../tally-ledger-export.service.js";
 
 const entry = (id: string, source: string, sourceId: string | null, branch: string | null = null) =>
   ({ id, entry_date: "2026-09-15", narration: `${source} ${id}`, source_type: source, source_id: sourceId, branch_id: branch });
@@ -144,5 +150,60 @@ describe("buildLedgerTallyExport", () => {
     expect(bank.xml).toContain("<IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>");
     expect(bank.xml).toContain('<LEDGER NAME="OESPL Private Limited" ACTION="Create">');
     expect(bank.xml).not.toContain("je9");
+  });
+});
+
+describe("buildLedgerTallyXlsx", () => {
+  const sheet = async (buffer: Buffer) => {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer);
+    return wb;
+  };
+  const rowsOf = (ws: ExcelJS.Worksheet) => {
+    const out: unknown[][] = [];
+    ws.eachRow((r) => out.push((r.values as unknown[]).slice(1)));
+    return out;
+  };
+
+  it("carries the same month as the XML: GRN lines in the legacy columns, then payments and journals, with a summary", async () => {
+    h.state.entries = [entry("je1", "payment_voucher", "pv1"), entry("je4", "manual", null, "br1")];
+    h.state.lines = [
+      line("je1", 1, "vendor", "v1", 50000, 0), line("je1", 2, "bank_account", "b1", 0, 45000), line("je1", 3, "payable_account", "tds", 0, 5000),
+      line("je4", 1, "expense_sub_head", "s1", 1200, 0), line("je4", 2, "payable_account", "chg", 0, 1200),
+    ];
+    h.state.pvs = [{ id: "pv1", voucher_number: "PV/HQ/202609/0001", voucher_type: "payment", source_type: "vendor_grn" }];
+    h.state.jvs = [{ journal_entry_id: "je4", reversal_entry_id: null, voucher_number: "JV/2026/0007", narration: "Rent accrual" }];
+    const { buffer, summary } = await buildLedgerTallyXlsx({ month: "2026-09", kind: "all" });
+    const wb = await sheet(buffer);
+    expect(wb.worksheets.map((w) => w.name)).toEqual(["Import", "Vouchers", "Masters", "Summary", "Exceptions"]);
+    const imp = rowsOf(wb.getWorksheet("Import")!);
+    expect(imp[0]).toEqual(["Vch No", "Date", "Effective Date", "Details", "Debit Amount", "Credit Amount", "Cost Category", "Cost Centre", "Narration for Each Entry", "Narration", "VchType"]);
+    expect(imp.filter((r) => r[0] === "INV/MAS/09/26/0001")).toHaveLength(5); // one row per GRN ledger line
+    const pay = imp.filter((r) => r[0] === "PV/HQ/202609/0001");
+    expect(pay.map((r) => [r[3], r[4], r[5]])).toEqual([["OESPL Private Limited", 45000, ""], ["HDFC Bank CA", "", 45000]]); // TDS booked on the GRN, vendor net
+    expect(imp.some((r) => r[0] === "JV/2026/0007" && r[10] === "Journal")).toBe(true);
+    const vs = rowsOf(wb.getWorksheet("Vouchers")!);
+    expect(vs.length - 1).toBe(summary.counts.grn + summary.counts.payments + summary.counts.journals);
+    expect(summary.counts).toMatchObject({ grn: 1, payments: 1, journals: 1 });
+  });
+
+  it("one kind only: GRN scope has no payments, and masters scope has no Import sheet", async () => {
+    h.state.entries = [entry("je1", "payment_voucher", "pv1")];
+    h.state.lines = [line("je1", 1, "vendor", "v1", 100, 0), line("je1", 2, "bank_account", "b1", 0, 100)];
+    h.state.pvs = [{ id: "pv1", voucher_number: "PV/9", voucher_type: "payment", source_type: "vendor_grn" }];
+    const grn = await sheet((await buildLedgerTallyXlsx({ month: "2026-09", kind: "grn" })).buffer);
+    expect(rowsOf(grn.getWorksheet("Import")!).some((r) => r[0] === "PV/9")).toBe(false);
+    const masters = await sheet((await buildLedgerTallyXlsx({ month: "2026-09", kind: "masters" })).buffer);
+    expect(masters.getWorksheet("Import")).toBeUndefined();
+    expect(rowsOf(masters.getWorksheet("Masters")!).some((r) => r[0] === "Ledger" && r[1] === "Office Rent")).toBe(true);
+  });
+
+  it("a text cell that starts with = + - @ is stored as text, not as a formula", async () => {
+    h.state.entries = [entry("je7", "manual", null, "br1")];
+    h.state.lines = [line("je7", 1, "expense_sub_head", "s1", 10, 0), line("je7", 2, "payable_account", "chg", 0, 10)];
+    h.state.jvs = [{ journal_entry_id: "je7", reversal_entry_id: null, voucher_number: "JV/8", narration: "=HYPERLINK(\"http://x\")" }];
+    const wb = await sheet((await buildLedgerTallyXlsx({ month: "2026-09", kind: "journals" })).buffer);
+    const row = rowsOf(wb.getWorksheet("Import")!).find((r) => r[0] === "JV/8")!;
+    expect(String(row[9]).startsWith("'=")).toBe(true);
   });
 });

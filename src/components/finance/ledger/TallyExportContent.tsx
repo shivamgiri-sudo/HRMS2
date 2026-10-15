@@ -6,7 +6,7 @@
 // builds them from the vouchers, so once these import, Tally's reports match HRMS.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Download, FileCode2 } from "lucide-react";
+import { AlertTriangle, Download, FileCode2, FileSpreadsheet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -20,6 +20,7 @@ type Summary = {
   exceptions: { kind: string; ref: string; reason: string }[];
 };
 type Kind = "all" | "masters" | "grn" | "payments" | "journals";
+type Format = "xml" | "xlsx";
 
 const INR = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const thisMonth = () => new Date().toISOString().slice(0, 7);
@@ -35,7 +36,7 @@ const FILES: { kind: Kind; title: string; detail: (s?: Summary) => string }[] = 
 export function TallyExportContent() {
   const { toast } = useToast();
   const [month, setMonth] = useState(thisMonth());
-  const [busy, setBusy] = useState<Kind | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
   const summary = useQuery({
     queryKey: ["ledger-tally-summary", month],
@@ -47,14 +48,14 @@ export function TallyExportContent() {
   });
   const s = summary.data;
 
-  const download = async (kind: Kind) => {
-    setBusy(kind);
+  const download = async (kind: Kind, format: Format = "xml") => {
+    setBusy(`${kind}:${format}`);
     try {
-      const blob = await hrmsApi.getBlob(`/api/finance/ledger-tally/export?month=${month}&kind=${kind}`);
+      const blob = await hrmsApi.getBlob(`/api/finance/ledger-tally/export?month=${month}&kind=${kind}&format=${format}`);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Tally_${kind}_${month}.xml`;
+      a.download = `Tally_${kind}_${month}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
       toast({ title: "Downloaded", description: a.download });
@@ -77,6 +78,8 @@ export function TallyExportContent() {
             Import in TallyPrime with Import → Transactions → XML (masters first, or use “Everything”, which puts the masters
             first). Trial Balance, P&amp;L, Balance Sheet and party ledgers are built by Tally from these vouchers.
             Payroll (Salary Voucher page) and GST sales invoices (GST Export page) have their own Tally files.
+            GRNs raised in HRMS only: GRNs imported from the legacy billing system are not exported. Excel carries the same month,
+            vouchers and exceptions (Import sheet in the legacy import columns, plus Vouchers, Masters, Summary, Exceptions).
           </p>
         </div>
       </div>
@@ -92,9 +95,14 @@ export function TallyExportContent() {
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><FileCode2 className="h-4 w-4 text-slate-500" />{f.title}</div>
               <p className="mt-1 text-xs text-slate-500">{summary.isLoading ? "Counting…" : f.detail(s)}</p>
             </div>
-            <Button size="sm" variant={f.kind === "all" ? "default" : "outline"} className="mt-3 self-start" disabled={busy !== null || !s} onClick={() => download(f.kind)}>
-              <Download className={`mr-1.5 h-3.5 w-3.5 ${busy === f.kind ? "animate-pulse" : ""}`} />Tally XML
-            </Button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button size="sm" variant={f.kind === "all" ? "default" : "outline"} disabled={busy !== null || !s} onClick={() => download(f.kind, "xml")}>
+                <Download className={`mr-1.5 h-3.5 w-3.5 ${busy === `${f.kind}:xml` ? "animate-pulse" : ""}`} />Tally XML
+              </Button>
+              <Button size="sm" variant="outline" disabled={busy !== null || !s} onClick={() => download(f.kind, "xlsx")}>
+                <FileSpreadsheet className={`mr-1.5 h-3.5 w-3.5 ${busy === `${f.kind}:xlsx` ? "animate-pulse" : ""}`} />Excel
+              </Button>
+            </div>
           </div>
         ))}
       </div>
