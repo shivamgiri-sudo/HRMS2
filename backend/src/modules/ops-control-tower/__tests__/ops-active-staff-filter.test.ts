@@ -32,7 +32,12 @@ describe("exported filters", () => {
   it("STILL_WITH_US keeps current staff and pre-joiners, ACTIVE_STAFF_ONLY keeps current staff", () => {
     expect(svc.STILL_WITH_US).toContain("e.active_status = 1");
     expect(svc.STILL_WITH_US).toContain("'preboarding'");
-    expect(svc.ACTIVE_STAFF_ONLY).toBe("e.active_status = 1");
+    expect(svc.ACTIVE_STAFF_ONLY).toContain("e.active_status = 1");
+    // active_status can still be 1 for someone whose employment_status says they left: that person is not staff either
+    for (const left of ["resigned", "terminated", "absconded", "exited", "inactive"]) {
+      expect(svc.ACTIVE_STAFF_ONLY).toContain(`'${left}'`);
+      expect(svc.STILL_WITH_US).toContain(`'${left}'`);
+    }
   });
 });
 

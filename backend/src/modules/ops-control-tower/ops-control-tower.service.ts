@@ -15,6 +15,7 @@
 // service.ts's own `idCreationSlaBreached: daysSinceIdCreated > 3`, the same employees.created_at
 // clock used there.
 import { abscondedWithoutExceptionSql } from "../exit/ff-settlement-gate.service.js";
+import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
 import { awaitingFinalApprovalSql, nocFinalApprovalFrom } from "../payroll/noc-final-approval.service.js";
 import { DIGILOCKER_EVIDENCE_SQL } from "../ats/onboarding-bridge-heal.js";
 import type { RowDataPacket } from "mysql2";
@@ -58,7 +59,12 @@ const SLOW_QUERY_MS = 2_000;
  *     mismatches are no longer something the branch can act on).
  * F&F and NOC are exit trackers and deliberately still list people who have left.
  */
-export const STILL_WITH_US = "(e.active_status = 1 OR LOWER(COALESCE(e.employment_status, '')) = 'preboarding')";
+// A person can carry active_status = 1 while employment_status already says they have left (exit processed
+// without the flag flipping). They are not staff either, so the same leaver list the nightly activation job
+// uses (modules/exit/exitEmploymentStatus.ts) is excluded here. Owner ruling 2026-10-16: no task of a person
+// who is not an active employee shows in the Ops Control Tower, except the exit trackers (F&F / NOC).
+const LEFT_STATUS_SQL = `LOWER(COALESCE(e.employment_status, '')) NOT IN (${nonReactivatableSqlList()})`;
+export const STILL_WITH_US = `((e.active_status = 1 AND ${LEFT_STATUS_SQL}) OR LOWER(COALESCE(e.employment_status, '')) = 'preboarding')`;
 
 /**
  * Payroll Head has approved this joiner's salary. Everything that comes after that step (joining
@@ -69,7 +75,7 @@ export const STILL_WITH_US = "(e.active_status = 1 OR LOWER(COALESCE(e.employmen
  */
 const PAYROLL_HEAD_APPROVED_SQL = `EXISTS (SELECT 1 FROM employee_payroll_head_review phr
                           WHERE phr.employee_id = e.id AND phr.status = 'approved')`;
-export const ACTIVE_STAFF_ONLY = "e.active_status = 1";
+export const ACTIVE_STAFF_ONLY = `(e.active_status = 1 AND ${LEFT_STATUS_SQL})`;
 
 async function query<T extends RowDataPacket>(
   label: string,
