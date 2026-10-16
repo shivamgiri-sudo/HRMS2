@@ -17,6 +17,7 @@ export type TallyGroup =
   | "Loans & Advances (Asset)"
   | "Current Liabilities"
   | "Indirect Incomes"
+  | "Sales Accounts"
   | "Fixed Assets";
 
 export class TallyMasters {
@@ -39,8 +40,18 @@ export class TallyMasters {
     this.centres.set(centre.trim(), category.trim());
   }
 
-  voucherType(name: string, parent: "Journal" | "Payment" | "Receipt" | "Contra") {
-    if (!["Journal", "Payment", "Receipt", "Contra", "Purchase", "Sales"].includes(name)) this.voucherTypes.set(name, parent);
+  voucherType(name: string, parent: "Journal" | "Payment" | "Receipt" | "Contra" | "Sales" | "Credit Note") {
+    if (!["Journal", "Payment", "Receipt", "Contra", "Purchase", "Sales", "Credit Note", "Debit Note"].includes(name)) this.voucherTypes.set(name, parent);
+  }
+
+  /** Every master as plain rows, for the Excel download (the XML carries the same set). */
+  get listing() {
+    return {
+      ledgers: [...this.ledgers].sort(([a], [b]) => a.localeCompare(b)).map(([name, l]) => ({ name, group: l.group, costCentres: l.costCentres })),
+      costCategories: [...this.categories].sort(),
+      costCentres: [...this.centres].sort().map(([name, category]) => ({ name, category })),
+      voucherTypes: [...this.voucherTypes].sort().map(([name, parent]) => ({ name, parent })),
+    };
   }
 
   get counts() {

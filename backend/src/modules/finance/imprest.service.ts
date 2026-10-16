@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
+import { rebaseRunningBalances } from "./bank-ledger-anchor.js";
 import { db } from "../../db/mysql.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
@@ -589,7 +590,7 @@ export const imprestService = {
 
           const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
             `SELECT running_balance FROM bank_account_ledger_entry
-               WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+               WHERE bank_account_id = ? ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT 1`,
             [companyBankAccountId]
           );
           const runningBalance = round2(
@@ -619,6 +620,7 @@ export const imprestService = {
               actorUserId,
             ]
           );
+          await rebaseRunningBalances(companyBankAccountId, connection);
         }
       }
 
@@ -727,7 +729,7 @@ export const imprestService = {
 
           const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
             `SELECT running_balance FROM bank_account_ledger_entry
-               WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+               WHERE bank_account_id = ? ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT 1`,
             [companyBankAccountId]
           );
           const runningBalance = round2(
@@ -757,6 +759,7 @@ export const imprestService = {
               actorUserId,
             ]
           );
+          await rebaseRunningBalances(companyBankAccountId, connection);
         }
       }
 

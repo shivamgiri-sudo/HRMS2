@@ -33,6 +33,7 @@ exports[`Hiring Engine email send pin > invite email 1`] = `
 <tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>MAS Callnet Hiring Team</b></td></tr>
 <tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with MAS Callnet or shared your profile with us. The interview is free of charge; we never ask for money.</td></tr>
 </table></td></tr></table></body></html>",
+      "pool": "careers",
       "subject": "Walk-in interview: D:2026-10-09, T:2026-10-09 11:00:00 - CSE, MAS Callnet",
       "text": "Hi Asha,
 Your profile matches our CSE opening. Your walk-in interview slot:
@@ -73,6 +74,7 @@ exports[`Hiring Engine email send pin > reminder email 1`] = `
 <tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>MAS Callnet Hiring Team</b></td></tr>
 <tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with MAS Callnet. The interview is free of charge; we never ask for money.</td></tr>
 </table></td></tr></table></body></html>",
+      "pool": "careers",
       "subject": "Reminder: your interview on D:2026-10-09, T:2026-10-09 11:00:00 - CSE",
       "text": "Hi Asha,
 This is a reminder of your walk-in interview for CSE. Please confirm that you can still come.

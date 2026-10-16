@@ -463,7 +463,8 @@ router.get(
       req.authUser!.id,
       ['branch_head'],
       { branchId: 'r.branch_id' },
-      { allowAdminBypass: true },
+      // A branch head sees their own branch(es) even when they also hold an org-wide role (ruling 2026-10-15).
+      { allowAdminBypass: true, blockOrgWideForRoles: ['branch_head'] },
     );
     const rows = await listPendingApprovals(scopeFilter);
     res.json({ ok: true, data: rows });
@@ -473,7 +474,7 @@ router.get(
 router.post(
   '/offers/:id/approve',
   requireAuth,
-  requireRole('branch_head', 'admin', 'super_admin', 'hr', 'payroll_hr'),
+  requireRole('branch_head', 'super_admin'), // offer approval right: branch heads only (ruling 2026-10-15)
   h(async (req: AuthenticatedRequest, res) => {
     if (!(await offerInScopeOr403(req, res as Response, req.params!.id))) return;
     const result = await approveOffer(req.params!.id, req.authUser!.id, req.body.remarks);
@@ -484,7 +485,7 @@ router.post(
 router.post(
   '/offers/:id/reject',
   requireAuth,
-  requireRole('branch_head', 'admin', 'super_admin', 'hr', 'payroll_hr'),
+  requireRole('branch_head', 'super_admin'), // offer approval right: branch heads only (ruling 2026-10-15)
   h(async (req: AuthenticatedRequest, res) => {
     if (!req.body.remarks) { res.status(400).json({ error: 'remarks required for rejection' }); return; }
     if (!(await offerInScopeOr403(req, res as Response, req.params!.id))) return;

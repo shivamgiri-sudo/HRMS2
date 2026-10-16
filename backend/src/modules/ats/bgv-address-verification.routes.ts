@@ -16,6 +16,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
+import { assessForCandidate, summarise, upsertAddressCheck, type AddressAssessment } from "./address-verification-assessment.js";
 
 // Branch scoping (owner ruling 2026-10-01): HR-facing address-verification actions are limited to candidates
 // inside the caller's own branch / assigned scope (org-wide roles unaffected).
@@ -162,9 +163,10 @@ function extractAddressHints(profile: RowDataPacket | null) {
   };
 }
 
-async function syncAddressBgvCheck(
+export async function syncAddressBgvCheck(
   candidateId: string,
   status: "verified" | "failed" | "not_run",
+  verifiedRemarks?: string,
 ) {
   const now = status === "verified" ? new Date() : null;
   const summary =
@@ -173,13 +175,7 @@ async function syncAddressBgvCheck(
       : status === "failed"
         ? "Address verification failed after max attempts"
         : null;
-  await db.execute(
-    `INSERT INTO candidate_bgv_check (candidate_id, check_type, status, verified_at, result_summary, updated_at)
-       VALUES (?, 'address', ?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE status = VALUES(status), verified_at = VALUES(verified_at),
-         result_summary = VALUES(result_summary), updated_at = NOW()`,
-    [candidateId, status, now, summary],
-  );
+  await upsertAddressCheck(candidateId, status, now, summary);
 
   // Propagate into candidate_bgv_report.address_status, which is what actually
   // gates appointment-letter eligibility (evaluateAppointmentLetterEligibility's
@@ -199,7 +195,7 @@ async function syncAddressBgvCheck(
     const addressStatus = status === "verified" ? "passed" : "failed";
     const addressRemarks =
       status === "verified"
-        ? "Auto-verified via geo-tagged selfie (GPS within threshold) — no manual review required."
+        ? (verifiedRemarks ?? "Auto-verified via geo-tagged selfie (GPS within threshold) — no manual review required.")
         : "Address verification failed after max attempts on the geo-tagged selfie link.";
     await db.execute(
       `UPDATE candidate_bgv_report
@@ -239,7 +235,7 @@ export interface AddressBgvInitResult {
 
 export async function initiateAddressBgvForCandidate(
   candidateId: string,
-  opts: { forceUnblock?: boolean; unblockerId?: string | null; onlyIfNone?: boolean } = {},
+  opts: { forceUnblock?: boolean; unblockerId?: string | null; onlyIfNone?: boolean; skipEmail?: boolean } = {},
 ): Promise<AddressBgvInitResult> {
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM candidate_bgv_address_verification WHERE candidate_id = ?`,
@@ -275,7 +271,8 @@ export async function initiateAddressBgvForCandidate(
     return { sent: false, skippedReason: "no_address" };
   }
 
-  if (!candRow?.email) {
+  // skipEmail: HR is copying the link to hand over directly (Ops Control Tower), so no mailbox is needed.
+  if (!opts.skipEmail && !candRow?.email) {
     return { sent: false, skippedReason: "no_email" };
   }
 
@@ -290,7 +287,7 @@ export async function initiateAddressBgvForCandidate(
     `INSERT INTO candidate_bgv_address_verification
        (candidate_id, token, declared_address, ref_latitude, ref_longitude,
         attempt_number, sent_via, expires_at, unblocked_by)
-     VALUES (?, ?, ?, ?, ?, ?, 'link', ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       candidateId,
       token,
@@ -298,6 +295,8 @@ export async function initiateAddressBgvForCandidate(
       geo?.lat ?? null,
       geo?.lng ?? null,
       nextAttempt,
+      // 'copied' = HR took the link to hand over directly; those are never auto-reminded by email.
+      opts.skipEmail ? "copied" : "link",
       expiresAt,
       opts.forceUnblock ? (opts.unblockerId ?? null) : null,
     ],
@@ -306,16 +305,18 @@ export async function initiateAddressBgvForCandidate(
   const appUrl = process.env.APP_URL ?? "https://mcnhrms.teammas.in";
   const link = `${appUrl}/bgv-address-verify/${token}`;
 
-  void sendAddressBgvLinkEmail({
-    candidateId,
-    to: candRow.email as string,
-    candidateName: (candRow.full_name as string) ?? "Candidate",
-    declaredAddress,
-    verificationLink: link,
-    attemptNumber: nextAttempt,
-    maxAttempts: MAX_ATTEMPTS,
-    expiresAt,
-  }).catch(() => {});
+  if (!opts.skipEmail) {
+    void sendAddressBgvLinkEmail({
+      candidateId,
+      to: candRow.email as string,
+      candidateName: (candRow.full_name as string) ?? "Candidate",
+      declaredAddress,
+      verificationLink: link,
+      attemptNumber: nextAttempt,
+      maxAttempts: MAX_ATTEMPTS,
+      expiresAt,
+    }).catch(() => {});
+  }
 
   return {
     sent: true,
@@ -326,6 +327,38 @@ export async function initiateAddressBgvForCandidate(
     attemptNumber: nextAttempt,
     geoResolved: geo !== null,
   };
+}
+
+/**
+ * A link HR can copy and hand to the candidate. Reuses the candidate's live (pending, unexpired) link so
+ * repeated clicks do not burn the 3-attempt allowance; otherwise mints a fresh attempt WITHOUT emailing.
+ */
+export async function getOrCreateAddressVerificationLink(
+  candidateId: string,
+): Promise<
+  | { ok: true; link: string; expiresAt: Date; reused: boolean }
+  | { ok: false; reason: "max_attempts" | "no_address" }
+> {
+  const appUrl = process.env.APP_URL ?? "https://mcnhrms.teammas.in";
+  const [live] = await db.execute<RowDataPacket[]>(
+    `SELECT token, expires_at FROM candidate_bgv_address_verification
+      WHERE candidate_id = ? AND status = 'pending' AND expires_at > NOW()
+      ORDER BY created_at DESC LIMIT 1`,
+    [candidateId],
+  );
+  if (live[0]) {
+    return {
+      ok: true,
+      link: `${appUrl}/bgv-address-verify/${String(live[0].token)}`,
+      expiresAt: new Date(live[0].expires_at as string),
+      reused: true,
+    };
+  }
+  const r = await initiateAddressBgvForCandidate(candidateId, { skipEmail: true });
+  if (!r.sent || !r.link || !r.expiresAt) {
+    return { ok: false, reason: r.skippedReason === "no_address" ? "no_address" : "max_attempts" };
+  }
+  return { ok: true, link: r.link, expiresAt: r.expiresAt, reused: false };
 }
 
 /**
@@ -367,6 +400,74 @@ export async function sweepMissingAddressBgvLinks(limit = 5): Promise<number> {
   );
   for (const row of rows) await autoSendAddressBgvLink(String(row.id), "sweep");
   return rows.length;
+}
+
+/**
+ * Reminds candidates whose emailed link is still unused: once 24h after it was sent and once more 72h
+ * after. Skips HR-copied links, expired or nearly expired ones, and candidates without an email. Each
+ * (link, reminder number) is claimed in address_bgv_reminder_log BEFORE sending (unique key), so two
+ * workers or a retry can never double-send. Capped per tick to stay inside the mail quota.
+ */
+export async function sendAddressBgvReminders(limit = 10): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT v.id, v.candidate_id, v.token, v.declared_address, v.attempt_number, v.expires_at, v.created_at,
+            c.email, c.full_name
+       FROM candidate_bgv_address_verification v
+       JOIN ats_candidate c ON c.id = v.candidate_id
+      WHERE v.status = 'pending' AND v.sent_via = 'link'
+        AND v.expires_at > NOW() + INTERVAL 6 HOUR
+        AND v.created_at <= NOW() - INTERVAL 24 HOUR
+        AND v.created_at >= NOW() - INTERVAL 7 DAY
+        AND c.email IS NOT NULL AND TRIM(c.email) <> ''
+        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification vv
+                         WHERE vv.candidate_id = v.candidate_id AND vv.status IN ('submitted', 'verified'))
+      ORDER BY v.created_at ASC
+      LIMIT 100`,
+  );
+  if (!rows.length) return 0;
+  const ids = rows.map((r) => String(r.id));
+  const [logged] = await db.execute<RowDataPacket[]>(
+    `SELECT verification_id, MAX(reminder_no) AS last_no, MAX(sent_at) AS last_at
+       FROM address_bgv_reminder_log WHERE verification_id IN (${ids.map(() => "?").join(",")})
+      GROUP BY verification_id`,
+    ids,
+  );
+  const lastBy = new Map(logged.map((l) => [String(l.verification_id), { no: Number(l.last_no), at: new Date(l.last_at as string) }]));
+  const appUrl = process.env.APP_URL ?? "https://mcnhrms.teammas.in";
+  let sent = 0;
+  for (const r of rows) {
+    if (sent >= limit) break;
+    const last = lastBy.get(String(r.id));
+    const ageH = (Date.now() - new Date(r.created_at as string).getTime()) / 3_600_000;
+    const next = !last ? 1 : last.no === 1 && ageH >= 72 && Date.now() - last.at.getTime() >= 24 * 3_600_000 ? 2 : 0;
+    if (next === 0) continue;
+    try {
+      await db.execute(
+        `INSERT INTO address_bgv_reminder_log (id, verification_id, candidate_id, reminder_no, outcome)
+         VALUES (?, ?, ?, ?, 'claimed')`,
+        [uuidv4(), r.id, r.candidate_id, next],
+      );
+    } catch {
+      continue; // already claimed by another worker / earlier tick
+    }
+    const out = await sendAddressBgvLinkEmail({
+      candidateId: String(r.candidate_id),
+      to: String(r.email),
+      candidateName: String(r.full_name ?? "Candidate"),
+      declaredAddress: String(r.declared_address ?? ""),
+      verificationLink: `${appUrl}/bgv-address-verify/${String(r.token)}`,
+      attemptNumber: Number(r.attempt_number ?? 1),
+      maxAttempts: MAX_ATTEMPTS,
+      expiresAt: new Date(r.expires_at as string),
+      reminderNo: next,
+    }).catch(() => ({ ok: false, skipped: false }));
+    await db.execute(
+      `UPDATE address_bgv_reminder_log SET outcome = ? WHERE verification_id = ? AND reminder_no = ?`,
+      [out.ok && !(out as { skipped?: boolean }).skipped ? "sent" : "failed", r.id, next],
+    ).catch(() => undefined);
+    if (out.ok) sent++;
+  }
+  return sent;
 }
 
 // ── HR: initiate ──────────────────────────────────────────────────────────────
@@ -596,6 +697,20 @@ router.post(
       }
     }
 
+    // Second independent signal: what DigiLocker/Aadhaar holds for this candidate. A selfie close to the
+    // pincode centre plus an agreeing government address is verified; anything else is queued for HR with
+    // the reasons attached (see address-verification-assessment.ts). Never fails the submission.
+    let assessment: AddressAssessment | null = null;
+    try {
+      assessment = await assessForCandidate(row.candidate_id as string, distanceM, acc);
+      if (assessment.tier === "verified" && !autoVerified) {
+        autoVerified = true;
+        newStatus = "verified";
+      }
+    } catch (err) {
+      console.error("[address-bgv] assessment failed:", err instanceof Error ? err.message : err);
+    }
+
     await db.execute(
       `UPDATE candidate_bgv_address_verification
           SET submitted_at = NOW(),
@@ -607,7 +722,8 @@ router.post(
               ip_address = ?,
               device_info = ?,
               status = ?,
-              auto_verified = ?
+              auto_verified = ?,
+              hr_notes = ?
         WHERE token = ?`,
       [
         selfiePath,
@@ -619,13 +735,20 @@ router.post(
         device,
         newStatus,
         autoVerified ? 1 : 0,
+        assessment ? `[auto] ${summarise(assessment)}`.slice(0, 1000) : null,
         token,
       ],
     );
 
     const candidateId = row.candidate_id as string;
     if (autoVerified) {
-      void syncAddressBgvCheck(candidateId, "verified").catch(() => {});
+      void syncAddressBgvCheck(
+        candidateId,
+        "verified",
+        assessment && distanceM !== null && distanceM > GPS_PASS_THRESHOLD_M
+          ? `Auto-verified: ${assessment.reasons.join("; ")}`
+          : undefined,
+      ).catch(() => {});
     } else {
       const [allRows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total,
@@ -662,6 +785,8 @@ router.get(
     "branch_hr",
     "process_hr",
     "recruitment_hr",
+    "payroll_head",
+    "payroll_hr",
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { candidateId } = req.params;
@@ -679,9 +804,20 @@ router.get(
       [candidateId],
     );
     const totalAttempts = Number((countRows[0] as RowDataPacket).cnt);
+    const withAssessment = await Promise.all(
+      rows.map(async (r) => {
+        if (r.status !== "submitted" && r.status !== "verified") return r;
+        const a = await assessForCandidate(
+          candidateId,
+          r.gps_distance_m === null || r.gps_distance_m === undefined ? null : Number(r.gps_distance_m),
+          r.gps_accuracy_m === null || r.gps_accuracy_m === undefined ? null : Number(r.gps_accuracy_m),
+        ).catch(() => null);
+        return { ...r, assessment: a };
+      }),
+    );
     return res.json({
       success: true,
-      data: rows,
+      data: withAssessment,
       meta: {
         totalAttempts,
         maxAttempts: MAX_ATTEMPTS,
@@ -703,6 +839,8 @@ router.patch(
     "branch_hr",
     "process_hr",
     "recruitment_hr",
+    "payroll_head",
+    "payroll_hr",
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
@@ -765,6 +903,47 @@ router.patch(
     }
 
     return res.json({ success: true });
+  }),
+);
+
+// ── Admin: re-assess queued submissions with the two-signal rule ────────────────────────────
+// Dry-run by default. apply=true marks 'verified' only those whose assessment is now verified (exact GPS,
+// or same area plus an agreeing DigiLocker address); everything else is left for HR untouched.
+router.post(
+  "/reassess",
+  requireAuth,
+  requireRole("admin", "hr_admin", "ho_hr", "payroll_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const apply = (req.body as { apply?: boolean } | undefined)?.apply === true;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, candidate_id, gps_distance_m, gps_accuracy_m
+         FROM candidate_bgv_address_verification
+        WHERE status = 'submitted' AND hr_decision IS NULL
+        ORDER BY submitted_at DESC LIMIT 500`,
+    );
+    const tally = { verified: 0, needs_hr: 0, conflict: 0 };
+    const verifiedIds: string[] = [];
+    for (const r of rows) {
+      if (!(await canAccessCandidate(req.authUser!.id, String(r.candidate_id)))) continue;
+      const a = await assessForCandidate(
+        String(r.candidate_id),
+        r.gps_distance_m === null ? null : Number(r.gps_distance_m),
+        r.gps_accuracy_m === null ? null : Number(r.gps_accuracy_m),
+      );
+      tally[a.tier]++;
+      if (a.tier !== "verified") continue;
+      verifiedIds.push(String(r.candidate_id));
+      if (apply) {
+        await db.execute(
+          `UPDATE candidate_bgv_address_verification
+              SET status = 'verified', auto_verified = 1, hr_notes = ?
+            WHERE id = ? AND status = 'submitted' AND hr_decision IS NULL`,
+          [`[auto] ${summarise(a)}`.slice(0, 1000), r.id],
+        );
+        await syncAddressBgvCheck(String(r.candidate_id), "verified", `Auto-verified: ${a.reasons.join("; ")}`);
+      }
+    }
+    return res.json({ success: true, applied: apply, examined: rows.length, tally, verifiedCandidateIds: verifiedIds });
   }),
 );
 

@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+import { emailService } from '../communication/email.service.js';
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import { env } from '../../config/env.js';
@@ -19,15 +19,11 @@ type EmailType = 'registration' | 'selected' | 'rejected' | 'rejected_profession
 
 interface SendResult { ok: boolean; error?: string; /** true when nothing was sent because SMTP is not configured */ skipped?: boolean }
 
-const transporter = nodemailer.createTransport({
-  host:   env.SMTP_HOST   || '',
-  port:   Number(env.SMTP_PORT || 587),
-  secure: false,
-  auth: {
-    user: env.SMTP_USER || '',
-    pass: env.SMTP_PASS || '',
-  },
-});
+/** Candidate-facing mail goes out of the Careers mailbox pool; staff notifications stay on the HRMS account. */
+const CANDIDATE_FACING: ReadonlySet<EmailType> = new Set<EmailType>([
+  'registration', 'selected', 'rejected', 'rejected_professional', 'token_sent', 'approved', 'welcome', 'selection_congratulations',
+  'selection_letter', 'bgv_completion', 'joining_doc_reminder', 'bank_resubmit_request', 'bgv_address_link',
+]);
 
 async function logEmail(
   candidateId: string,
@@ -75,12 +71,12 @@ async function send(
   candidateId: string,
   type: EmailType,
 ): Promise<SendResult> {
-  if (!env.SMTP_USER || !env.SMTP_PASS) {
+  const pool = CANDIDATE_FACING.has(type) ? 'careers' as const : undefined;
+  if (!emailService.hasTransport(pool)) {
     console.warn(`[ATS-EMAIL] SMTP not configured - skipping ${type} to ${to} (candidate ${candidateId})`);
     await logEmail(candidateId, type, to, 'skipped', 'SMTP not configured');
     return { ok: true, skipped: true };
   }
-  const fromAddr = env.SMTP_FROM || env.SMTP_USER;
   const finalHtml = /<html[\s>]/i.test(html)
     ? html
     : atsFrame({
@@ -89,7 +85,7 @@ async function send(
         body: html,
       });
   try {
-    await transporter.sendMail({ from: `"MAS Callnet" <${fromAddr}>`, to, subject: subject.replace(/[^\x20-\x7E]/g, "-"), html: finalHtml });
+    await emailService.send({ to, subject: subject.replace(/[^\x20-\x7E]/g, "-"), html: finalHtml, ...(pool ? { pool } : {}) });
     await logEmail(candidateId, type, to, 'sent');
     return { ok: true };
   } catch (err: unknown) {
@@ -725,6 +721,8 @@ export async function sendAddressBgvLinkEmail(params: {
   attemptNumber: number;
   maxAttempts: number;
   expiresAt: Date;
+  /** 1 or 2 when this is a reminder for a link already sent; omitted for the first send. */
+  reminderNo?: number;
 }): Promise<SendResult> {
   const { candidateName, declaredAddress, verificationLink, attemptNumber, maxAttempts, expiresAt } = params;
   const expiryStr = expiresAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
@@ -739,7 +737,7 @@ export async function sendAddressBgvLinkEmail(params: {
         <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#334155">Dear <strong>${escapeHtml(candidateName)}</strong>,</p>
         <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#334155">
           As part of your Background Verification (BGV), we need to verify your <strong>current residential address</strong>.
-          Please complete this step by clicking the button below.
+          Please complete this step by clicking the button below.${params.reminderNo ? " <strong>This is a reminder - your earlier link is still waiting for you.</strong>" : ""}
         </p>
 
         <div style="background:#fef9c3;border:1px solid #fde047;border-radius:12px;padding:16px 18px;margin:0 0 20px;color:#713f12;font-size:14px;line-height:1.6">
@@ -777,5 +775,5 @@ export async function sendAddressBgvLinkEmail(params: {
       </div>
     </div>
   </div>`;
-  return send(params.to, 'Action Required: Verify your current address — MAS Callnet BGV', html, params.candidateId, 'bgv_address_link');
+  return send(params.to, `${params.reminderNo ? 'Reminder: ' : ''}Action Required: Verify your current address — MAS Callnet BGV`, html, params.candidateId, 'bgv_address_link');
 }

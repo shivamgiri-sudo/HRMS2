@@ -32,3 +32,9 @@ describe("cost-incomplete detection", () => {
     expect(hasIncompleteCost([])).toBe(false);
   });
 });
+
+describe("not-prorated payroll is a caveat, never an incomplete cost", () => {
+  it("PAYROLL_NOT_PRORATED does not hide the margin or mark the month not final", () => {
+    expect(hasIncompleteCost(["PAYROLL_NOT_PRORATED"])).toBe(false);
+  });
+});

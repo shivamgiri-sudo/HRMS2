@@ -10,7 +10,8 @@ const facts = (o: Record<string, unknown> = {}) => ({
   id: "r1", mobile10: "9876543210", email: "a@b.in", lead_status: null, consent_revoked: 0, he_replied: 0, meta_replied: 0,
   ats_stage: null, jr_id: "req-1", approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 10, fulfilled_headcount: 1, ...o,
 });
-const updates = () => execute.mock.calls.filter(([sql]) => /^\s*UPDATE qualified_followup/.test(String(sql)));
+const updates = () => execute.mock.calls.filter(([sql]) => /^\s*UPDATE qualified_followup/.test(String(sql)) && !/wa_fallback/.test(String(sql)));
+const reinstated = () => execute.mock.calls.filter(([sql]) => /wa_fallback/.test(String(sql)));
 const releases = () => execute.mock.calls.filter(([sql]) => /UPDATE he_match m JOIN qualified_followup qf/.test(String(sql)));
 
 beforeEach(() => {
@@ -129,6 +130,9 @@ describe("syncWaReceipts", () => {
     expect(updates()[0][1]).toEqual(["bad for [email] [number] (#131026)", "r1"]);
     expect(updates()[1][1]).toEqual(["delivery failed", "r2"]);
     expect(String(updates()[0][0])).toContain("wa_status IN ('sent', 'test_sent')");
+    // A WhatsApp that failed on delivery brings the parked fallback email back, once per failed row.
+    expect(reinstated().map(([, p]) => p)).toEqual([["r1"], ["r2"]]);
+    expect(String(reinstated()[0][0])).toContain("email_error = 'wa_primary'");
   });
 });
 

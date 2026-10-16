@@ -199,7 +199,7 @@ const esc = (l: string) => l.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 async function sendNow(rowId: string, to: string, subject: string, body: string, inReplyTo: string | null, refs: string[]): Promise<boolean> {
   try {
     await emailService.send({
-      to, subject: /^re:/i.test(subject) ? subject : `Re: ${subject || "Your walk-in interview"}`,
+      pool: "careers", to, subject: /^re:/i.test(subject) ? subject : `Re: ${subject || "Your walk-in interview"}`,
       html: body.split("\n").map((l) => (l.trim() ? `<p style="margin:0 0 8px">${esc(l)}</p>` : "")).join(""), text: body,
       ...(inReplyTo ? { inReplyTo, references: refs.length ? refs : [inReplyTo] } : {}),
     });

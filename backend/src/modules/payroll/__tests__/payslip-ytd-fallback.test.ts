@@ -17,7 +17,7 @@ describe("foldLegacyLineIntoYtd", () => {
     });
     expect(ytd.earning).toEqual({ BASIC: 15000, HRA: 6000, SPECIAL: 4000, OTHER_EARNINGS: 5000 });
     expect(ytd.deduction).toEqual({
-      PF_EMPLOYEE: 1800, PROFESSIONAL_TAX: 200, TDS: 500, ADVANCE_RECOVERY: 1000, OTHER_DEDUCTIONS: 50,
+      PF_EMP: 1800, PT: 200, TDS: 500, ADVANCE_RECOVERY: 1000, OTHER_DEDUCTIONS: 50,
     });
   });
 
@@ -53,7 +53,7 @@ describe("getYtdComponentsByType legacy fallback", () => {
     const ytd = await payslipService.getYtdComponentsByType("emp-1", "2026-06");
     expect(ytd.earning.BASIC).toBe(18000 + 15000 * 2); // June components + Apr/May legacy lines, June line NOT double counted
     expect(ytd.earning.HRA).toBe(12000);
-    expect(ytd.deduction.PF_EMPLOYEE).toBe(3600);
+    expect(ytd.deduction.PF_EMP).toBe(3600);
 
     const [, params] = execute.mock.calls[2];
     expect(params).toEqual(["", "emp-1", "2026-04", "2026-06", ""]); // FY start April, inclusive of the payslip month
@@ -91,7 +91,7 @@ describe("legacy_payslip_snapshot months (payslips with no run_id)", () => {
     });
     expect(ytd.earning).toMatchObject({ BASIC: 10000, HRA: 4000, CONVEYANCE: 800, PORTFOLIO: 500, MEDICAL_ALLOWANCE: 1250, SPECIAL: 2000, LTA: 300, OTHER_ALLOWANCE: 100 });
     expect(ytd.earning.BONUS).toBeUndefined();
-    expect(ytd.deduction).toMatchObject({ PF_EMPLOYEE: 1200, ESIC_EMPLOYEE: 150, TDS: 400, LWP_DEDUCTION: 250, ADVANCE: 1000, PROFESSIONAL_TAX: 200, OTHER_DEDUCTION: 75 });
+    expect(ytd.deduction).toMatchObject({ PF_EMP: 1200, ESIC_EMP: 150, TDS: 400, LWP_DEDUCTION: 250, ADVANCE: 1000, PT: 200, OTHER_DEDUCTION: 75 });
   });
 
   it("YTD for a legacy month (no run at all) is built from snapshots across the FY, skipping months a modern run covers", async () => {
@@ -107,7 +107,7 @@ describe("legacy_payslip_snapshot months (payslips with no run_id)", () => {
     const ytd = await payslipService.getYtdComponentsByType("emp-1", "2026-06");
     expect(ytd.earning.BASIC).toBe(15000 + 10000 + 10000); // June (salary line) + Apr + May snapshots
     expect(ytd.earning.HRA).toBe(8000);
-    expect(ytd.deduction.PF_EMPLOYEE).toBe(2400);
+    expect(ytd.deduction.PF_EMP).toBe(2400);
     expect(String(execute.mock.calls[3][0])).toContain("FROM legacy_payslip_snapshot");
     expect(execute.mock.calls[3][1]).toEqual(["emp-1", "2026-04", "2026-06"]);
   });
@@ -124,7 +124,7 @@ describe("legacy_payslip_snapshot months (payslips with no run_id)", () => {
       .mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[{ run_month: "2026-04", basic: 10000, epf_employee: 1200 }], []]);
     const out = await payslipService.getYtdForEmployee("emp-1", "2026-04");
-    expect(out.ytd).toEqual({ BASIC: 10000, PF_EMPLOYEE: 1200 });
-    expect(out.ytd_by_type).toEqual({ earning: { BASIC: 10000 }, deduction: { PF_EMPLOYEE: 1200 } });
+    expect(out.ytd).toEqual({ BASIC: 10000, PF_EMP: 1200 });
+    expect(out.ytd_by_type).toEqual({ earning: { BASIC: 10000 }, deduction: { PF_EMP: 1200 } });
   });
 });

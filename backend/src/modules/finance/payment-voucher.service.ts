@@ -1,4 +1,5 @@
 import { assertNoPaidTwin } from "./grn-duplicate-guard.js";
+import { rebaseForVoucher } from "./bank-ledger-anchor.js";
 import { randomUUID } from "crypto";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
@@ -191,7 +192,7 @@ async function getVendorAdvanceBalance(
 ): Promise<number> {
   const [[last]] = (await executor.execute(
     `SELECT balance_after FROM vendor_advance_ledger
-      WHERE vendor_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+      WHERE vendor_id = ? ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT 1`,
     [vendorId],
   )) as [RowDataPacket[], unknown];
   return last ? Number((last as any).balance_after) : 0;
@@ -467,7 +468,7 @@ export const paymentVoucherService = {
     const [[lastLedgerEntry]] = (row as any).bank_account_id
       ? await db.execute<RowDataPacket[]>(
           `SELECT running_balance FROM bank_account_ledger_entry
-            WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+            WHERE bank_account_id = ? ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT 1`,
           [(row as any).bank_account_id],
         )
       : [[undefined]];
@@ -1154,7 +1155,7 @@ export const paymentVoucherService = {
 
       const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
         `SELECT running_balance FROM bank_account_ledger_entry
-          WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+          WHERE bank_account_id = ? ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT 1`,
         [v.bank_account_id],
       );
       let runningBalance = lastEntry ? Number((lastEntry as any).running_balance) : Number((bankAccount as any).opening_balance);
@@ -1563,7 +1564,7 @@ export const paymentVoucherService = {
         if (!(destAccount as any).active_status) throw new PaymentVoucherError("The destination bank account is closed");
         const [[destLastEntry]] = await connection.execute<RowDataPacket[]>(
           `SELECT running_balance FROM bank_account_ledger_entry
-             WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+             WHERE bank_account_id = ? ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT 1`,
           [v.destination_bank_account_id],
         );
         const destRunningBalance = roundMoney(
@@ -1682,6 +1683,10 @@ export const paymentVoucherService = {
         transaction_ref: transactionRef,
         amount,
       });
+
+      // A back-dated payment date lands before newer entries; re-anchor every account this voucher
+      // touched (an internal transfer posts to two) so later running balances include it.
+      await rebaseForVoucher(id, connection);
 
       await connection.commit();
     } catch (error) {

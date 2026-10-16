@@ -12,6 +12,7 @@
  * - db_audit.call_quality_assessment (quality scores) - optional
  * - attendance_regularization (pending regularizations)
  */
+import { parseIdList, idCondition } from "../../shared/idList.js";
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { isShiftDueYet, todayLocalDateStr } from './shift-due.util.js';
@@ -647,13 +648,18 @@ export function buildEmployeeScope(
     conds.push(`e.process_id IN (${scope.processIds.map(() => '?').join(',')})`);
     params.push(...scope.processIds);
   }
-  if (filters?.branchId) {
-    conds.push('e.branch_id = ?');
-    params.push(filters.branchId);
+  // branchId / processId may carry several comma-separated ids (console multi-select).
+  const branchIds = parseIdList(filters?.branchId);
+  if (branchIds.length) {
+    const c = idCondition('e.branch_id', branchIds);
+    conds.push(c.sql);
+    params.push(...c.params);
   }
-  if (filters?.processId) {
-    conds.push('e.process_id = ?');
-    params.push(filters.processId);
+  const processIds = parseIdList(filters?.processId);
+  if (processIds.length) {
+    const c = idCondition('e.process_id', processIds);
+    conds.push(c.sql);
+    params.push(...c.params);
   }
   const lobCond = filters?.lob ? lobCondition(filters.lob) : null;
   if (lobCond) {

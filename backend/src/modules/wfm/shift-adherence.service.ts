@@ -22,11 +22,15 @@ import {
 export interface AdherenceNode extends Tally, ReturnType<typeof deriveMetrics> {}
 export interface AdherenceSlot extends AdherenceNode { shift: string }
 export interface AdherenceManager extends AdherenceNode { managerId: string | null; manager: string }
+export interface AdherenceLob extends AdherenceNode { lobId: string | null; lob: string; headcount: number }
 export interface AdherenceProcess extends AdherenceNode {
   processId: string | null;
   process: string;
   slots: AdherenceSlot[];
   managers: AdherenceManager[];
+  lobs: AdherenceLob[];
+  /** Active employees in scope; lets the table list processes with nobody rostered that day. */
+  headcount: number;
 }
 export interface ShiftAdherenceReport {
   date: string;
@@ -39,7 +43,7 @@ export interface ShiftAdherenceReport {
 
 export interface AdherenceEmployee {
   employeeId: string; employeeCode: string; employeeName: string;
-  process: string; manager: string; shift: string;
+  process: string; manager: string; shift: string; lob: string;
   clockIn: string | null; clockOut: string | null;
   status: ClassifiedRow["status"];
   lateMin: number; leftEarly: boolean; earlyOutMin: number; missedLogout: boolean;
@@ -57,7 +61,7 @@ function localNowSql(now: Date): string {
 
 interface DayRow {
   employee_id: string; employee_code: string; full_name: string;
-  process_id: string | null; process_name: string; manager_id: string | null; manager_name: string;
+  process_id: string | null; process_name: string; lob_id: string | null; lob_name: string; manager_id: string | null; manager_name: string;
   assignment_type: string | null; is_week_off: number; attendance_status: string | null;
   shift_start: string | null; shift_end: string | null;
   clock_in: string | null; clock_out: string | null;
@@ -75,6 +79,7 @@ async function loadDay(date: string, scope: RosterIntelligenceScope | undefined,
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code, e.full_name, e.process_id,
             COALESCE(pm.process_name, 'Unassigned') AS process_name,
+            e.lob_id, COALESCE(NULLIF(TRIM(lm.lob_name), ''), 'No LOB') AS lob_name,
             e.reporting_manager_id AS manager_id,
             COALESCE(NULLIF(TRIM(m.full_name), ''), 'Not mapped') AS manager_name,
             ra.assignment_type, ra.is_week_off, adr.attendance_status,
@@ -90,6 +95,7 @@ async function loadDay(date: string, scope: RosterIntelligenceScope | undefined,
        JOIN employees e ON e.id = ra.employee_id AND e.active_status = 1
        LEFT JOIN process_master pm ON pm.id = e.process_id
        LEFT JOIN employees m ON m.id = e.reporting_manager_id
+       LEFT JOIN lob_master lm ON lm.id = e.lob_id
        LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
       WHERE ra.roster_date = ?
@@ -128,20 +134,52 @@ export async function getShiftAdherence(
   const rows = await loadDay(date, scope, filters, now);
 
   const total = emptyTally();
-  const procs = new Map<string, { processId: string | null; name: string; t: Tally; slots: Map<string, Tally>; mgrs: Map<string, { id: string | null; t: Tally }> }>();
+  const procs = new Map<string, { processId: string | null; name: string; t: Tally; slots: Map<string, Tally>; mgrs: Map<string, { id: string | null; t: Tally }>; lobs: Map<string, { id: string | null; t: Tally }> }>();
 
   for (const r of rows) {
     const c = classify(r, date, graceMinutes, now);
     addToTally(total, c);
     const key = String(r.process_id ?? "none");
-    const p = procs.get(key) ?? { processId: r.process_id ? String(r.process_id) : null, name: String(r.process_name), t: emptyTally(), slots: new Map(), mgrs: new Map() };
+    const p = procs.get(key) ?? { processId: r.process_id ? String(r.process_id) : null, name: String(r.process_name), t: emptyTally(), slots: new Map(), mgrs: new Map(), lobs: new Map() };
     addToTally(p.t, c);
     const slot = slotLabel(r.shift_start, r.shift_end);
     addToTally(p.slots.get(slot) ?? p.slots.set(slot, emptyTally()).get(slot)!, c);
     const mk = String(r.manager_name);
     addToTally((p.mgrs.get(mk) ?? p.mgrs.set(mk, { id: r.manager_id ? String(r.manager_id) : null, t: emptyTally() }).get(mk)!).t, c);
+    const lk = String(r.lob_name);
+    addToTally((p.lobs.get(lk) ?? p.lobs.set(lk, { id: r.lob_id ? String(r.lob_id) : null, t: emptyTally() }).get(lk)!).t, c);
     procs.set(key, p);
   }
+
+  // Every in-scope process and LOB is listed, including ones with nobody rostered on the day (they used to
+  // vanish, so a 90-process scope showed ~30 rows). They carry an empty tally and their headcount.
+  const { conds, params } = buildEmployeeScope(scope, filters);
+  const headRows = (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) ? [] : (await db.execute<RowDataPacket[]>(
+    `SELECT e.process_id, COALESCE(pm.process_name, 'Unassigned') AS process_name, e.lob_id,
+            COALESCE(NULLIF(TRIM(lm.lob_name), ''), 'No LOB') AS lob_name, COUNT(*) AS n
+       FROM employees e
+       JOIN process_master pm ON pm.id = e.process_id AND pm.active_status = 1 AND (pm.close_date IS NULL OR pm.close_date >= CURDATE())
+       LEFT JOIN branch_master pb ON pb.id = pm.branch_id
+       LEFT JOIN lob_master lm ON lm.id = e.lob_id
+      WHERE e.active_status = 1 AND e.process_id IS NOT NULL
+        AND (pm.branch_id IS NULL OR (pb.active_status = 1 AND (pb.close_date IS NULL OR pb.close_date >= CURDATE())))
+        ${conds.map((c) => `AND ${c}`).join("\n        ")}
+      GROUP BY e.process_id, pm.process_name, e.lob_id, lm.lob_name`,
+    params,
+  ))[0] as RowDataPacket[];
+  const headByProc = new Map<string, number>();
+  const headByLob = new Map<string, number>();
+  for (const h of headRows) {
+    const key = String(h.process_id);
+    headByProc.set(key, (headByProc.get(key) ?? 0) + Number(h.n));
+    headByLob.set(`${key}|${h.lob_name}`, Number(h.n));
+    const p = procs.get(key) ?? { processId: key, name: String(h.process_name), t: emptyTally(), slots: new Map(), mgrs: new Map(), lobs: new Map() };
+    if (!p.lobs.has(String(h.lob_name))) p.lobs.set(String(h.lob_name), { id: h.lob_id ? String(h.lob_id) : null, t: emptyTally() });
+    procs.set(key, p);
+  }
+
+  // Only ACTIVE processes on ACTIVE branches are listed (ruling 2026-10-16): drop rostered rows of any other process.
+  for (const key of [...procs.keys()]) if (key !== "none" && !headByProc.has(key)) procs.delete(key);
 
   // Worst adherence first, so the processes that need a conversation lead the table. Processes with
   // nothing measurable yet (no planned shifts due) sink to the bottom.
@@ -153,6 +191,9 @@ export async function getShiftAdherence(
       slots: [...p.slots.entries()].map(([shift, t]) => ({ shift, ...node(t) })).sort((a, b) => a.shift.localeCompare(b.shift)),
       managers: [...p.mgrs.entries()].map(([manager, v]) => ({ managerId: v.id, manager, ...node(v.t) }))
         .sort((a, b) => (a.adherencePct ?? 101) - (b.adherencePct ?? 101) || b.late - a.late),
+      headcount: headByProc.get(String(p.processId)) ?? 0,
+      lobs: [...p.lobs.entries()].map(([lob, v]) => ({ lobId: v.id, lob, headcount: headByLob.get(`${p.processId}|${lob}`) ?? 0, ...node(v.t) }))
+        .sort((a, b) => (a.adherencePct ?? 101) - (b.adherencePct ?? 101) || b.planned - a.planned),
     }))
     .sort((a, b) => (a.adherencePct ?? 101) - (b.adherencePct ?? 101) || b.planned - a.planned);
 
@@ -173,7 +214,7 @@ export async function getShiftAdherenceEmployees(
   graceMinutes: number,
   scope: RosterIntelligenceScope | undefined,
   filters: RosterIntelligenceFilters | undefined,
-  opts: { shift?: string; manager?: string; status?: AdherenceEmployeeFilter; limit?: number },
+  opts: { shift?: string; manager?: string; lob?: string; status?: AdherenceEmployeeFilter; limit?: number },
 ): Promise<{ total: number; employees: AdherenceEmployee[] }> {
   const now = new Date();
   const rows = await loadDay(date, scope, filters, now);
@@ -183,6 +224,7 @@ export async function getShiftAdherenceEmployees(
     const shift = slotLabel(r.shift_start, r.shift_end);
     if (opts.shift && shift !== opts.shift) continue;
     if (opts.manager && String(r.manager_name) !== opts.manager) continue;
+    if (opts.lob && String(r.lob_name) !== opts.lob) continue;
     const c = classify(r, date, graceMinutes, now);
     if (c.status === "non_working" || c.status === "leave" || c.status === "week_off_worked") continue;
     const match =
@@ -195,7 +237,7 @@ export async function getShiftAdherenceEmployees(
     if (!match) continue;
     out.push({
       employeeId: String(r.employee_id), employeeCode: String(r.employee_code), employeeName: String(r.full_name),
-      process: String(r.process_name), manager: String(r.manager_name), shift,
+      process: String(r.process_name), manager: String(r.manager_name), shift, lob: String(r.lob_name),
       clockIn: r.clock_in, clockOut: r.clock_out, status: c.status,
       lateMin: c.lateMin, leftEarly: c.leftEarly, earlyOutMin: c.earlyOutMin, missedLogout: c.missedLogout,
     });

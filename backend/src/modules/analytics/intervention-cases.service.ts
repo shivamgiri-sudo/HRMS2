@@ -35,8 +35,24 @@ export function bucketWhere(bucket: CaseBucket): string {
   }
 }
 
+/**
+ * Optional "cases raised between from and to" window (inclusive dates) on r.generated_at. Absent / invalid
+ * dates give sql '' so the open queue keeps showing every pending case (the unfiltered behaviour).
+ */
+export function generatedRange(q: { from?: unknown; to?: unknown }, col = 'r.generated_at'): { sql: string; params: string[] } {
+  const from = isValidDateOnly(q.from) ? String(q.from) : null;
+  const to = isValidDateOnly(q.to) ? String(q.to) : null;
+  if (!from && !to) return { sql: '', params: [] };
+  const parts: string[] = []; const params: string[] = [];
+  if (from) { parts.push(`${col} >= ?`); params.push(from); }
+  if (to) { parts.push(`${col} < DATE_ADD(?, INTERVAL 1 DAY)`); params.push(to); }
+  return { sql: ` AND ${parts.join(' AND ')}`, params };
+}
+
 export interface CaseQuery {
   bucket: CaseBucket; tier: string | null; owner: string | null; limit: number; weekStart?: string | null;
+  /** Inclusive generated-date window, see generatedRange(). */
+  range?: { sql: string; params: string[] };
   emp: { sql: string; params: string[] };
 }
 
@@ -52,6 +68,7 @@ export function buildCasesQuery(q: CaseQuery): { sql: string; params: (string | 
     extra += ' AND r.generated_at >= ? AND r.generated_at < DATE_ADD(?, INTERVAL 7 DAY)';
     params.push(q.weekStart, q.weekStart);
   }
+  if (q.range?.sql) { extra += q.range.sql; params.push(...q.range.params); }
   params.push(...q.emp.params, q.limit);
   const sql = `
     SELECT r.id, r.employee_id, e.employee_code,
@@ -90,7 +107,7 @@ export async function listInterventionCases(req: Request, res: Response) {
     const q: CaseQuery = {
       bucket, tier: normalizeTier(req.query.tier), owner: normalizeOwner(req.query.owner),
       limit: clampLimit(req.query.limit),
-      weekStart: isValidDateOnly(req.query.weekStart) ? req.query.weekStart : null, emp: buildInterventionEmployeeFilter(req.query, lob, (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope),
+      weekStart: isValidDateOnly(req.query.weekStart) ? req.query.weekStart : null, range: generatedRange(req.query), emp: buildInterventionEmployeeFilter(req.query, lob, (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope),
     };
     const { sql, params } = buildCasesQuery(q);
     const [rows] = await pool.query<Row[]>(sql, params);
@@ -103,20 +120,22 @@ export async function listInterventionCases(req: Request, res: Response) {
 }
 
 /** Extra aggregates for GET /outcomes (additive fields only). */
-export async function getSummaryExtras(emp: { sql: string; params: string[] }) {
-  const openWhere = bucketWhere('open');
+export async function getSummaryExtras(emp: { sql: string; params: string[] }, range: { sql: string; params: string[] } = { sql: '', params: [] }) {
+  // The generated-date window (if any) narrows the open-case tiles; the fixed trend / 7-day windows stay as they are.
+  const openWhere = bucketWhere('open') + range.sql;
+  const openParams = [...range.params, ...emp.params];
   const base = `FROM mas_hrms.employee_retention_recommendation r
     JOIN mas_hrms.employees e ON e.id = r.employee_id WHERE `;
   const [tierRows] = await pool.query<Row[]>(
     `SELECT r.risk_tier AS tier, COUNT(*) AS n, SUM(CASE WHEN ${OVERDUE_SQL} THEN 1 ELSE 0 END) AS overdue
-     ${base} ${openWhere} ${emp.sql} GROUP BY r.risk_tier`, emp.params);
+     ${base} ${openWhere} ${emp.sql} GROUP BY r.risk_tier`, openParams);
   const [ownerRows] = await pool.query<Row[]>(
     `SELECT
        SUM(JSON_SEARCH(r.recommendations,'one','hr_admin',NULL,'$[*].owner') IS NOT NULL) AS hr_admin,
        SUM(JSON_SEARCH(r.recommendations,'one','manager',NULL,'$[*].owner') IS NOT NULL) AS manager,
        SUM(JSON_SEARCH(r.recommendations,'one','wfm',NULL,'$[*].owner') IS NOT NULL) AS wfm,
        SUM(JSON_SEARCH(r.recommendations,'one','process_head',NULL,'$[*].owner') IS NOT NULL) AS process_head
-     ${base} ${openWhere} ${emp.sql}`, emp.params);
+     ${base} ${openWhere} ${emp.sql}`, openParams);
   // Weekly (Monday-start) generated vs actioned, last 12 weeks incl. current, filled with zeros.
   const [trendRows] = await pool.query<Row[]>(
     `SELECT DATE_FORMAT(DATE_SUB(DATE(r.generated_at), INTERVAL WEEKDAY(r.generated_at) DAY), '%Y-%m-%d') AS week_start,

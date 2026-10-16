@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { refuse } from "./finance-error.js";
 import { getPnlReconciliation, type PnlBranchRollup } from "./pnl-reconciliation.service.js";
 import { EXCLUDED_BRANCH_IDS } from "./cost-centre-process-resolver.service.js";
+import { getUnproratedPayrollByBranch } from "./pnl-statement.service.js";
 
 /**
  * Branch review of the monthly P&L. The figures come from the same reconciliation the P&L page uses
@@ -114,6 +115,7 @@ export async function getBranchReview(period: string, branchIds: string[] | null
     list.push(row);
     qBy.set(String(q.branch_id), list);
   }
+  const unprorated = await getUnproratedPayrollByBranch(period).catch(() => new Map<string, { staff: number; amount: number }>());
   const branches: BranchReviewRow[] = rollups.map((b) => {
     const id = String(b.branchId);
     const f = reviewFigures(b);
@@ -121,7 +123,9 @@ export async function getBranchReview(period: string, branchIds: string[] | null
     const queries = qBy.get(id) ?? [];
     const open = queries.filter((q) => q.status === "open").length;
     const snapshot = a ? { revenue: Number(a.snapshot_revenue), cost: Number(a.snapshot_cost), operatingProfit: Number(a.snapshot_operating_profit) } : null;
-    const issues = b.issues ?? [];
+    // A finalized run whose lines carry the full monthly gross with no payable days: the figure stays as the
+    // run stands, the card says so (the Statement column carries the same flag).
+    const issues = unprorated.has(id) ? [...(b.issues ?? []), "PAYROLL_NOT_PRORATED"] : (b.issues ?? []);
     const incomplete = hasIncompleteCost(issues);
     const costCentres: BranchReviewCostCentre[] = rec.rows.filter((r) => r.branchId === id).map((r) => ({
       id: r.costCentreId, code: r.costCentreCode, name: r.costCentreName, process: r.costCentreProcess ?? null,
@@ -139,7 +143,9 @@ export async function getBranchReview(period: string, branchIds: string[] | null
   }).sort((x, y) => x.branchName.localeCompare(y.branchName));
   const count = (s: ReviewStatus) => branches.filter((b) => b.status === s).length;
   return {
-    period, mode: rec.mode, blockers: rec.blockers, generatedAt: rec.generatedAt,
+    // Below-the-line entries (depreciation, finance cost, tax) are company-wide and sit under PAT, which a branch
+    // review never shows: a branch head must not be told to fix them.
+    period, mode: rec.mode, blockers: rec.blockers.filter((x) => !/^Depreciation, finance cost and tax have not been entered/i.test(x)), generatedAt: rec.generatedAt,
     totals: { branches: branches.length, pending: count("pending"), queried: count("queried"), acknowledged: count("acknowledged"), changed: count("changed_after_acknowledgement") },
     branches,
   };

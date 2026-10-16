@@ -61,6 +61,19 @@ export function metaErrorCode(text: string | null | undefined): string {
   return http ? http[0] : "other";
 }
 
+/**
+ * Invite email is the FALLBACK channel: a candidate with a mobile number is invited on WhatsApp, and the email
+ * goes out only if that WhatsApp ends 'failed'. 7-day audit: 3,595 invite mails, 2,818 of those people also got a
+ * WhatsApp, 8% replied. HE_EMAIL_INVITE_MODE=always restores email-first for everyone.
+ */
+export const EMAIL_WA_PRIMARY = "wa_primary";
+export const emailFallbackOn = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  String(env.HE_EMAIL_INVITE_MODE ?? "").trim().toLowerCase() !== "always";
+/** Brings a parked fallback email back into the queue (WhatsApp ended failed). SQL fragment shared by both failure paths. */
+export const REINSTATE_EMAIL_SQL =
+  `UPDATE qualified_followup SET email_status = NULL, email_due_at = NOW(), email_error = 'wa_fallback'
+    WHERE id = ? AND email_status = 'skipped' AND email_error = '${EMAIL_WA_PRIMARY}' AND email IS NOT NULL AND stopped_reason IS NULL`;
+
 export const MAX_AUTO_ATTEMPTS = 3;
 export const RETRY_BACKOFF_MIN = 15;
 export const SENDING_STALE_MIN = 15;

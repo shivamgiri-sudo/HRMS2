@@ -132,6 +132,28 @@ describe("attributeNightShifts", () => {
     expect(consumedDates).toEqual([]);
   });
 
+  it("does not glue a day worker's morning arrival to the lone evening punch before it (MAS63383)", () => {
+    // Day worker 08:45-19:00 for a week. 14 Oct and 15 Oct have no morning punch, so 15 Oct holds only
+    // 19:14 and 16 Oct opens 08:53 - a 13.6h silence the exit-like rule used to bridge.
+    const b = (d: string, a: string, z: string, n = 2) => ({
+      punchDate: d, firstPunch: `${d} ${a}:00`, lastPunch: `${d} ${z}:00`, totalPunches: n,
+    });
+    const { groups, consumedDates } = run([
+      b("2026-10-09", "08:52", "19:08", 3), b("2026-10-10", "08:59", "18:08", 3), b("2026-10-11", "08:54", "19:16", 3),
+      b("2026-10-12", "08:49", "19:23", 4), b("2026-10-13", "08:52", "19:28"),
+      b("2026-10-14", "08:40", "08:40", 1), b("2026-10-14", "17:43", "18:21", 3),
+      b("2026-10-15", "19:14", "19:14", 1), b("2026-10-16", "08:53", "08:53", 1),
+    ]);
+    const by = Object.fromEntries(groups.map((g) => [g.punchDate, g]));
+    // 14 Oct: arrival 08:40, then 9h03 of silence, then 17:43-18:21 - one day, not a dropped arrival.
+    expect(by["2026-10-14"].firstPunch).toBe("2026-10-14 08:40:00");
+    expect(by["2026-10-14"].lastPunch).toBe("2026-10-14 18:21:00");
+    expect(by["2026-10-15"].lastPunch).toBe("2026-10-15 19:14:00");
+    expect(by["2026-10-16"].firstPunch).toBe("2026-10-16 08:53:00");
+    expect(by["2026-10-13"].lastPunch).toBe("2026-10-13 19:28:00");
+    expect(consumedDates).toEqual([]);
+  });
+
   it("flags shapes the rule cannot settle: long shifts and a small-hours start running 10h+ (MAS49499)", () => {
     const b = (d: string, a: string, z: string, n = 5) => ({ punchDate: d, firstPunch: `${d} ${a}:00`, lastPunch: `${d} ${z}:00`, totalPunches: n });
     const { groups } = run([

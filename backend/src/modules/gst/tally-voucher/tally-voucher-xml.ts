@@ -20,6 +20,7 @@
  */
 
 import { createHash } from "crypto";
+import { TallyMasters, type TallyGroup } from "../../finance/tally-ledger-masters.js";
 import type {
   TallyAction,
   TallyLedgerEntry,
@@ -182,6 +183,7 @@ export function buildTallyEnvelope(
   companyName: string,
   messages: readonly string[],
   provisionalNote?: string,
+  withMasters = false,
 ): string {
   const note = provisionalNote
     ? `\n  <!-- ${provisionalNote.replace(/--+/g, "-").replace(XML_ILLEGAL, "")} -->`
@@ -194,8 +196,8 @@ export function buildTallyEnvelope(
   <BODY>
     <IMPORTDATA>
       <REQUESTDESC>
-        <REPORTNAME>Vouchers</REPORTNAME>
-        <STATICVARIABLES>
+        <REPORTNAME>${withMasters ? "All Masters" : "Vouchers"}</REPORTNAME>
+        <STATICVARIABLES>${withMasters ? "\n          <IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>" : ""}
           <SVCURRENTCOMPANY>${xmlText(companyName)}</SVCURRENTCOMPANY>
         </STATICVARIABLES>
       </REQUESTDESC>
@@ -214,9 +216,42 @@ export function buildVouchersXml(
   resolveAction: TallyActionResolver,
   provisionalNote?: string,
 ): string {
+  // Tally (7.2, tested) IGNORES a voucher ACTION="Alter" under "All Masters" + IMPORTDUPS ignore, so the masters
+  // can only ride along when every voucher is new. A file with an amended (Alter) voucher keeps the "Vouchers"
+  // request without masters: its ledgers were created by the first export of those vouchers.
+  const actions = models.map((m) => resolveAction(m));
+  const withMasters = actions.every((a) => a === "Create");
   return buildTallyEnvelope(
     companyName,
-    models.map((m) => buildVoucherMessageXml(m, resolveAction(m))),
+    [
+      ...(withMasters ? voucherMasters(models).messages().map((m) => `      <TALLYMESSAGE xmlns:UDF="TallyUDF">${m}</TALLYMESSAGE>`) : []),
+      ...models.map((m, i) => buildVoucherMessageXml(m, actions[i])),
+    ],
     provisionalNote,
+    withMasters,
   );
+}
+
+/**
+ * The ledgers and voucher types the vouchers use, ahead of the vouchers (first exports only, see buildVouchersXml).
+ * With "All Masters" + IMPORTDUPS ignore (tested on TallyPrime 7.2) an existing master is left untouched and a
+ * missing one - a new client's party ledger - is created, instead of the voucher being rejected with
+ * "Ledger ... does not exist".
+ */
+export function voucherMasters(models: readonly TallyVoucherModel[]): TallyMasters {
+  const m = new TallyMasters();
+  for (const v of models) {
+    m.voucherType(v.voucherType, v.kind === "receipt" ? "Receipt" : v.kind === "credit_note" ? "Credit Note" : "Sales");
+    for (const e of v.entries) m.ledger(e.ledgerName, gstLedgerGroup(e), false);
+  }
+  return m;
+}
+
+export function gstLedgerGroup(e: TallyLedgerEntry): TallyGroup {
+  if (e.role === "party") return "Sundry Debtors";
+  if (e.role === "sales") return "Sales Accounts";
+  if (e.role === "round_off") return "Indirect Expenses";
+  if (/\btds\b/i.test(e.ledgerName)) return "Loans & Advances (Asset)";
+  if (e.role === "tax") return "Duties & Taxes";
+  return "Current Liabilities";
 }

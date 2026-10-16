@@ -60,6 +60,13 @@ export function setSessionMaxExecutionTime(ms: number): void {
 
 _pool.on("connection", (conn) => {
   conn.query("SET time_zone = '+05:30'");
+  // Reduce the 8h server-side wait_timeout to 5 min so idle connections release their
+  // uncommitted transactions promptly instead of holding InnoDB row locks until the
+  // server disconnects them 8 hours later.
+  conn.query("SET SESSION wait_timeout = 300");
+  // Fail lock waits in 30s instead of the server default (50s). Long lock waits hold
+  // connection pool slots and can cascade into circuit-breaker trips.
+  conn.query("SET SESSION innodb_lock_wait_timeout = 30");
   if (sessionMaxExecutionMs > 0) {
     conn.query(`SET SESSION max_execution_time = ${sessionMaxExecutionMs}`);
   }

@@ -1,6 +1,7 @@
 export type DashboardCode =
   | "SUPER_ADMIN_DASHBOARD"
   | "CEO_DASHBOARD"
+  | "BRANCH_HEAD_DASHBOARD"
   | "HR_DASHBOARD"
   | "WFM_DASHBOARD"
   | "WFM_ATTENDANCE_DASHBOARD"
@@ -82,6 +83,17 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS"],
     sensitiveMetrics: ["payroll", "revenue", "attrition"],
     permissions: { drilldown: true, export: true, filters: true },
+  }),
+  BRANCH_HEAD_DASHBOARD: definition({
+    code: "BRANCH_HEAD_DASHBOARD",
+    variant: "branch_head",
+    displayName: "Branch Health",
+    route: "/branch-head/dashboard",
+    pageCode: "MANAGEMENT_DASHBOARD",
+    allowedRoleKeys: ["branch_head", "ceo", "coo", "super_admin"],
+    scopeTypes: ["BRANCH"],
+    sensitiveMetrics: ["performance", "attendance", "attrition", "finance"],
+    permissions: { drilldown: true, export: false, filters: true },
   }),
   HR_DASHBOARD: definition({
     code: "HR_DASHBOARD",

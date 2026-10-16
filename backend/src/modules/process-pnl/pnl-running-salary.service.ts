@@ -88,6 +88,48 @@ export function resolveBucket(row: {
   return isSupportRole(row.department_name, row.designation_name) ? "dsc_people" : "agent_salary";
 }
 
+interface ClassificationRule {
+  scope_type: string;
+  scope_key: string;
+  process_id: string | null;
+  branch_id: string | null;
+  pnl_bucket: string;
+}
+
+/** Active rules whose effective window overlaps the month, in precedence order (same as bpo-pnl.service.ts). */
+async function loadClassificationRules(periodCode: string): Promise<ClassificationRule[]> {
+  const [y, m] = periodCode.split("-").map(Number);
+  const start = `${periodCode}-01`;
+  const end = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT scope_type, scope_key, process_id, branch_id, pnl_bucket
+         FROM pnl_cost_classification_rule
+        WHERE active_status = 1 AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
+        ORDER BY priority ASC, created_at ASC`,
+      [end, start],
+    );
+    return rows as unknown as ClassificationRule[];
+  } catch {
+    return []; // table absent on an older database: fall back to the role test
+  }
+}
+
+export function matchRuleBucket(row: EmployeeRow & { department_id?: string | null; designation_id?: string | null }, rules: ClassificationRule[]): string | null {
+  const lower = (v: unknown) => String(v ?? "").trim().toLowerCase();
+  const values: Record<string, string[]> = {
+    employee: [lower(row.id), lower(row.employee_code)],
+    designation: [lower(row.designation_id), lower(row.designation_name)],
+    department: [lower(row.department_id), lower(row.department_name)],
+  };
+  const hit = rules.find((rule) => {
+    if (rule.process_id && String(rule.process_id) !== String(row.process_id ?? "")) return false;
+    if (rule.branch_id && String(rule.branch_id) !== String(row.branch_id ?? "")) return false;
+    return (values[rule.scope_type] ?? []).includes(lower(rule.scope_key));
+  });
+  return hit?.pnl_bucket ?? null;
+}
+
 /**
  * Everyone whose cost belongs to this period.
  *
@@ -123,15 +165,9 @@ async function loadEmployees(
     `SELECT e.id, e.employee_code, e.branch_id, e.process_id, e.cost_centre_id,
             dep.dept_name AS department_name,
             des.designation_name AS designation_name,
-            (SELECT r.pnl_bucket
-               FROM pnl_cost_classification_rule r
-              WHERE r.active_status = 1
-                AND r.scope_type = 'department'
-                AND UPPER(TRIM(r.scope_key)) = UPPER(TRIM(dep.dept_name))
-                AND (r.process_id IS NULL OR r.process_id = e.process_id)
-                AND (r.branch_id IS NULL OR r.branch_id = e.branch_id)
-              ORDER BY r.priority ASC
-              LIMIT 1) AS rule_bucket
+            dep.id AS department_id,
+            des.id AS designation_id,
+            NULL AS rule_bucket
        FROM employees e
        LEFT JOIN department_master dep ON dep.id = e.department_id
        LEFT JOIN designation_master des ON des.id = e.designation_id
@@ -143,6 +179,11 @@ async function loadEmployees(
         ${branchClause}`,
     [periodCode, ...params]
   );
+  // Rules are matched here, not in SQL: same effective-date window and the same department /
+  // designation / employee scopes as bpo-pnl.service.ts matchClassification, so a rule seeded for
+  // September cannot re-bucket a July or August snapshot, and no cross-table collation is compared.
+  const rules = await loadClassificationRules(periodCode);
+  for (const row of rows) row.rule_bucket = matchRuleBucket(row, rules);
   return rows;
 }
 
@@ -173,19 +214,22 @@ interface SnapshotRow {
 async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: string): Promise<void> {
   if (rows.length === 0) return;
 
-  // For employees with no cost centre, the unique key includes NULL which MySQL won't
-  // match on upsert (NULL != NULL). Delete their existing rows first so INSERT creates a fresh one.
-  const nullCcEmployeeIds = rows
-    .filter((r) => !r.employee.cost_centre_id)
-    .map((r) => r.employee.id);
-  if (nullCcEmployeeIds.length > 0) {
-    const nullPlaceholders = nullCcEmployeeIds.map(() => "?").join(",");
-    await db.execute(
-      `DELETE FROM pnl_running_salary_snapshot
-        WHERE period_code = ? AND employee_id IN (${nullPlaceholders}) AND cost_centre_id IS NULL`,
-      [periodCode, ...nullCcEmployeeIds]
-    );
-  }
+  // Delete ALL existing rows for every employee in this batch before re-inserting.
+  //
+  // The upsert key is (period_code, employee_id, cost_centre_id). MySQL treats NULL as not equal
+  // to NULL in a unique-key match, so a NULL-CC row is never replaced by an INSERT … ON DUPLICATE
+  // KEY UPDATE; it accumulates. The same orphan problem occurs in the other direction: an employee
+  // who had CC_A on a previous refresh and now has NULL (or CC_B) keeps the old CC_A row alongside
+  // the new one, doubling their salary in every aggregation. The only safe contract is
+  // delete-then-insert: wipe every snapshot row for these employees first, then let the INSERT lay
+  // down exactly the rows this refresh computed — one per employee, or multiple for a mid-month
+  // cost-centre transfer (those are intentional and all land in the same batch).
+  const allEmployeeIds = [...new Set(rows.map((r) => r.employee.id))];
+  const deletePlaceholders = allEmployeeIds.map(() => "?").join(",");
+  await db.execute(
+    `DELETE FROM pnl_running_salary_snapshot WHERE period_code = ? AND employee_id IN (${deletePlaceholders})`,
+    [periodCode, ...allEmployeeIds],
+  );
 
   const placeholders = rows.map(() => "(UUID(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())").join(",");
   const params: unknown[] = [];
@@ -212,21 +256,7 @@ async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: stri
        (id, period_code, employee_id, employee_code, branch_id, process_id, cost_centre_id,
         department_name, designation_name, pnl_bucket, earned_salary_till_date, gross_monthly,
         earned_payable_days, total_payable_days, as_of_date, computed_at)
-     VALUES ${placeholders}
-     ON DUPLICATE KEY UPDATE
-       employee_code = VALUES(employee_code),
-       branch_id = VALUES(branch_id),
-       process_id = VALUES(process_id),
-       cost_centre_id = VALUES(cost_centre_id),
-       department_name = VALUES(department_name),
-       designation_name = VALUES(designation_name),
-       pnl_bucket = VALUES(pnl_bucket),
-       earned_salary_till_date = VALUES(earned_salary_till_date),
-       gross_monthly = VALUES(gross_monthly),
-       earned_payable_days = VALUES(earned_payable_days),
-       total_payable_days = VALUES(total_payable_days),
-       as_of_date = VALUES(as_of_date),
-       computed_at = NOW()`,
+     VALUES ${placeholders}`,
     params
   );
 }

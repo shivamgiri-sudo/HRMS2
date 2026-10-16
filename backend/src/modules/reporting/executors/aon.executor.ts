@@ -655,11 +655,94 @@ export async function overallAttritionRate(
   }
 }
 
+/** One employee's process and tenure dates (YYYY-MM-DD), the only inputs the monthly maths needs. */
+export interface ProcessTenureRow {
+  process_id: string | null;
+  process_name: string;
+  joined: string;
+  exited: string | null;
+}
+
+function monthStartsBetween(fromMonthStart: string, to: string, max = 12): string[] {
+  const out: string[] = [];
+  let y = Number(fromMonthStart.slice(0, 4));
+  let m = Number(fromMonthStart.slice(5, 7));
+  for (let n = 0; n < max; n++) {
+    const start = `${y}-${String(m).padStart(2, "0")}-01`;
+    if (start > to) break;
+    out.push(start);
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+}
+
+function lastDayOf(monthStart: string): string {
+  const y = Number(monthStart.slice(0, 4));
+  const m = Number(monthStart.slice(5, 7));
+  const d = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${monthStart.slice(0, 8)}${String(d).padStart(2, "0")}`;
+}
+
+function nextMonthStart(monthStart: string): string {
+  const y = Number(monthStart.slice(0, 4));
+  const m = Number(monthStart.slice(5, 7));
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+}
+
 /**
- * Process x month attrition: same population, month windows and average-of-endpoints
- * denominator as overallAttritionRate, grouped by process. One scan of `employees` cross-joined
- * against the month sequence. Employees with no process_id land in 'UNASSIGNED' so the
- * per-month total still reconciles to aon-overall-attrition-rate.
+ * Same definition as overallAttritionRate, per process: exits in the month / average of the
+ * headcount at the start and at the end of the month. Pure so it can be tested without a database.
+ */
+export function buildProcessMonthlyAttrition(
+  people: ProcessTenureRow[],
+  fromMonthStart: string,
+  to: string,
+): Array<Record<string, unknown>> {
+  const months = monthStartsBetween(fromMonthStart, to);
+  const rows: Array<Record<string, unknown>> = [];
+  const groups = new Map<string, { id: string | null; name: string; people: ProcessTenureRow[] }>();
+  for (const p of people) {
+    const key = `${p.process_id ?? ""}|${p.process_name}`;
+    const g = groups.get(key) ?? { id: p.process_id, name: p.process_name, people: [] };
+    g.people.push(p);
+    groups.set(key, g);
+  }
+  for (const monthStart of months) {
+    const end = lastDayOf(monthStart);
+    const next = nextMonthStart(monthStart);
+    for (const g of groups.values()) {
+      let exits = 0;
+      let hcStart = 0;
+      let hcEnd = 0;
+      for (const p of g.people) {
+        if (p.exited && p.exited >= monthStart && p.exited < next) exits += 1;
+        if (p.joined <= monthStart && (!p.exited || p.exited >= monthStart)) hcStart += 1;
+        if (p.joined <= end && (!p.exited || p.exited >= end)) hcEnd += 1;
+      }
+      const avg = (hcStart + hcEnd) / 2;
+      if (exits === 0 && avg === 0) continue;
+      rows.push({
+        month: monthStart.slice(0, 7),
+        process_id: g.id,
+        process_name: g.name,
+        exits,
+        avg_headcount: avg,
+        attrition_rate_pct: avg > 0 ? Math.round((exits * 10000) / avg) / 100 : null,
+      });
+    }
+  }
+  rows.sort((x, y) =>
+    String(x.month).localeCompare(String(y.month)) || String(x.process_name).localeCompare(String(y.process_name)));
+  return rows;
+}
+
+/**
+ * Process x month attrition. The earlier shape cross-joined every employee against a 12-row month
+ * list inside MySQL and timed out under load on prod. This reads only the people who can matter for
+ * the window (still active, or exited on/after the window start, and already joined by its end) in
+ * one pass, then does the month arithmetic in code. Employees with no process show as UNASSIGNED so
+ * monthly totals reconcile to aon-overall-attrition-rate.
  */
 export async function processMonthlyAttrition(
   filters: ExecFilters,
@@ -672,66 +755,34 @@ export async function processMonthlyAttrition(
   const from = dateParam(filters.from, iso(twelveMonthsAgo));
   const to = dateParam(filters.to, iso(today));
   const fromMonthStart = `${from.slice(0, 7)}-01`;
+  const months = monthStartsBetween(fromMonthStart, to);
+  const windowEnd = months.length ? lastDayOf(months[months.length - 1]) : to;
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push(`${AON_REFERENCE_JOIN_DATE_SQL} IS NOT NULL`, RELIABLE_POPULATION);
-  const scopeSql = clauses.join(" AND ");
+  clauses.push(`${AON_REFERENCE_JOIN_DATE_SQL} <= ?`);
+  params.push(windowEnd);
+  clauses.push("(e.date_of_exit IS NULL OR e.date_of_exit >= ?)");
+  params.push(fromMonthStart);
 
-  const base = `
-    SELECT DATE_FORMAT(m.month_start, '%Y-%m') AS month,
-           m.process_id,
-           m.process_name,
-           m.exits,
-           m.avg_headcount,
-           ROUND(m.exits * 100.0 / NULLIF(m.avg_headcount, 0), 2) AS attrition_rate_pct
-      FROM (
-        SELECT ms.month_start,
-               e.process_id,
-               COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-               SUM(
-                 CASE WHEN e.date_of_exit IS NOT NULL
-                           AND e.date_of_exit >= ms.month_start
-                           AND e.date_of_exit < DATE_ADD(ms.month_start, INTERVAL 1 MONTH)
-                      THEN 1 ELSE 0 END
-               ) AS exits,
-               (
-                 SUM(
-                   CASE WHEN ${AON_REFERENCE_JOIN_DATE_SQL} <= ms.month_start
-                             AND (e.date_of_exit IS NULL OR e.date_of_exit >= ms.month_start)
-                        THEN 1 ELSE 0 END
-                 )
-                 +
-                 SUM(
-                   CASE WHEN ${AON_REFERENCE_JOIN_DATE_SQL} <= LAST_DAY(ms.month_start)
-                             AND (e.date_of_exit IS NULL OR e.date_of_exit >= LAST_DAY(ms.month_start))
-                        THEN 1 ELSE 0 END
-                 )
-               ) / 2.0 AS avg_headcount
-          FROM employees e
-          LEFT JOIN process_master p ON p.id = e.process_id
-          CROSS JOIN (
-            SELECT DATE_ADD(DATE(?), INTERVAL n MONTH) AS month_start
-              FROM (SELECT 0 AS n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
-                    UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9
-                    UNION SELECT 10 UNION SELECT 11) months
-             WHERE DATE_ADD(DATE(?), INTERVAL n MONTH) <= DATE(?)
-          ) ms
-         WHERE ${scopeSql}
-         GROUP BY ms.month_start, e.process_id, p.process_name
-      ) m
-     WHERE m.exits > 0 OR m.avg_headcount > 0
-     ORDER BY month, process_name`;
-
-  const finalParams = [fromMonthStart, fromMonthStart, to, ...params];
+  const sql = `
+    SELECT e.process_id,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m-%d') AS joined,
+           DATE_FORMAT(e.date_of_exit, '%Y-%m-%d') AS exited
+      FROM employees e
+      LEFT JOIN process_master p ON p.id = e.process_id
+     WHERE ${clauses.join(" AND ")}`;
 
   try {
-    const rows = await query(base, finalParams);
-    return { rows: rows as Record<string, unknown>[], rowCount: rows.length, isTruncated: false };
+    const people = (await query(sql, params)) as unknown as ProcessTenureRow[];
+    const rows = buildProcessMonthlyAttrition(people, fromMonthStart, to);
+    return { rows, rowCount: rows.length, isTruncated: false };
   } catch (err) {
-    rethrowReportSchemaError("aon-process-monthly-attrition", err, base);
+    rethrowReportSchemaError("aon-process-monthly-attrition", err, sql);
   }
 }
 

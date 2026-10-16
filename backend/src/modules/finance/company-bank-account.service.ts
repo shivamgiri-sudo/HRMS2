@@ -3,6 +3,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { encryptField } from "../../shared/fieldEncryption.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { rebaseRunningBalances } from "./bank-ledger-anchor.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 
@@ -244,6 +245,7 @@ export const companyBankAccountService = {
     const oldOpeningBalance = Number(existing.opening_balance ?? 0);
     const newOpeningBalance = Number(merged.openingBalance ?? oldOpeningBalance);
     const openingBalanceChanged = newOpeningBalance !== oldOpeningBalance;
+    const asOfChanged = String(existing.opening_balance_as_of ?? "").slice(0, 10) !== String(merged.openingBalanceAsOf ?? "").slice(0, 10);
 
     const setAccountNumber = accountNumber !== undefined;
     const [result] = await db.execute<ResultSetHeader>(
@@ -267,6 +269,9 @@ export const companyBankAccountService = {
       ],
     );
     if (result.affectedRows !== 1) throw new CompanyBankAccountError("Update did not affect a record");
+    // The stored running balances are anchored at the opening balance (bank-ledger-anchor.ts):
+    // a new opening balance or as-of date must re-anchor them, or every screen keeps the old balance.
+    if (openingBalanceChanged || asOfChanged) await rebaseRunningBalances(id);
 
     // Opening balance is the base the Bank Ledger, the Payment Voucher chain and the Tally
     // export are all built on, so a change to it gets its own audit action type carrying the

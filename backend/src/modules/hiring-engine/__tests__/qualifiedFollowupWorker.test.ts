@@ -19,7 +19,7 @@ vi.mock("../qualified-followup.whatsapp.js", () => ({ runWhatsappStep: h.wa, pip
 vi.mock("../qualified-followup.call.js", () => ({ runCallStep: h.call }));
 vi.mock("../he-send.service.js", () => ({ sendTemplateToLead: h.sendTemplate, dateLabel: (d: string) => d, timeLabel: (t: string) => t }));
 vi.mock("../he-voice.service.js", () => ({ placeVoiceCall: h.voice }));
-vi.mock("../../communication/email.service.js", () => ({ emailService: { send: h.emailSend } }));
+vi.mock("../../communication/email.service.js", () => ({ emailService: { canSend: () => true, send: h.emailSend } }));
 
 import { followupWorkerStatus, runQualifiedFollowupTick, startQualifiedFollowupWorker, stopQualifiedFollowupWorker, LOCK_NAME } from "../qualified-followup.worker.js";
 import { emptyCounts } from "../qualified-followup.context.js";

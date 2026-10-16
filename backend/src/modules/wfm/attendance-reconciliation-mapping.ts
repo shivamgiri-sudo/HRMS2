@@ -80,11 +80,40 @@ export function buildSourceUserMaps(employeeRows: EmployeeRow[], excludedCosecId
 
 export function classifySourceUser(cosecUserId: string, maps: SourceMaps): ClassifiedUser {
   const key = String(cosecUserId);
-  if (maps.excludedSet.has(key) || isThirdPartyCosecUser(key)) return { kind: "excluded" };
-  const employee = maps.byCosecId.get(key);
-  if (!employee) return { kind: "unmapped" };
-  if (maps.inactiveSet.has(key)) return { kind: "inactive", employee };
-  return { kind: "active", employee };
+  // A third-party company's badge is never ours, whatever the employee table says.
+  if (isThirdPartyCosecUser(key)) return { kind: "excluded" };
+
+  // A COSEC id that belongs to one of OUR employees is never "excluded".
+  //
+  // The exclusion table is for ids that are not ours (visitors, guards, another company's staff)
+  // and is maintained by hand. It used to win over everything, so the moment an id that had once
+  // been parked there (typically while the person was still unmapped) later got an employee row,
+  // enrolment and biometric code, every punch was still thrown away: 25 analysts on 2026-10-15
+  // had 60-170 raw punches each in October and not one HRMS punch row, so Cosec read "-" next to a
+  // full APR day and shrinkage counted them absent (WFM email "APR available but punching not
+  // showing"). Ownership by an employee record now outranks the exclusion list; an exclusion that
+  // disagrees is reported through conflictingExclusions() instead of silently eating attendance.
+  const employee = maps.byCosecId.get(key) ?? maps.byEmployeeCode.get(key);
+  if (employee) {
+    if (maps.inactiveSet.has(key) || isInactiveRow(employee)) return { kind: "inactive", employee };
+    return { kind: "active", employee };
+  }
+  if (maps.excludedSet.has(key)) return { kind: "excluded" };
+  return { kind: "unmapped" };
+}
+
+function isInactiveRow(row: EmployeeRow): boolean {
+  return row.active_status === 0 || row.active_status === "0" || isInactiveEmploymentStatus(row.employment_status);
+}
+
+/** Exclusion-list ids that actually belong to an employee. Report these; never act on them. */
+export function conflictingExclusions(maps: SourceMaps): string[] {
+  const out: string[] = [];
+  for (const id of maps.excludedSet) {
+    if (isThirdPartyCosecUser(id)) continue;
+    if (maps.byCosecId.has(id) || maps.byEmployeeCode.has(id)) out.push(id);
+  }
+  return out;
 }
 
 /**

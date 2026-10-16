@@ -5,7 +5,7 @@ import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.
 import type { RowTag } from "./qualified-followup.policy.js";
 import { followupGuardOn } from "../selection/selection-switches.js";
 import { releasePerson } from "./followup-person.service.js";
-import { CRITERIA_HOLDABLE, decideStop, nextStepDue, OUTCOME_UNKNOWN_ERROR, SENDING_STALE_MIN, type StopReason } from "./qualified-followup.rules.js";
+import { CRITERIA_HOLDABLE, decideStop, nextStepDue, OUTCOME_UNKNOWN_ERROR, REINSTATE_EMAIL_SQL, SENDING_STALE_MIN, type StopReason } from "./qualified-followup.rules.js";
 import { releaseJourneyBooking } from "./followup-booking.service.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
@@ -139,6 +139,7 @@ export async function syncWaReceipts(tag: RowTag): Promise<number> {
     const [res] = await db.execute<any>(
       "UPDATE qualified_followup SET wa_status = 'failed', wa_error = ? WHERE id = ? AND wa_status IN ('sent', 'test_sent')", [err, r.id]);
     n += Number(res?.affectedRows ?? 0);
+    if (Number(res?.affectedRows ?? 0) > 0) await db.execute(REINSTATE_EMAIL_SQL, [r.id]).catch(() => { /* bonus channel */ });
   }
   return n;
 }

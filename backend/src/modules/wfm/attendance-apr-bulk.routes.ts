@@ -3,7 +3,7 @@ import multer from 'multer';
 import { randomUUID, createHash } from 'crypto';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import { loadEmploymentWindows, isWithinWindows, OUTSIDE_EMPLOYMENT_MESSAGE } from '../../shared/employmentWindow.js';
+import { loadEmploymentWindows, isWithinWindows, outsideEmploymentReason } from '../../shared/employmentWindow.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { isOperationsExecutiveByRegex as isOperationsExecutive, classifyOperationsNetLogin, resolveHalfDayFloorMinutes } from './attendance-engine.service.js';
@@ -250,14 +250,22 @@ router.post(
     let empRows: RowDataPacket[];
     try {
       [empRows] = await db.execute<RowDataPacket[]>(
+        // NOT filtered on employment_status. The employment window below is the authority on which
+        // DATES are attributable; a status filter here threw away every row of anyone already
+        // marked exited, including the days they worked before their last working day. The WFM
+        // team's 2026-10-13 rejection report carried exactly that: MAS63264, exit LWD 15 Oct, five
+        // Oct APR days, all answered "Employee not found or inactive".
         `SELECT e.id AS employee_id, e.employee_code,
                 LOWER(COALESCE(dm.dept_name, ''))         AS dept_name,
                 LOWER(COALESCE(desig.designation_name,'')) AS designation_name,
-                e.branch_id, e.process_id
+                e.branch_id, e.process_id,
+                e.employment_status, e.active_status,
+                DATE_FORMAT(e.date_of_joining, '%Y-%m-%d')  AS date_of_joining,
+                DATE_FORMAT(e.salary_start_date, '%Y-%m-%d') AS salary_start_date
          FROM employees e
          LEFT JOIN department_master dm    ON dm.id = e.department_id
          LEFT JOIN designation_master desig ON desig.id = e.designation_id
-         WHERE e.employee_code IN (${ph}) AND e.employment_status = 'active'`,
+         WHERE e.employee_code IN (${ph})`,
         codes,
       );
     } catch (err) {
@@ -449,8 +457,25 @@ router.post(
     for (const row of csvRows) {
       const emp = empMap.get(row.employee_code);
       if (!emp) {
-        rowErrors.push({ row: row.rowNum, employee_code: row.employee_code, reason: 'Employee not found or inactive' });
+        rowErrors.push({ row: row.rowNum, employee_code: row.employee_code, reason: 'Employee code not found in HRMS' });
         continue;
+      }
+
+      // Someone who is not active is attributable only up to a recorded exit date; without one
+      // there is no window to hold the date against, so refuse rather than record attendance for a
+      // person HRMS says is not employed.
+      const statusText = emp.employment_status == null ? null : String(emp.employment_status).trim().toLowerCase();
+      const liveEmployee = (statusText === null || statusText === 'active') && Number(emp.active_status ?? 1) !== 0;
+      if (!liveEmployee) {
+        const w = employmentWindows.get(String(emp.employee_id));
+        if (!w || !w.some((x) => x.to)) {
+          rowErrors.push({
+            row: row.rowNum,
+            employee_code: row.employee_code,
+            reason: `Employee is marked ${String(emp.employment_status ?? 'inactive')} and has no exit date on record, so attendance cannot be placed. Record the exit date or reactivate the employee.`,
+          });
+          continue;
+        }
       }
 
       const lockKey = `${emp.employee_id}:${row.attendance_date}`;
@@ -466,7 +491,11 @@ router.post(
 
       const empWindows = employmentWindows.get(String(emp.employee_id));
       if (empWindows && !isWithinWindows(row.attendance_date, empWindows)) {
-        rowErrors.push({ row: row.rowNum, employee_code: row.employee_code, reason: OUTSIDE_EMPLOYMENT_MESSAGE });
+        rowErrors.push({
+          row: row.rowNum,
+          employee_code: row.employee_code,
+          reason: outsideEmploymentReason(row.attendance_date, empWindows, emp.date_of_joining, emp.salary_start_date),
+        });
         continue;
       }
 

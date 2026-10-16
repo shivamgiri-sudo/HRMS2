@@ -3,6 +3,7 @@
  * Exposes roster decision audit data for compliance tracking
  */
 
+import { parseIdList, idCondition } from "../../shared/idList.js";
 import { Router } from 'express';
 import type { Response } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
@@ -54,8 +55,10 @@ interface Scope { conds: string[]; params: (string | number)[] }
 function auditScope(q: Record<string, unknown>, lob: LobFilter): Scope {
   const conds: string[] = [];
   const params: (string | number)[] = [];
-  if (q.branchId) { conds.push('COALESCE(rda.branch_id, e.branch_id) = ?'); params.push(String(q.branchId)); }
-  if (q.processId) { conds.push('COALESCE(rda.process_id, e.process_id) = ?'); params.push(String(q.processId)); }
+  const bIds = parseIdList(q.branchId);
+  if (bIds.length) { const c = idCondition('COALESCE(rda.branch_id, e.branch_id)', bIds); conds.push(c.sql); params.push(...c.params); }
+  const pIds = parseIdList(q.processId);
+  if (pIds.length) { const c = idCondition('COALESCE(rda.process_id, e.process_id)', pIds); conds.push(c.sql); params.push(...c.params); }
   const lobCond = lobCondition(lob);
   if (lobCond) { conds.push(lobCond.sql); params.push(...lobCond.params); }
   return { conds, params };
@@ -65,8 +68,10 @@ function auditScope(q: Record<string, unknown>, lob: LobFilter): Scope {
 function runScope(q: Record<string, unknown>): Scope {
   const conds: string[] = [];
   const params: (string | number)[] = [];
-  if (q.branchId) { conds.push('rgr.branch_id = ?'); params.push(String(q.branchId)); }
-  if (q.processId) { conds.push('rgr.process_id = ?'); params.push(String(q.processId)); }
+  const bIds = parseIdList(q.branchId);
+  if (bIds.length) { const c = idCondition('rgr.branch_id', bIds); conds.push(c.sql); params.push(...c.params); }
+  const pIds = parseIdList(q.processId);
+  if (pIds.length) { const c = idCondition('rgr.process_id', pIds); conds.push(c.sql); params.push(...c.params); }
   return { conds, params };
 }
 

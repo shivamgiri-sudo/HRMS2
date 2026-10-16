@@ -1,5 +1,6 @@
 import { assertNoPaidTwin } from "./grn-duplicate-guard.js";
 import { recordTdsAssessmentSafely } from "./tds-assessment.service.js";
+import { rebaseRunningBalances } from "./bank-ledger-anchor.js";
 import { createHash, randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
@@ -439,7 +440,7 @@ export const vendorPaymentLedgerService = {
 
         const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
           `SELECT running_balance FROM bank_account_ledger_entry
-             WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+             WHERE bank_account_id = ? ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT 1`,
           [companyBankAccountId]
         );
         let runningBalance = lastEntry
@@ -494,6 +495,8 @@ export const vendorPaymentLedgerService = {
             );
           }
         }
+        // Re-anchor in case the payment date lands before newer entries (bank-ledger-anchor.ts).
+        await rebaseRunningBalances(companyBankAccountId, connection);
       }
 
       auditSummary = {

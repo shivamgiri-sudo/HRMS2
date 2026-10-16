@@ -7,6 +7,7 @@
  * Control Tower then lists a joiner as pending for a step they completed. This catches the bridge up from
  * the evidence recorded elsewhere. Local reads/writes only, no provider calls, forward-only, idempotent.
  */
+import { upsertAddressCheck } from "./address-verification-assessment.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
@@ -28,7 +29,7 @@ export const DIGILOCKER_EVIDENCE_SQL = `(
  * routes push it into candidate_bgv_check and candidate_bgv_report.address_status and re-score, but that push is
  * fire-and-forget. Re-apply it for any verified attempt the report has not picked up. Unlocked reports only.
  */
-async function healAddress(): Promise<number> {
+export async function healAddress(): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT v.candidate_id
        FROM candidate_bgv_address_verification v
@@ -39,12 +40,7 @@ async function healAddress(): Promise<number> {
   const { computeAndSaveScore } = await import("./bgv-verification.service.js");
   for (const row of rows as RowDataPacket[]) {
     const candidateId = String(row.candidate_id);
-    await db.execute(
-      `INSERT INTO candidate_bgv_check (candidate_id, check_type, status, verified_at, result_summary, updated_at)
-         VALUES (?, 'address', 'verified', NOW(), 'Address verified via geo-tagged selfie', NOW())
-         ON DUPLICATE KEY UPDATE status = 'verified', updated_at = NOW()`,
-      [candidateId],
-    );
+    await upsertAddressCheck(candidateId, 'verified', new Date(), 'Address verified via geo-tagged selfie');
     await db.execute(
       `UPDATE candidate_bgv_report SET address_status = 'passed', updated_at = NOW()
         WHERE candidate_id = ? AND (locked = 0 OR locked IS NULL)`,

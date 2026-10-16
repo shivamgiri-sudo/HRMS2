@@ -53,7 +53,7 @@ vi.mock("../../communication/provider-config.service.js", () => ({ providerConfi
 vi.mock("../../communication/providers/whatsapp/pinbot.provider.js", () => ({
   PinbotWhatsAppProvider: class { isConfigured() { return true; } sendTemplate(...a: unknown[]) { return h.sendTemplate(...a); } },
 }));
-vi.mock("../../communication/email.service.js", () => ({ emailService: { isConfigured: () => true, send: h.emailSend } }));
+vi.mock("../../communication/email.service.js", () => ({ emailService: { canSend: () => true, isConfigured: () => true, send: h.emailSend } }));
 vi.mock("../../meta-campaign/voicebot.provider.js", () => ({ triggerVoiceCall: vi.fn(), isVoicebotConfigured: () => false }));
 vi.mock("../../meta-campaign/vapi-voicebot.provider.js", () => ({ triggerVapiCallWithInlineScript: vi.fn(), isVapiConfigured: () => false }));
 vi.mock("../../meta-campaign/meta-messages.service.js", () => ({ saveMessage: vi.fn(), reconcileDeliveryStatuses: vi.fn(async () => ({ checked: 0 })) }));

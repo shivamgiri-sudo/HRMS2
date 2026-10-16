@@ -30,7 +30,7 @@ const ALIAS = { employeeId: "e.id", branchId: "e.branch_id" };
 beforeEach(() => dbExecute.mockReset());
 
 describe("which roles are all-branch", () => {
-  it.each(["it_head", "tq_head", "hr_head", "operations_head", "security_head", "qa_head", "department_head"])(
+  it.each(["it_head", "tq_head", "hr_head", "security_head", "qa_head", "department_head"])(
     "%s is org-wide",
     (role) => {
       expect(sa.ORG_WIDE_EXEMPT_ROLES).toContain(role);
@@ -38,7 +38,7 @@ describe("which roles are all-branch", () => {
   );
 
   it("branch_head and the other branch roles are NOT org-wide", () => {
-    for (const r of ["branch_head", "hr", "payroll_hr", "admin", "manager", "process_manager", "wfm"]) {
+    for (const r of ["branch_head", "operations_head", "hr", "payroll_hr", "admin", "manager", "process_manager", "wfm"]) {
       expect(sa.ORG_WIDE_EXEMPT_ROLES).not.toContain(r);
     }
   });

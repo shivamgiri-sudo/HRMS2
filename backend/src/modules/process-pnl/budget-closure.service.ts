@@ -4,6 +4,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { refuse } from "./finance-error.js";
 import { inboxService } from "../inbox/inbox.service.js";
+import { legacyCountersByLine } from "./hrms-only-grn.js";
 
 /**
  * Monthly "business case" close/reopen per (budget, head, sub-head) — owner requirement,
@@ -345,12 +346,35 @@ export const budgetClosureService = {
         ORDER BY ccm.cost_centre_code`,
       [budgetId, budgetId, budgetId]
     );
+    // HRMS budgets count HRMS GRNs only (owner rule 2026-10-14): take the db_bill-migrated share
+    // out of "used", exactly as the Variance tab does per line. Without this the closure table
+    // showed April NOIDA-2 spent Rs 24.66 L against a Variance tab showing 0.
+    const legacyByLine = await legacyCountersByLine([budgetId]);
+    const legacyByCostCentre = new Map<string, number>();
+    if (legacyByLine.size > 0) {
+      const [lineRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, cost_centre_id, COALESCE(reserved_amount, 0) AS reserved, COALESCE(consumed_amount, 0) AS consumed
+           FROM finance_budget_line WHERE budget_id = ? AND cost_centre_id IS NOT NULL`,
+        [budgetId]
+      );
+      for (const lr of lineRows) {
+        const legacy = legacyByLine.get(String(lr.id));
+        if (!legacy) continue;
+        const removed =
+          Math.min(Number(lr.reserved), legacy.reserved) + Math.min(Number(lr.consumed), legacy.consumed);
+        const key = String(lr.cost_centre_id);
+        legacyByCostCentre.set(key, (legacyByCostCentre.get(key) ?? 0) + removed);
+      }
+    }
     return rows.map((r) => ({
       costCentreId: String(r.cost_centre_id),
       costCentreCode: r.cost_centre_code ?? null,
       costCentreName: r.cost_centre_name ?? null,
       budgetAmount: Number(r.budget_amount ?? 0),
-      usedAmount: Number(r.used_amount ?? 0),
+      usedAmount: Math.max(
+        0,
+        Math.round((Number(r.used_amount ?? 0) - (legacyByCostCentre.get(String(r.cost_centre_id)) ?? 0)) * 100) / 100,
+      ),
       status: r.closure_status === "closed" ? "closed" : "open",
       closedAt: r.closed_at ?? null,
       closedReason: r.closed_reason ?? null,

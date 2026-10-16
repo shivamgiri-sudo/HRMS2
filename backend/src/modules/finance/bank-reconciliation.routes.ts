@@ -148,8 +148,11 @@ bankReconciliationRouter.get(
   requireRole(...BANK_ACCOUNT_READ_ROLES),
   h(async (req, res) => {
     const [[line]] = await db.execute<RowDataPacket[]>(
-      `SELECT bsl.debit_amount, bsl.credit_amount, bsi.bank_account_id FROM bank_statement_line bsl
-         JOIN bank_statement_import bsi ON bsi.id = bsl.import_id WHERE bsl.id = ?`,
+      `SELECT bsl.debit_amount, bsl.credit_amount, DATE_FORMAT(bsl.txn_date, '%Y-%m-%d') AS txn_date, bsi.bank_account_id,
+              DATE_FORMAT(p.to_date, '%Y-%m-%d') AS period_to
+         FROM bank_statement_line bsl
+         JOIN bank_statement_import bsi ON bsi.id = bsl.import_id
+         LEFT JOIN bank_reconciliation_period p ON p.id = bsi.period_id WHERE bsl.id = ?`,
       [req.params.lineId],
     );
     if (!line) { res.status(404).json({ success: false, message: "Statement line not found." }); return; }
@@ -157,10 +160,16 @@ bankReconciliationRouter.get(
     const amountClause = Number(line.debit_amount) > 0 ? "debit_amount = ?" : "credit_amount = ?";
     const amountParam = Number(line.debit_amount) > 0 ? line.debit_amount : line.credit_amount;
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, entry_date, debit_amount, credit_amount, narration FROM bank_account_ledger_entry
+      // Closest dates first (a cheque can clear weeks after it was issued, beyond auto-match's
+      // window), and never history from before reconciliation started: that is already inside the
+      // opening balance, so matching it would count it twice.
+      `SELECT id, entry_date, debit_amount, credit_amount, narration, ABS(DATEDIFF(entry_date, ?)) AS days_apart
+         FROM bank_account_ledger_entry
         WHERE bank_account_id = ? AND matched_statement_line_id IS NULL AND ${amountClause}
-        ORDER BY entry_date DESC LIMIT 20`,
-      [line.bank_account_id, amountParam],
+          AND entry_date >= COALESCE((SELECT MIN(p.from_date) FROM bank_reconciliation_period p WHERE p.bank_account_id = ?), '1900-01-01')
+          AND entry_date <= COALESCE(?, '9999-12-31')
+        ORDER BY days_apart, entry_date DESC LIMIT 20`,
+      [line.txn_date, line.bank_account_id, amountParam, line.bank_account_id, line.period_to ?? null],
     );
     res.json({ success: true, data: rows });
   }),

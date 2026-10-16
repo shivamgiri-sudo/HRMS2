@@ -110,6 +110,7 @@ function script(lines: unknown[], opts: { entities?: unknown[]; cohorts?: unknow
     if (/FROM finance_payroll_entity_rule/.test(sql)) return [opts.entities ?? [ENTITY_MAS], []];
     if (/FROM salary_prep_line/.test(sql)) return [lines, []];
     if (/FROM finance_payroll_voucher_cohort/.test(sql)) return [opts.cohorts ?? [COHORT], []];
+    if (/FROM tally_legacy_name/.test(sql)) return [[{ entity_id: "br-del", tally_name: "DELHI", tally_code: "07" }], []];
     return [[], []];
   });
 }
@@ -195,6 +196,17 @@ describe("advances are per employee", () => {
     expect(advances[0].ledger_name).toBe("Advance Against Salary (HEAD OFFICE)");
     expect(advances.map((a) => a.employee_code)).toEqual(["MAS-A", "MAS-B", "MAS-C"]);
   });
+
+  it("advance ledgers use the Tally company's own names", async () => {
+    const { advanceLedger } = await import("../salary-voucher.service.js");
+    expect(advanceLedger("AHMEDABAD-JALDARSHAN")).toBe("Advance Against Salary (Ahm)");
+    expect(advanceLedger("Delhi Office")).toBe("Advance Against Salary (Delhi)");
+    expect(advanceLedger("NOIDA")).toBe("Advance Against Salary - Noida");
+    expect(advanceLedger("NOIDA-2")).toBe("Advance Against Salary - Noida-2");
+    expect(advanceLedger("NOIDA-ISPARK")).toBe("Advance Against Salary - Noidaispark");
+    expect(advanceLedger("NOIDA-DIALDESK")).toBe("Advance Against Salary (NOIDA-DIALDESK)");
+    expect(advanceLedger("Some New Branch")).toBe("Advance Against Salary (Some New Branch)");
+  });
 });
 
 describe("the entity rule", () => {
@@ -209,6 +221,15 @@ describe("the entity rule", () => {
     const out = await svc.salaryVoucherService.generate("run1");
     expect(out.unassigned).toEqual(["24852C"]);
     expect(out.vouchers[0].employees).toBe(1);
+  });
+
+  it("a branch the reference vouchers do not cover uses the Tally company's legacy cost centre", async () => {
+    script([CEO, { ...STAFF, employee_code: "MAS99998", branch_id: "br-del", branch_name: "Delhi Office" }]);
+    const out = await svc.salaryVoucherService.generate("run1");
+    const del = out.vouchers.find((v) => v.branch_name === "Delhi Office")!;
+    expect(del).toMatchObject({ cost_category: "DELHI", cost_centre: "07/2606" });
+    const ho = out.vouchers.find((v) => v.branch_name === "HEAD OFFICE")!;
+    expect(ho).toMatchObject({ cost_category: "HEAD OFFICE", cost_centre: "HO/2606" });
   });
 
   it("excludes a line with no branch rather than inventing a cost centre", async () => {

@@ -280,6 +280,22 @@ describe("XML", () => {
     expect(deriveVoucherGuid("invoice", "inv-2")).not.toBe(first.REMOTEID);
   });
 
+  it("a first export carries its ledgers (All Masters + IMPORTDUPS); a file with an Alter does not", () => {
+    const m = model();
+    const created = buildVouchersXml("C", [m], () => "Create");
+    expect(created).toContain("<REPORTNAME>All Masters</REPORTNAME>");
+    expect(created).toContain("<IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>");
+    const party = m.entries.find((e) => e.role === "party")!.ledgerName;
+    expect(created.indexOf(`<LEDGER NAME="${party}" ACTION="Create">`)).toBeGreaterThan(-1);
+    expect(created.indexOf(`<LEDGER NAME="${party}"`)).toBeLessThan(created.indexOf("<VOUCHER "));
+    expect(created).toContain("<PARENT>Sundry Debtors</PARENT>");
+    // Tally ignores an Alter under All Masters + IMPORTDUPS, so an amended file keeps the Vouchers request.
+    const altered = buildVouchersXml("C", [m], () => "Alter");
+    expect(altered).toContain("<REPORTNAME>Vouchers</REPORTNAME>");
+    expect(altered).not.toContain("IMPORTDUPS");
+    expect(altered).not.toContain("<LEDGER ");
+  });
+
   it("scrubs control characters and escapes markup from legacy text", () => {
     const m = model({
       description: "Fees \u000b& <more>\r\n\u0000 \"q\" 'a'",

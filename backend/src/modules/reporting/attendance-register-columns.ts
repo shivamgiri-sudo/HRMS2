@@ -56,3 +56,51 @@ export function withDayColumnLabels<T extends { key: string; label: string }>(
     return out;
   }, []);
 }
+
+/**
+ * Which day columns (1..31) of a month-grid report hold a day that is both inside what the caller
+ * asked for and not in the future.
+ *
+ *  - a single month: days 1..daysInMonth, capped at `today` (nothing after it has happened);
+ *  - a From..To range: only the days inside [from, to], in every month the range touches (the
+ *    grid's day_N columns are shared between months, so a column is shown when ANY touched month
+ *    has that day inside the range), again capped at `today`.
+ *
+ * Why: the register is a month grid and a range runs every month it touches in full, so a request
+ * for "14 October" came back with day columns through 31 October, and stored future-dated rows
+ * (pre-generated week-offs, advance leave) showed up to the 18th - WFM email 2026-10-13/15
+ * "attendance export for 14th shows records up to 18th". `today` is YYYY-MM-DD in IST.
+ */
+export function visibleDayNumbers(input: {
+  month?: string | null;
+  from?: string | null;
+  to?: string | null;
+  today: string;
+}): Set<number> {
+  const out = new Set<number>();
+  const isDate = (v?: string | null): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const isMonth = (v?: string | null): v is string => !!v && /^\d{4}-\d{2}$/.test(v);
+  let lo: string;
+  let hi: string;
+  if (isDate(input.from) || isDate(input.to)) {
+    lo = isDate(input.from) ? input.from : (input.to as string);
+    hi = isDate(input.to) ? input.to : (input.from as string);
+    if (hi < lo) hi = lo;
+  } else if (isMonth(input.month)) {
+    const [y, m] = input.month.split("-").map(Number);
+    lo = `${input.month}-01`;
+    hi = `${input.month}-${String(daysInMonth(y, m)).padStart(2, "0")}`;
+  } else {
+    return out; // nothing to go by: caller keeps every column
+  }
+  if (hi > input.today) hi = input.today;
+  if (lo > hi) return out;
+  // Walk the days; at most ~12 months, so this is cheap.
+  const cur = new Date(`${lo}T00:00:00Z`);
+  const end = new Date(`${hi}T00:00:00Z`);
+  while (cur <= end) {
+    out.add(cur.getUTCDate());
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return out;
+}

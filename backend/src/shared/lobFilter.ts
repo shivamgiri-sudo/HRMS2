@@ -13,7 +13,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export type LobFilter =
   | { kind: 'none' }
   | { kind: 'unassigned' }
-  | { kind: 'lob'; id: string };
+  | { kind: 'lob'; id: string }
+  /** Several LOBs picked at once (comma-separated lobId); `withUnassigned` also keeps employees with no LOB. */
+  | { kind: 'multi'; ids: string[]; withUnassigned: boolean };
 
 export function parseLobFilterParam(raw: unknown): LobFilter {
   if (raw === undefined || raw === null) return { kind: 'none' };
@@ -22,6 +24,17 @@ export function parseLobFilterParam(raw: unknown): LobFilter {
   }
   const v = raw.trim();
   if (v === '') return { kind: 'none' };
+  if (v.includes(',')) {
+    const parts = [...new Set(v.split(',').map((s) => s.trim()).filter(Boolean))];
+    const withUnassigned = parts.includes(LOB_NONE_SENTINEL);
+    const ids = parts.filter((p) => p !== LOB_NONE_SENTINEL);
+    for (const id of ids) {
+      if (!UUID_RE.test(id)) throw Object.assign(new Error('lobId must be valid uuids or "__none__"'), { statusCode: 400 });
+    }
+    if (ids.length === 0) return { kind: 'unassigned' };
+    if (ids.length === 1 && !withUnassigned) return { kind: 'lob', id: ids[0] };
+    return { kind: 'multi', ids, withUnassigned };
+  }
   if (v === LOB_NONE_SENTINEL) return { kind: 'unassigned' };
   if (!UUID_RE.test(v)) {
     throw Object.assign(new Error('lobId must be a valid uuid or "__none__"'), { statusCode: 400 });
@@ -33,6 +46,10 @@ export function parseLobFilterParam(raw: unknown): LobFilter {
 export function lobWhere(filter: LobFilter, alias = 'e'): { sql: string; params: string[] } {
   if (filter.kind === 'unassigned') return { sql: `AND ${alias}.lob_id IS NULL`, params: [] };
   if (filter.kind === 'lob') return { sql: `AND ${alias}.lob_id = ?`, params: [filter.id] };
+  if (filter.kind === 'multi') {
+    const inList = `${alias}.lob_id IN (${filter.ids.map(() => '?').join(',')})`;
+    return { sql: filter.withUnassigned ? `AND (${inList} OR ${alias}.lob_id IS NULL)` : `AND ${inList}`, params: [...filter.ids] };
+  }
   return { sql: '', params: [] };
 }
 

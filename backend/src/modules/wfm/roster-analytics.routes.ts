@@ -598,6 +598,8 @@ const scopeOf = (req: any, lob: LobFilter): ShiftScope => ({
   branchId: req.query.branchId ? String(req.query.branchId) : undefined,
   processId: req.query.processId ? String(req.query.processId) : undefined,
   lob,
+  from: req.query.from ? String(req.query.from) : undefined,
+  to: req.query.to ? String(req.query.to) : undefined,
 });
 
 /** GET /api/roster-analytics/shift-effectiveness - per-shift adherence, on-time, quality, break compliance (last 30 completed days vs previous 30). */

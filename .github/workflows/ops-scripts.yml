@@ -42,7 +42,7 @@ on:
         required: true
         type: choice
         options:
-          - ledger-tally-dump
+          - tally-format-validate
           - tally-ui-test-revert
           - backfill-tally-legacy-names
           - statutory-identifier-encrypt-backfill
@@ -246,7 +246,7 @@ jobs:
           case "${{ inputs.script }}" in
             backfill-tally-legacy-names) FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"; npx tsx scripts/backfill-tally-legacy-names.ts $FLAG ;;
             tally-ui-test-revert) FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"; TEST_T0="$INPUT_EMPLOYEE_CODES" npx tsx scripts/tally-ui-test-revert.ts $FLAG ;;
-            ledger-tally-dump) npx tsx scripts/ledger-tally-dump.ts 2026-09 2026-10 ;;
+            tally-format-validate) npx tsx scripts/tally-format-validate.ts 2026-06 2026-08 2026-09 2026-10 ;;
             statutory-identifier-encrypt-backfill)
               FLAG=""; [ "$MODE" = "dry-run" ] && FLAG="--dry-run"
               npx tsx scripts/statutory-identifier-encrypt-backfill.ts $FLAG

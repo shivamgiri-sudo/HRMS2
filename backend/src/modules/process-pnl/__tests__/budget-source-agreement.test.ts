@@ -51,7 +51,7 @@ vi.mock("../../../shared/istDate.js", async (importOriginal) => ({
 }));
 
 const SCHEMA = `
-CREATE TABLE branch_master (id TEXT PRIMARY KEY, branch_name TEXT, active_status INT);
+CREATE TABLE branch_master (id TEXT PRIMARY KEY, branch_name TEXT, active_status INT, company_name TEXT);
 CREATE TABLE process_master (id TEXT PRIMARY KEY, process_name TEXT, active_status INT, branch_id TEXT);
 CREATE TABLE cost_centre_master (id TEXT PRIMARY KEY, cost_centre_code TEXT, cost_centre_name TEXT, company_name TEXT,
   branch_id TEXT, process_id TEXT, active_status INT, process_name_bill TEXT, billing_client_name TEXT);
@@ -66,7 +66,7 @@ CREATE TABLE finance_budget_snapshot (bill_source_id INT, branch_name TEXT, peri
 CREATE TABLE finance_budget_line_snapshot (bill_source_id INT, budget_source_id INT, period_code TEXT, expense_type TEXT,
   expense_type_name TEXT, amount REAL);
 
-INSERT INTO branch_master VALUES ('B1','NOIDA',1), ('B2','NOIDA-2',1);
+INSERT INTO branch_master (id, branch_name, active_status) VALUES ('B1','NOIDA',1), ('B2','NOIDA-2',1);
 INSERT INTO process_master VALUES ('P100','Inbound',1,'B1'), ('P576','Onfido',1,'B1'), ('P577','Back Office',1,'B2');
 INSERT INTO cost_centre_master VALUES
   ('cc100','BSS/IB/NOIDA/100','Inbound','Mas Callnet India Pvt Ltd','B1','P100',1,NULL,NULL),

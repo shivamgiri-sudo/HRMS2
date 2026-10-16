@@ -15,6 +15,7 @@
  * processes it but is also a DATETIME. dateStrings:true makes both return as
  * "YYYY-MM-DD HH:MM:SS" strings; slicing to HH:MM requires TIME_FORMAT at SQL level.
  */
+import { parseIdList, idCondition } from "../../shared/idList.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { lobAnd, type LobFilter } from "../../shared/lobFilter.js";
@@ -67,14 +68,21 @@ export async function getProcessTeamRosterView(
   branchId?: string,
 ): Promise<ProcessTeamRosterView> {
   const lobSql = lobAnd(lob);
-  const branchSql = branchId ? " AND e.branch_id = ?" : "";
-  const branchParams = branchId ? [branchId] : [];
+  // processId / branchId may each be several comma-separated ids (console multi-select).
+  const processIds = parseIdList(processId);
+  const proc = idCondition("e.process_id", processIds.length ? processIds : [processId]);
+  const branchIds = parseIdList(branchId);
+  const branchCond = branchIds.length ? idCondition("e.branch_id", branchIds) : null;
+  const branchSql = branchCond ? ` AND ${branchCond.sql}` : "";
+  const branchParams = branchCond ? branchCond.params : [];
 
   // Run process-name lookup and the main employee query in parallel — previously sequential.
   const [processResult, employeeResult] = await Promise.all([
     db.execute<RowDataPacket[]>(
-      `SELECT process_name FROM process_master WHERE id = ?`,
-      [processId],
+      processIds.length > 1
+        ? `SELECT process_name FROM process_master WHERE id IN (${processIds.map(() => "?").join(",")}) ORDER BY process_name`
+        : `SELECT process_name FROM process_master WHERE id = ?`,
+      processIds.length > 1 ? processIds : [processId],
     ),
     db.execute<RowDataPacket[]>(
       `SELECT
@@ -112,17 +120,17 @@ export async function getProcessTeamRosterView(
          AND lr.status IN ('approved', 'branch_head_approved')
          AND ? BETWEEN lr.from_date AND lr.to_date
        LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
-       WHERE e.process_id = ?
+       WHERE ${proc.sql}
          AND e.active_status = 1
          AND e.employment_status = 'Active'
          AND ${REAL_ROSTER}${lobSql.sql}${branchSql}
        ORDER BY e.full_name`,
-      [date, date, date, date, processId, ...lobSql.params, ...branchParams],
+      [date, date, date, date, ...proc.params, ...lobSql.params, ...branchParams],
     ),
   ]);
 
-  const processName = processResult[0][0]?.process_name
-    ? String(processResult[0][0].process_name)
+  const processName = processResult[0].length
+    ? processResult[0].map((r) => String(r.process_name)).join(", ")
     : null;
   // leave_request can match >1 row per employee (overlapping approved leaves) — one member each.
   const rows = dedupeByEmployee(employeeResult[0] as RowDataPacket[]);

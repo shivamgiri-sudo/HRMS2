@@ -9,6 +9,7 @@
  * break_daily_summary(employee_id, shift_date, branch_id, process_id, total_break_minutes, ...),
  * break_sessions, break_alert_logs, break_settings (see backend/sql/376_break_management_module.sql).
  */
+import { parseIdList, idCondition } from "../../shared/idList.js";
 import { db } from "../../db/mysql.js";
 import { lobAnd, type LobFilter } from "../../shared/lobFilter.js";
 import {
@@ -56,13 +57,15 @@ const BDS_DERIVED =
   `${budgetSql("b")} AS budget FROM break_daily_summary b WHERE b.shift_date BETWEEN ? AND ?) bds`;
 const BUDGET = "bds.budget";
 
-export interface ScopeFilter { branchId?: string; processId?: string; lob: LobFilter }
+export interface ScopeFilter { branchId?: string; processId?: string; lob: LobFilter; from?: string; to?: string }
 
 function scope(f: ScopeFilter): { sql: string; params: string[] } {
   let sql = "";
   const params: string[] = [];
-  if (f.branchId) { sql += " AND e.branch_id = ?"; params.push(f.branchId); }
-  if (f.processId) { sql += " AND e.process_id = ?"; params.push(f.processId); }
+  const bIds = parseIdList(f.branchId);
+  if (bIds.length) { const c = idCondition("e.branch_id", bIds); sql += ` AND ${c.sql}`; params.push(...c.params); }
+  const pIds = parseIdList(f.processId);
+  if (pIds.length) { const c = idCondition("e.process_id", pIds); sql += ` AND ${c.sql}`; params.push(...c.params); }
   const l = lobAnd(f.lob);
   sql += l.sql;
   params.push(...l.params);
@@ -147,7 +150,7 @@ function toAgg(r: any): ShiftAggRow {
 }
 
 export async function getShiftEffectiveness(f: ScopeFilter, now: Date = new Date()) {
-  const win = analysisWindows(now);
+  const win = analysisWindows(now, undefined, f);
   const cur = shiftAggQuery(win.cur, f, true);
   const prev = shiftAggQuery(win.prev, f, true);
   const sc = scope(f);
@@ -232,7 +235,7 @@ function breakFrom(f: ScopeFilter, w: DateWindow) {
 }
 
 export async function getBreakCompliance(f: ScopeFilter, now: Date = new Date()) {
-  const win = analysisWindows(now);
+  const win = analysisWindows(now, undefined, f);
   const base = breakFrom(f, win.cur);
   const basePrev = breakFrom(f, win.prev);
   const OVERALL = `SELECT COUNT(*) AS days, COUNT(DISTINCT bds.employee_id) AS employees, AVG(bds.total_break_minutes) AS avg_break,
@@ -324,7 +327,7 @@ export async function getBreakCompliance(f: ScopeFilter, now: Date = new Date())
 // ── /shift-recommendations ───────────────────────────────────────────────────
 
 export async function getShiftRecommendations(f: ScopeFilter, now: Date = new Date()) {
-  const win = analysisWindows(now);
+  const win = analysisWindows(now, undefined, f);
   const cohortQ = shiftAggQuery(win.cur, f, false);
   const sc = scope(f);
   const [[shiftRows], [empRows]] = await Promise.all([
@@ -371,7 +374,7 @@ export async function getShiftDetail(shiftId: string, f: ScopeFilter, now: Date 
   const [tplRows] = await db.execute<any[]>(`SELECT * FROM wfm_shift_template WHERE id = ?`, [shiftId]);
   const tpl = tplRows[0];
   if (!tpl) return null;
-  const win = analysisWindows(now);
+  const win = analysisWindows(now, undefined, f);
   const sc = scope(f);
   const cur = shiftAggQuery(win.cur, f, true, shiftId);
   const prev = shiftAggQuery(win.prev, f, true, shiftId);

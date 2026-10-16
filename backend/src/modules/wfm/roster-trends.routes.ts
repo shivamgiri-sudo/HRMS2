@@ -5,6 +5,7 @@
  * All are read-only GETs. Query contract: from, to (YYYY-MM-DD, required unless noted),
  * branchId, processId, lobId (uuid | __none__).
  */
+import { parseIdList } from "../../shared/idList.js";
 import { Router, type Request, type Response } from "express";
 import { requireRole } from "../../middleware/requireRole.js";
 import { readLobFilter, type LobFilter } from "../../shared/lobFilter.js";
@@ -48,7 +49,9 @@ function parse(req: Request, res: Response, opts: { needRange?: boolean } = { ne
   }
   const branchId = str(req.query.branchId);
   const processId = str(req.query.processId);
-  if ((branchId && !ID_RE.test(branchId)) || (processId && !ID_RE.test(processId))) {
+  // Comma-separated ids = console multi-select; every id must be well formed.
+  const bad = (v?: string) => parseIdList(v).some((id) => !ID_RE.test(id));
+  if (bad(branchId) || bad(processId)) {
     res.status(400).json({ error: "branchId/processId are malformed" }); return null;
   }
   return { from, to, branchId, processId, lob };

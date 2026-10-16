@@ -1,3 +1,4 @@
+process.env.HE_EMAIL_INVITE_MODE = "always"; // pins the email-first behaviour; fallback mode has its own tests
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -10,7 +11,7 @@ const send = vi.hoisted(() => vi.fn());
 const sendTpl = vi.hoisted(() => vi.fn());
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
-vi.mock("../../communication/email.service.js", () => ({ emailService: { send, isConfigured: () => true } }));
+vi.mock("../../communication/email.service.js", () => ({ emailService: { canSend: () => true, send, isConfigured: () => true } }));
 vi.mock("../he-meta-bridge.service.js", () => ({ bridgeOneMetaLead: vi.fn() }));
 vi.mock("../../meta-campaign/interview-slot.service.js", () => ({ assignInterviewSlot: vi.fn() }));
 vi.mock("../he-send.service.js", async (orig) => ({ ...(await orig<typeof import("../he-send.service.js")>()), sendTemplateToLead: sendTpl }));

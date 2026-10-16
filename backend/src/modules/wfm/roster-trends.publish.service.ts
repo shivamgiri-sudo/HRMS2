@@ -7,6 +7,7 @@
  * drawers surface weekly_roster_cycle.published_by/at, roster_change_log reasons and
  * audit_action_log entries rather than only counts.
  */
+import { parseIdList, idCondition } from "../../shared/idList.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { REAL_ROSTER, scopeSql, type ScopeFilters } from "./roster-trends.sql.js";
@@ -42,8 +43,10 @@ async function stageCounts(from: string, to: string, f: ScopeFilters): Promise<S
 
 function cycleScope(f: ScopeFilters): { sql: string; params: unknown[] } {
   let sql = ""; const params: unknown[] = [];
-  if (f.processId) { sql += " AND c.process_id = ?"; params.push(f.processId); }
-  if (f.branchId) { sql += " AND (c.branch_id = ? OR c.branch_id IS NULL)"; params.push(f.branchId); }
+  const pIds = parseIdList(f.processId);
+  if (pIds.length) { const c = idCondition("c.process_id", pIds); sql += ` AND ${c.sql}`; params.push(...c.params); }
+  const bIds = parseIdList(f.branchId);
+  if (bIds.length) { const c = idCondition("c.branch_id", bIds); sql += ` AND (${c.sql} OR c.branch_id IS NULL)`; params.push(...c.params); }
   return { sql, params };
 }
 

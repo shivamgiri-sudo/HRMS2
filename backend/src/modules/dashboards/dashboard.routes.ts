@@ -55,6 +55,10 @@ async function requireDashboardEntitlement(
   if (!definition) {
     throw dashboardAccessError("Dashboard not found", 404);
   }
+  // Feature-flagged dashboard: invisible while BRANCH_HEAD_HEALTH_ENABLED is off (read per request).
+  if (definition.code === "BRANCH_HEAD_DASHBOARD" && process.env.BRANCH_HEAD_HEALTH_ENABLED !== "true") {
+    throw dashboardAccessError("Dashboard not found", 404);
+  }
   // Demo-bypass identities (INTERNAL_DEMO_BYPASS) have no backing row in user_roles,
   // user_assignment_scope, auth_user or employees — getUserRoleContext's DB-driven lookup
   // always misses for them and falls back to ["employee"], regardless of which demo role
@@ -70,6 +74,12 @@ async function requireDashboardEntitlement(
   const roleKeys = req.authUser!.isDemo && req.authUser!.role
     ? [req.authUser!.role]
     : (await getUserRoleContext(req.authUser!.id)).roleKeys;
+  if (definition.code === "BRANCH_HEAD_DASHBOARD") {
+    const { isPilotAllowed } = await import("../branch-head-health/pilot.js");
+    if (!(await isPilotAllowed(req.authUser!, process.env, roleKeys))) {
+      throw dashboardAccessError("Dashboard not found", 404);
+    }
+  }
   if (!canAccessDashboard(definition.code, roleKeys)) {
     throw dashboardAccessError(`Not entitled to ${definition.code}`, 403);
   }
@@ -85,7 +95,10 @@ router.param("dashboardCode", (req, _res, next, dashboardCode) => {
 router.get("/access-registry", h(async (req: AuthenticatedRequest, res: any) => {
   const context = await getUserRoleContext(req.authUser!.id);
   const { DASHBOARD_ACCESS_REGISTRY } = await import("../../shared/dashboardAccessRegistry.js");
+  const { isPilotAllowed } = await import("../branch-head-health/pilot.js");
+  const pilotOk = await isPilotAllowed(req.authUser!, process.env, context.roleKeys);
   const dashboards = Object.values(DASHBOARD_ACCESS_REGISTRY)
+    .filter((item) => item.code !== "BRANCH_HEAD_DASHBOARD" || (process.env.BRANCH_HEAD_HEALTH_ENABLED === "true" && pilotOk))
     .filter((item) => canAccessDashboard(item.code, context.roleKeys))
     .map(({ allowedRoleKeys: _allowedRoleKeys, ...item }) => item);
   return res.json({ success: true, data: { dashboards } });

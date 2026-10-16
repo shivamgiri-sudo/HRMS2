@@ -94,14 +94,15 @@ financeAnalyticsRouter.get(
           `SELECT
              cba.id,
              cba.account_name AS name,
-             COALESCE(last_entry.running_balance, cba.opening_balance) AS balance
+             COALESCE((
+               -- The current balance is the running balance of the latest entry in transaction-date
+               -- order, the order the chain is anchored in (bank-ledger-anchor.ts). MAX(id) picked a
+               -- random UUID and imported rows carry 2016-era created_at stamps.
+               SELECT e.running_balance FROM bank_account_ledger_entry e
+                WHERE e.bank_account_id = cba.id
+                ORDER BY e.entry_date DESC, e.created_at DESC, e.id DESC LIMIT 1
+             ), cba.opening_balance) AS balance
            FROM company_bank_account cba
-           LEFT JOIN (
-             SELECT bank_account_id, MAX(id) AS last_id
-             FROM bank_account_ledger_entry
-             GROUP BY bank_account_id
-           ) latest ON cba.id = latest.bank_account_id
-           LEFT JOIN bank_account_ledger_entry last_entry ON last_entry.id = latest.last_id
            WHERE cba.active_status = 1
            ORDER BY cba.account_name`,
         );

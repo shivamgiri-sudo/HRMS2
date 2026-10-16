@@ -92,6 +92,32 @@ const BRANCH_SHORT_CODE: Record<string, string> = {
   "NOIDA-DIALDESK": "NOIDA-DD",
 };
 
+/**
+ * "Advance Against Salary" ledgers exactly as the MAS Callnet Tally company names them (its ledger list,
+ * 2026-10-14): mostly "(<short>)", but Noida, Noida-2 and Noida Ispark use " - <name>". Writing the HRMS branch
+ * name instead would create a new ledger beside the real one and split each branch's advance balance.
+ */
+const ADVANCE_LEDGER: Record<string, string> = {
+  "HEAD OFFICE": "Advance Against Salary (HEAD OFFICE)",
+  "AHMEDABAD-JALDARSHAN": "Advance Against Salary (Ahm)",
+  "AHMEDABAD HOUSE": "Advance Against Salary (Ahm)",
+  "AHMEDABAD OTHERS": "Advance Against Salary (Ahm)",
+  "AHMEDABAD-NEELAKANTH": "Advance Against Salary (Ahm)",
+  "DELHI": "Advance Against Salary (Delhi)",
+  "DELHI OFFICE": "Advance Against Salary (Delhi)",
+  "JAIPUR": "Advance Against Salary (Jpr)",
+  "MEERUT": "Advance Against Salary (Meerut)",
+  "NOIDA": "Advance Against Salary - Noida",
+  "NOIDA-2": "Advance Against Salary - Noida-2",
+  "NOIDA-DIALDESK": "Advance Against Salary (NOIDA-DIALDESK)",
+  "NOIDA-ISPARK": "Advance Against Salary - Noidaispark",
+  "NOIDA ISPARK-2": "Advance Against Salary - Noidaispark",
+};
+
+export function advanceLedger(branchName: string): string {
+  return ADVANCE_LEDGER[branchName.trim().toUpperCase()] ?? `Advance Against Salary (${branchName.trim()})`;
+}
+
 export function branchShortCode(branchName: string): string {
   return BRANCH_SHORT_CODE[branchName.trim().toUpperCase()] ?? branchName.trim();
 }
@@ -432,7 +458,7 @@ function buildVoucher(
     { ledger_name: "ESIC Payable", columns: esicPayable },
     { ledger_name: "EPF Payable", columns: epfPayable },
     ...advances.map((a) => ({
-      ledger_name: `Advance Against Salary (${bucket.branchName})`,
+      ledger_name: advanceLedger(bucket.branchName),
       columns: zero().map((_, i) => (i === a.column ? a.paise : 0)),
       employee_code: a.employee_code,
     })),

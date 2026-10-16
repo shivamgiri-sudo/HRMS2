@@ -384,9 +384,9 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     const [lineRows] = await db.execute<RowDataPacket[]>("SELECT id FROM salary_prep_line WHERE run_id = ? AND employee_id = ? LIMIT 1", [runId, emp.employee_id]);
     const lineId = (lineRows[0] as any)?.id ?? null;
     const statutoryComponents: ComponentLine[] = [
-      { component_code: "PF_EMPLOYEE", component_name: "Employee PF", component_type: "deduction", amount: calc.pf_employee, source: "statutory", taxable: false },
-      { component_code: "ESIC_EMPLOYEE", component_name: "Employee ESIC", component_type: "deduction", amount: calc.esic_employee, source: "statutory", taxable: false },
-      { component_code: "PROF_TAX", component_name: "Professional Tax", component_type: "deduction", amount: calc.professional_tax, source: "statutory", taxable: false },
+      { component_code: "PF_EMP", component_name: "PF Employee", component_type: "deduction", amount: calc.pf_employee, source: "statutory", taxable: false },
+      { component_code: "ESIC_EMP", component_name: "ESIC Employee", component_type: "deduction", amount: calc.esic_employee, source: "statutory", taxable: false },
+      { component_code: "PT", component_name: "Professional Tax", component_type: "deduction", amount: calc.professional_tax, source: "statutory", taxable: false },
       { component_code: "TDS", component_name: "Tax Deducted at Source", component_type: "deduction", amount: tdsMonthly, source: "statutory", taxable: false },
       { component_code: "PF_EMPLOYER", component_name: "Employer PF", component_type: "employer_cost", amount: calc.pf_employer, source: "statutory", taxable: false },
       { component_code: "ESIC_EMPLOYER", component_name: "Employer ESIC", component_type: "employer_cost", amount: calc.esic_employer, source: "statutory", taxable: false },

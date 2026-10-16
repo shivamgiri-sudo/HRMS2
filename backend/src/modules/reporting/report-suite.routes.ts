@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { visibleDayNumbers } from './attendance-register-columns.js';
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -490,17 +491,19 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
       const shortYY = String(Number(fyStr)).slice(2);
       // No such column as 31-Sep: drop day columns past the month's real length.
       const daysInSelectedMonth = new Date(Number(fyStr), fm, 0).getDate();
-      // ...and none for a day that has not happened yet (current month stops at today, IST).
+      // ...none for a day that has not happened yet (stops at today, IST), and, when the caller
+      // asked for a From..To range, none outside it: the grid runs the whole month, so "14 October"
+      // used to come back with every day column to the end of the month.
       const istToday = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
-      const selectedKey = `${fyStr}-${String(fm).padStart(2, "0")}`;
-      const lastShownDay = selectedKey > istToday.slice(0, 7)
-        ? 0
-        : selectedKey === istToday.slice(0, 7)
-          ? Math.min(daysInSelectedMonth, Number(istToday.slice(8, 10)))
-          : daysInSelectedMonth;
+      const shownDays = visibleDayNumbers({
+        month: String(filters.month),
+        from: typeof req.query.from === 'string' ? req.query.from : null,
+        to: typeof req.query.to === 'string' ? req.query.to : null,
+        today: istToday,
+      });
       exportColumns = exportColumns.filter(c => {
         const dm = c.key.match(/^day_(\d+)$/);
-        return !dm || Number(dm[1]) <= lastShownDay;
+        return !dm || (Number(dm[1]) <= daysInSelectedMonth && shownDays.has(Number(dm[1])));
       }).map(c => {
         const m = c.key.match(/^day_(\d+)$/);
         if (!m) return c;
@@ -513,6 +516,18 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     }
     if (rangeMonths) {
       exportColumns = [...exportColumns, { key: 'report_month', label: 'Month', format: 'text', width: 90 } as CatalogWorkbookColumn];
+    }
+    if (code === "attendance-register-monthly" && !filters.month && (typeof req.query.from === 'string' || typeof req.query.to === 'string')) {
+      // Stacked multi-month range: the same shared day columns, trimmed to the requested range.
+      const stackedDays = visibleDayNumbers({
+        from: typeof req.query.from === 'string' ? req.query.from : null,
+        to: typeof req.query.to === 'string' ? req.query.to : null,
+        today: new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10),
+      });
+      exportColumns = exportColumns.filter(c => {
+        const dm = c.key.match(/^day_(\d+)$/);
+        return !dm || stackedDays.has(Number(dm[1]));
+      });
     }
     const catalogBuffer = await buildCatalogWorkbook({
       rows,

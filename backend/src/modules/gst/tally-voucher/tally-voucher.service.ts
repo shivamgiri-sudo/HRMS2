@@ -587,7 +587,9 @@ export const tallyVoucherService = {
       [batchId],
     );
     const models = lines.map(
-      (l) => JSON.parse(String(l.model_json)) as TallyVoucherModel,
+      // model_json is a JSON column: mysql2 hands it back already parsed (an object), so String() + JSON.parse
+      // turned it into "[object Object]" and every batch XML download failed 500. Parse only a string.
+      (l) => (typeof l.model_json === "string" ? JSON.parse(l.model_json) : l.model_json) as TallyVoucherModel,
     );
     if (models.length === 0)
       throw new TallyVoucherError(

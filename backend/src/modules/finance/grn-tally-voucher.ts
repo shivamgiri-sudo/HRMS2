@@ -73,7 +73,7 @@ export type GrnVoucherInput = {
 
 export type GrnTallyLedgerNames = {
   voucherType: string;
-  /** Voucher type for imprest GRNs; the legacy import never carried them, Tally keeps JRNLIMP for them. */
+  /** Voucher type for imprest GRNs; the legacy imprest import (MASAUGIMP.xlsx) calls it JrnlImp. */
   imprestVoucherType: string;
   roundOff: string;
   /** Patterns: {rate} and {state} are filled in. */
@@ -86,7 +86,7 @@ export type GrnTallyLedgerNames = {
 
 export const DEFAULT_LEDGER_NAMES: GrnTallyLedgerNames = {
   voucherType: "JrnlP",
-  imprestVoucherType: "JRNLIMP",
+  imprestVoucherType: "JrnlImp",
   roundOff: "Short/Excess Written off",
   inputCgst: "Input CGST @{rate}%({state})",
   inputSgst: "Input SGST @{rate}%({state})",
@@ -282,14 +282,19 @@ export function buildGrnVoucher(
   const billNo = input.invoiceNumber?.trim() || "NA";
   const [yyyy, mm] = period.split("-");
   const description = (input.narrationText?.trim() || input.expenseLedger.trim()).replace(/\s+/g, " ");
+  // Vendor GRN = legacy MASSEP sheet: Vch No "<bill>/<GRN>", month-end date, bill effective date, bill in the narration.
+  // Imprest GRN = legacy MASAUGIMP sheet: Vch No is the GRN number, dated the approval day, no bill details.
+  const imprest = input.grnType === "imprest";
   const header: GrnVoucherHeader = {
-    voucherNumber: `${billNo}/${input.grnNumber}`,
-    date: monthEnd(input.postingDate),
-    effectiveDate: input.billDate.slice(0, 10),
+    voucherNumber: imprest ? input.grnNumber : `${billNo}/${input.grnNumber}`,
+    date: imprest ? input.postingDate.slice(0, 10) : monthEnd(input.postingDate),
+    effectiveDate: imprest ? input.postingDate.slice(0, 10) : input.billDate.slice(0, 10),
     costCategory: input.branchName.trim(),
     costCentre: `${(input.branchCode?.trim() || input.branchName.trim())}/${yyyy.slice(2)}${mm}`,
     narrationEntry: description,
-    narration: `${description} GRN NO.: ${input.grnNumber}, Bill No.:${billNo} , Bill Date.:${dmy(input.billDate)}`,
+    narration: imprest
+      ? `${description} GRN NO.: ${input.grnNumber}`
+      : `${description} GRN NO.: ${input.grnNumber}, Bill No.:${billNo} , Bill Date.:${dmy(input.billDate)}`,
     voucherType: input.grnType === "imprest" ? names.imprestVoucherType : names.voucherType,
   };
 
@@ -316,8 +321,7 @@ export function buildGrnVoucher(
     `<EFFECTIVEDATE>${tallyDate(header.effectiveDate)}</EFFECTIVEDATE>` +
     `<VOUCHERTYPENAME>${xmlEscape(header.voucherType)}</VOUCHERTYPENAME>` +
     `<VOUCHERNUMBER>${xmlEscape(header.voucherNumber)}</VOUCHERNUMBER>` +
-    `<REFERENCE>${xmlEscape(billNo)}</REFERENCE>` +
-    `<REFERENCEDATE>${tallyDate(header.effectiveDate)}</REFERENCEDATE>` +
+    (imprest ? "" : `<REFERENCE>${xmlEscape(billNo)}</REFERENCE><REFERENCEDATE>${tallyDate(header.effectiveDate)}</REFERENCEDATE>`) +
     `<NARRATION>${xmlEscape(header.narration)}</NARRATION>` +
     `<PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>` +
     lines.join("") +

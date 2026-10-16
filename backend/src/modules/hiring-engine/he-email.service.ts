@@ -123,7 +123,7 @@ export async function sendInviteEmail(matchId: string, o: { dryRun?: boolean } =
   const messageId = randomUUID();
   try {
     const replyTo = replyToFor(m.token ? String(m.token) : null);
-    const r = await emailService.send({ to, subject: mail.subject, html: mail.html, text: mail.text, ...(replyTo ? { replyTo } : {}) });
+    const r = await emailService.send({ pool: "careers", to, subject: mail.subject, html: mail.html, text: mail.text, ...(replyTo ? { replyTo } : {}) });
     await db.execute(
       "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       [messageId, m.lead_id, m.mobile10, "out", "email", INVITE_EMAIL_KEY, mail.subject.slice(0, 2000), r?.messageId ?? null, "sent", m.requisition_id, m.drive_id ?? null]);

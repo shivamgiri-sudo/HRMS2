@@ -54,7 +54,7 @@ vi.mock("../../../shared/istDate.js", async (importOriginal) => ({
 }));
 
 const SCHEMA = `
-CREATE TABLE branch_master (id TEXT PRIMARY KEY, branch_name TEXT, active_status INT);
+CREATE TABLE branch_master (id TEXT PRIMARY KEY, branch_name TEXT, active_status INT, company_name TEXT);
 CREATE TABLE process_master (id TEXT PRIMARY KEY, process_name TEXT, active_status INT, branch_id TEXT);
 CREATE TABLE cost_centre_master (id TEXT PRIMARY KEY, cost_centre_code TEXT, cost_centre_name TEXT, company_name TEXT,
   branch_id TEXT, process_id TEXT, active_status INT, process_name_bill TEXT, billing_client_name TEXT);
@@ -76,7 +76,7 @@ CREATE TABLE pnl_running_salary_snapshot (id TEXT PRIMARY KEY, period_code TEXT,
 CREATE TABLE pnl_cost_classification_rule (scope_type TEXT, scope_key TEXT, process_id TEXT, branch_id TEXT,
   pnl_bucket TEXT, priority INT, active_status INT, effective_from TEXT, effective_to TEXT, created_at TEXT);
 
-INSERT INTO branch_master VALUES ('B1','NOIDA',1), ('B2','NOIDA-2',1);
+INSERT INTO branch_master (id, branch_name, active_status) VALUES ('B1','NOIDA',1), ('B2','NOIDA-2',1);
 INSERT INTO process_master VALUES ('P576','Onfido',1,'B1'), ('P100','Inbound',1,'B1'), ('P577','Back Office',1,'B2');
 INSERT INTO cost_centre_master VALUES
   ('cc576','BSS/BO/NOIDA/576','Onfido','Mas Callnet India Pvt Ltd','B1','P576',1,NULL,NULL),

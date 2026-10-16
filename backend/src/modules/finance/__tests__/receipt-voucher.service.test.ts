@@ -7,6 +7,7 @@ const { execute, getConnection, logSensitiveAction, recordFinanceApprovalEvent }
   recordFinanceApprovalEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../bank-ledger-anchor.js", () => ({ rebaseRunningBalances: vi.fn(async () => ({})), rebaseForVoucher: vi.fn(async () => []) }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 vi.mock("../../../shared/financeApprovalEvent.js", () => ({

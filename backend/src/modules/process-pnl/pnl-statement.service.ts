@@ -16,6 +16,8 @@ import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { getApprovedAdjustmentsByProcess } from "./pnl-manual-adjustment.service.js";
 import { getForecastRevenueActuals, withoutCostCentres, type ForecastRevenueActuals } from "./pnl-forecast-overlay.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
+import { cachedPnlRead } from "./pnl-read-cache.js";
 
 /**
  * P&L redesign (PR 3): transposed statement — components as rows, entities as dynamic columns.
@@ -55,6 +57,13 @@ export interface StatementColumn {
   peopleCostCoveragePct?: number;
   peopleCostActiveEmployees?: number;
   peopleCostCoveredEmployees?: number;
+  /**
+   * Staff paid on this branch's payroll run whose line has present days and gross but no payable
+   * days: the run carries the full monthly gross with no attendance proration (September 2026: all
+   * 1,009 lines). The figure is real as the run stands; the reader must be told it may be overstated.
+   * Branch view only. Absent when the run is prorated.
+   */
+  payrollNotProrated?: { staff: number; amount: number };
   /**
    * Manual Adjustments (Part B, 2026-09-01) — APPROVED projected_revenue/penalty/reward entries
    * for this process/period only, folded into a figure shown ALONGSIDE `recognizedRevenue`, never
@@ -244,7 +253,9 @@ function enrichColumn(
    * every cost centre counted in the branch that runs it). When it has the column's branch, a BRANCH column uses it
    * for every period, so no two tabs can show a branch a different revenue. Process columns never use it.
    */
-  branchRevenue?: Map<string, number>
+  branchRevenue?: Map<string, number>,
+  /** Unspent headroom of open budget lines — added into Indirect Cost; see indirectCostTotal below. */
+  openBudgetReserve?: ActualsByKey
 ): Record<string, unknown> {
   /*
    * A6 FIX (2026-09-01): idc/seat must never inherit the WHOLE branch's total just because a
@@ -498,9 +509,17 @@ function enrichColumn(
    */
   const grnConsumed = pick(idc);
   const grnCommitted = committedIdc ? pick(committedIdc) : 0;
-  const indirectCostTotal = grnConsumed + grnCommitted;
+  /*
+   * Owner rule 2026-10-06: a budget line still OPEN is blocked at its full amount, so its unspent
+   * headroom is cost on top of consumed + reserved (cost = max(budget, consumed + reserved));
+   * closing the line releases it. Published as its own line so the total stays auditable and the
+   * Statement agrees with Live P&L, CEO Overview and the Branch Review for the same month.
+   */
+  const grnOpenBudget = openBudgetReserve ? pick(openBudgetReserve) : 0;
+  const indirectCostTotal = grnConsumed + grnCommitted + grnOpenBudget;
   out.grnConsumed = grnConsumed;
   out.grnCommitted = grnCommitted;
+  out.grnOpenBudget = grnOpenBudget;
 
   const directCostTotal = agentSalary + dscSalary + bmcSalary;
   const totalCost = directCostTotal + indirectCostTotal;
@@ -609,7 +628,7 @@ function enrichColumn(
  * is inserted twice. Labels match src/components/finance/pnl/pnlLabels.ts (GRN_CONSUMED /
  * GRN_COMMITTED), which the Statement view also applies by component key.
  */
-export const GRN_BREAKDOWN_COMPONENT_KEYS = { consumed: "grn_consumed", committed: "grn_committed" } as const;
+export const GRN_BREAKDOWN_COMPONENT_KEYS = { consumed: "grn_consumed", committed: "grn_committed", openBudget: "grn_open_budget" } as const;
 
 function withGrnBreakdownRows(components: ComponentDefinition[]): ComponentDefinition[] {
   const idcIndex = components.findIndex((c) => c.component_key === "total_idc");
@@ -635,6 +654,9 @@ function withGrnBreakdownRows(components: ComponentDefinition[]): ComponentDefin
     present.has(GRN_BREAKDOWN_COMPONENT_KEYS.committed)
       ? null
       : breakdown(GRN_BREAKDOWN_COMPONENT_KEYS.committed, "GRN Committed (reserved)", "grnCommitted", 0.2),
+    present.has(GRN_BREAKDOWN_COMPONENT_KEYS.openBudget)
+      ? null
+      : breakdown(GRN_BREAKDOWN_COMPONENT_KEYS.openBudget, "Open budget not yet spent", "grnOpenBudget", 0.3),
   ].filter((c): c is ComponentDefinition => c !== null);
   return [...components.slice(0, idcIndex + 1), ...extra, ...components.slice(idcIndex + 1)];
 }
@@ -658,6 +680,10 @@ export interface StatementDependencies {
   }>>;
   /** Live P&L's seat-rate revenue estimate for not-yet-billed cost centres (see enrichColumn). */
   getRevenueEstimate?: (period: string) => Promise<ActualsByKey>;
+  /** Unspent headroom of open budget lines, counted as cost (see enrichColumn). */
+  getOpenBudgetReserve?: (period: string) => Promise<ActualsByKey>;
+  /** Branch view: staff paid with no attendance proration, so the column can say so. */
+  getUnproratedPayroll?: (period: string) => Promise<Map<string, { staff: number; amount: number }>>;
   /** GRN Committed (reserved, ex-GST). When a caller injects getIndirectCost but not this, it is
    *  treated as none (a test double for consumed must not silently hit the live reserved reader). */
   getCommittedIndirectCost?: (period: string) => Promise<ActualsByKey>;
@@ -684,6 +710,64 @@ export async function getReconciledBranchRevenue(period: string): Promise<Map<st
   const rec = await getPnlReconciliation(period);
   const out = new Map<string, number>();
   for (const b of rec.branches) if (b.branchId) out.set(String(b.branchId), Number(b.revenue ?? 0));
+  return out;
+}
+
+/**
+ * Payroll lines whose gross is the full monthly figure with no attendance proration: present days
+ * and gross, but zero payable days (the 2026-09 run: 1,009 of 1,009 lines, gross equal to db_bill's
+ * unprorated gross, while July/August carried payable days). Grouped by the employee's branch.
+ * Read-only; any failure (older schema) degrades to "nothing flagged", never to an error.
+ */
+export async function getUnproratedPayrollByBranch(period: string): Promise<Map<string, { staff: number; amount: number }>> {
+  const out = new Map<string, { staff: number; amount: number }>();
+  try {
+    if (!(await tableExists("salary_prep_line")) || !(await tableExists("salary_prep_run"))) return out;
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT e.branch_id AS branch_id, COUNT(DISTINCT l.employee_id) AS staff, SUM(COALESCE(l.gross_salary, 0)) AS amount
+         FROM salary_prep_line l
+         JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
+         JOIN employees e ON e.id = l.employee_id
+        WHERE r.run_month = ?
+          AND COALESCE(l.gross_salary, 0) > 0
+          AND COALESCE(l.present_days, 0) > 0
+          AND COALESCE(l.final_payable_days, 0) = 0
+        GROUP BY e.branch_id`,
+      [period],
+    );
+    for (const row of rows) {
+      if (row.branch_id && Number(row.staff) > 0) out.set(String(row.branch_id), { staff: Number(row.staff), amount: Number(row.amount ?? 0) });
+    }
+  } catch {
+    return new Map();
+  }
+  return out;
+}
+
+/**
+ * Unspent headroom of OPEN budget lines per branch / process / cost centre (owner rule 2026-10-06:
+ * an open line counts at its full budget until it is closed, so cost = max(budget, consumed +
+ * reserved)). Read from getPnlReconciliation, the same figure Live P&L, CEO Overview and the
+ * Branch Review subtract, so no tab can show a different cost for the same month. Branch totals
+ * include budget lines pooled at branch level (no cost centre), exactly as the rollup does; a
+ * process column only gets what its cost centres carry (A6: nothing is broadcast into a process).
+ */
+export async function getOpenBudgetReserveActuals(period: string): Promise<ActualsByKey> {
+  const out = emptyEstimate();
+  const rec = await getPnlReconciliation(period);
+  const rows = rec.rows.filter((row) => (row.openBudgetReserve ?? 0) > 0);
+  const processByCc = await getCostCentreProcessIds(rows.map((row) => row.costCentreId));
+  out.ccKeys = new Map();
+  for (const row of rows) {
+    const amount = row.openBudgetReserve ?? 0;
+    out.byCostCentre.set(row.costCentreId, (out.byCostCentre.get(row.costCentreId) ?? 0) + amount);
+    out.ccKeys.set(row.costCentreId, { branchId: row.branchId, processId: processByCc.get(row.costCentreId) ?? null });
+    const processId = processByCc.get(row.costCentreId);
+    if (processId) out.byProcess.set(processId, (out.byProcess.get(processId) ?? 0) + amount);
+  }
+  for (const b of rec.branches) {
+    if (b.branchId && (b.openBudgetReserve ?? 0) > 0) out.byBranch.set(String(b.branchId), Number(b.openBudgetReserve));
+  }
   return out;
 }
 
@@ -770,18 +854,40 @@ export async function getStatementPeopleCost(period: string): Promise<PeopleCost
   return actual;
 }
 
+/*
+ * PERF (2026-10-15): each Statement call re-ran its period-level readers from scratch. Measured on production
+ * (September, warm, one at a time): people cost 12.2 s, GRN consumed 5.7 s, seat revenue 4.9 s, invoiced revenue
+ * 3.4 s, GRN committed 2.1 s, unprorated payroll 2.1 s — the Statement took 13-15 s on EVERY load and a branch head
+ * waited that long for each tab. They are period-level, company-wide reads (no branch or user scope), so they go
+ * through the same 60 s single-flight cache the Live P&L and CEO Overview readers use, which keeps a month that
+ * has ended for 10 minutes. The canonical allocation summary keeps its own stale-while-revalidate cache.
+ */
+const cached = <T>(name: string, read: (period: string) => Promise<T>) =>
+  (period: string): Promise<T> => cachedPnlRead(`pnl-statement:${name}`, { period }, () => read(period));
+
 export const defaultDependencies: StatementDependencies = {
   getComponents,
   getSummary: (filters) => getStatementSummary(filters),
   getProcessSummary: (processId, period) => processLobService.getProcessSummary(processId, period),
-  getIndirectCost: (period) => getIndirectCostActuals(period),
-  getCommittedIndirectCost: (period) => getCommittedIndirectCostActuals(period),
+  getIndirectCost: cached("indirect", getIndirectCostActuals),
+  getCommittedIndirectCost: cached("committed", getCommittedIndirectCostActuals),
   getDriverRevenue: (period) => getDriverRevenueActuals(period),
-  getInvoicedRevenue: (period) => getInvoicedRevenueActuals(period),
+  getInvoicedRevenue: cached("invoiced", getInvoicedRevenueActuals),
   // Must be listed here: an injected getInvoicedRevenue without it reads as "test double, no
   // forecasts" (getStatement), and these defaults inject getInvoicedRevenue.
   getForecastRevenue: (period) => getForecastRevenueActuals(period),
-  getSeatRevenue: (period) => getSeatRevenueActuals(period),
+  // Same reason: getStatement treats an injected getIndirectCost without this reader as "test double,
+  // no open-budget reserve", and these defaults inject getIndirectCost. Without this line the
+  // Statement never carried the unspent headroom of open budget lines in production.
+  getOpenBudgetReserve: cached("open-budget", getOpenBudgetReserveActuals),
+  // Same trap as the two readers above: with getInvoicedRevenue injected and no getBranchRevenue,
+  // getStatement reads "no reconciled branch revenue", so a running month showed the full-month plan
+  // (NOIDA-2 Oct 150.3 L against 56.4 L month-to-date on Live P&L). Branch columns now use Live P&L's
+  // revenue in every period.
+  getBranchRevenue: (period) => getReconciledBranchRevenue(period),
+  // Same trap as the readers above: list it here or the warning never reaches production.
+  getUnproratedPayroll: cached("unprorated-payroll", getUnproratedPayrollByBranch),
+  getSeatRevenue: cached("seat-revenue", getSeatRevenueActuals),
   /*
    * Actual payroll first; the recomputed snapshot only if payroll has nothing for the period.
    *
@@ -794,7 +900,7 @@ export const defaultDependencies: StatementDependencies = {
    * The snapshot is kept as the fallback rather than deleted: it still answers for a period whose
    * payroll run has not happened yet, where it is the only estimate available.
    */
-  getPeopleCost: (period) => getStatementPeopleCost(period),
+  getPeopleCost: cached("people-cost", getStatementPeopleCost),
   getManualAdjustments: (period) => getApprovedAdjustmentsByProcess(period),
 };
 
@@ -840,7 +946,9 @@ export async function getStatement(
   const periodOpen = isOpenPeriod(periodCode);
   const committedReader = deps.getCommittedIndirectCost
     ?? (deps.getIndirectCost ? async () => emptyEstimate() : getCommittedIndirectCostActuals);
-  const [idc, committedIdc, driverRevenue, invoicedRevenueAll, seat, people, manualAdjustments] = await Promise.all([
+  const openBudgetReader = deps.getOpenBudgetReserve
+    ?? (deps.getIndirectCost ? async () => emptyEstimate() : getOpenBudgetReserveActuals);
+  const [idc, committedIdc, driverRevenue, invoicedRevenueAll, seat, people, manualAdjustments, openBudgetReserve] = await Promise.all([
     (deps.getIndirectCost ?? getIndirectCostActuals)(periodCode),
     committedReader(periodCode),
     (deps.getDriverRevenue ?? getDriverRevenueActuals)(periodCode),
@@ -848,6 +956,7 @@ export async function getStatement(
     (deps.getSeatRevenue ?? getSeatRevenueActuals)(periodCode),
     (deps.getPeopleCost ?? getRunningPeopleCost)(periodCode),
     (deps.getManualAdjustments ?? getApprovedAdjustmentsByProcess)(periodCode),
+    openBudgetReader(periodCode).catch(() => emptyEstimate()),
   ]);
   // Only a CLOSED month still inside the estimate window can carry one (see enrichColumn). Any
   // failure degrades to "no estimate", exactly as Live P&L and CEO Overview degrade.
@@ -862,6 +971,9 @@ export async function getStatement(
   // One revenue per branch across every tab: the reconciled figure (see enrichColumn). A failure keeps the per-source chain.
   const branchRevenueReader = deps.getBranchRevenue ?? (deps.getInvoicedRevenue ? async () => undefined : getReconciledBranchRevenue);
   const branchRevenue = viewBy === "branch" ? await branchRevenueReader(periodCode).catch(() => undefined) : undefined;
+  const unproratedReader = deps.getUnproratedPayroll
+    ?? (deps.getIndirectCost ? async () => new Map<string, { staff: number; amount: number }>() : getUnproratedPayrollByBranch);
+  const unproratedByBranch = await unproratedReader(periodCode).catch(() => new Map<string, { staff: number; amount: number }>());
   const forecastCcs = forecast ? [...forecast.byCostCentre.keys()] : [];
   const revenue = forecastCcs.length ? withoutCostCentres(driverRevenue, forecastCcs) : driverRevenue;
   const invoicedRevenue = forecastCcs.length ? withoutCostCentres(invoicedRevenueAll, forecastCcs) : invoicedRevenueAll;
@@ -884,6 +996,7 @@ export async function getStatement(
       committedIdc,
       forecastCcs.length ? forecast : undefined,
       branchRevenue,
+      openBudgetReserve,
     );
     // Coverage belongs on the column, not among the money rows: it qualifies how far the whole
     // column can be trusted, and a consumer must be able to see that before reading any figure in it.
@@ -895,6 +1008,8 @@ export async function getStatement(
           peopleCostActiveEmployees: data.peopleCostActiveEmployees as number,
           peopleCostCoveredEmployees: data.peopleCostCoveredEmployees as number,
         };
+    const notProrated = viewBy === "branch" ? unproratedByBranch.get(item.column.id) : undefined;
+    if (notProrated) column = { ...column, payrollNotProrated: notProrated };
     // Part B: manual adjustments are process-scoped (see StatementColumn.manualAdjustment doc) —
     // attached only for a "process" view column, keyed on the column id, which IS the processId there.
     if (viewBy === "process") {
@@ -954,6 +1069,25 @@ export async function getStatement(
     periodOpen,
     /** Rs of Live P&L's seat-rate estimate included in Recognised Revenue (last month only). */
     revenueEstimated: columnData.reduce((t, item) => t + n(item.data.revenueEstimated), 0),
+    /*
+     * Payroll that carries no attendance proration, for the branches THIS statement shows only (a
+     * branch-scoped reader must never see another branch's staff count). Any view; a branch view's
+     * columns carry it as well so the figure sits next to the column that holds it.
+     */
+    ...(() => {
+      const shown = new Set<string>();
+      for (const item of columnData) {
+        const id = viewBy === "branch" ? item.column.id : (item.data.branchId as string | undefined);
+        if (id) shown.add(String(id));
+      }
+      let staff = 0;
+      let amount = 0;
+      for (const id of shown) {
+        const flag = unproratedByBranch.get(id);
+        if (flag) { staff += flag.staff; amount += flag.amount; }
+      }
+      return staff > 0 ? { payrollNotProrated: { staff, amount } } : {};
+    })(),
     columns: columnData.map((item) => item.column),
     rows: statementRows,
   };

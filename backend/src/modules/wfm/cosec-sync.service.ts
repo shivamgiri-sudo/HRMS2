@@ -8,7 +8,7 @@ import { assessAggregatePunches } from "./cosec-punch-interpretation.service.js"
 import { tableExists } from "../../shared/dbHelpers.js";
 import { logger } from "../../lib/logger.js";
 import type { PunchAssessmentMode } from "./cosec-punch-interpretation.service.js";
-import { buildSourceUserMaps, classifySourceUser } from "./attendance-reconciliation-mapping.js";
+import { buildSourceUserMaps, classifySourceUser, conflictingExclusions } from "./attendance-reconciliation-mapping.js";
 import { queuePayrollRecalculation, drainPayrollRecalcQueue } from "../payroll/payroll-targeted-recalculation.service.js";
 import { CLOSED_RUN_STATUSES_SQL } from "../payroll/run-status.js";
 
@@ -208,6 +208,10 @@ const MAX_SHIFT_SPAN_MIN = 900;
 const TAIL_EARLIEST_HOUR_MAX = 10;
 /** ...and is over by this hour. */
 const TAIL_LATEST_HOUR = 12;
+/** A cluster at least this long counts as a full shift when classifying a worker as day-only. */
+const DAY_WORKER_MIN_SHIFT_MIN = 360;
+/** Full morning-start shifts needed before a worker is treated as a day worker. */
+const DAY_WORKER_MIN_SHIFTS = 3;
 
 const hourOf = (ts: string) => parseInt(ts.substring(11, 13), 10);
 
@@ -329,12 +333,22 @@ export function attributeNightShifts(
     clusters.length = 0;
     clusters.push(...split);
 
+    // A day worker's morning arrival also looks "exit-like". When the morning punch of the day
+    // before is missing, the arrival would be glued to that evening's lone exit punch and the new
+    // day would get no row (MAS63383: 19:14 on 15 Oct + 08:53 on 16 Oct read as one 13.6h shift,
+    // roster showed him absent). Someone with several full morning-start shifts and no full
+    // evening/night shift in the pull has no night exits to absorb.
+    const fullShift = (c: Cluster) => diffMinutes(c.first, c.last) >= DAY_WORKER_MIN_SHIFT_MIN;
+    const isDayWorker =
+      clusters.filter((c) => fullShift(c) && hourOf(c.first) >= 6 && hourOf(c.first) < 11).length >= DAY_WORKER_MIN_SHIFTS
+      && !clusters.some((c) => fullShift(c) && (hourOf(c.first) >= 18 || hourOf(c.first) < 4));
+
     // 2. absorb exit-like clusters into the previous shift
     const shifts: Cluster[] = [];
     const goneDates: string[] = [];
     for (const c of clusters) {
       const prev = shifts[shifts.length - 1];
-      const exitLike = hourOf(c.first) < TAIL_EARLIEST_HOUR_MAX && hourOf(c.last) < TAIL_LATEST_HOUR;
+      const exitLike = !isDayWorker && hourOf(c.first) < TAIL_EARLIEST_HOUR_MAX && hourOf(c.last) < TAIL_LATEST_HOUR;
       if (prev && exitLike
         && diffMinutes(prev.last, c.first) <= MAX_TAIL_GAP_MIN
         && diffMinutes(prev.first, c.last) <= MAX_SHIFT_SPAN_MIN) {
@@ -1181,6 +1195,15 @@ export const cosecSyncService = {
         employeeRows[0] as any[],
         (excludedRows[0] as any[]).map((row) => String(row.cosec_user_id ?? "")),
       );
+      const conflicting = conflictingExclusions(sourceMaps);
+      if (conflicting.length > 0) {
+        // These ids are on the hand-maintained exclusion list yet belong to an employee. They are
+        // synced (ownership wins); say so, so the stale list entries get cleaned up.
+        logger.warn(
+          { count: conflicting.length, sample: conflicting.slice(0, 10) },
+          "[COSEC Sync] exclusion list holds ids that belong to employees; treating them as employees",
+        );
+      }
 
       /*
        * Skip the days that have not changed since the last run.

@@ -1,3 +1,4 @@
+process.env.HE_EMAIL_INVITE_MODE = "always"; // pins the email-first behaviour; fallback mode has its own tests
 import { beforeEach, describe, expect, it, vi, beforeAll, afterAll } from "vitest";
 
 /**
@@ -33,7 +34,7 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 vi.mock("../he-send.service.js", async (orig) => ({ ...(await orig<typeof import("../he-send.service.js")>()), sendTemplateToLead: h.sendTpl }));
-vi.mock("../../communication/email.service.js", () => ({ emailService: { isConfigured: () => true, send: h.mailSend } }));
+vi.mock("../../communication/email.service.js", () => ({ emailService: { canSend: () => true, isConfigured: () => true, send: h.mailSend } }));
 vi.mock("../followup-booking.service.js", () => ({ bookJourney: h.book, markInvitedAfterSend: vi.fn() }));
 vi.mock("../followup-person.service.js", () => ({ claimPerson: h.claim, notePersonFirstContact: vi.fn(), releasePerson: h.release, personFacts: vi.fn(async () => ({ activeFollowupId: null })) }));
 vi.mock("../followup-guard-facts.service.js", () => ({ loadGuardFacts: h.facts }));

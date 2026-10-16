@@ -55,9 +55,11 @@ export interface ScopeAliases {
 // head roles below plus the synthetic role `department_head`, which the role lookup adds for anyone
 // named as the head of an ACTIVE department (department_master.dept_head_employee_id).
 // `branch_head` is a branch role, not a department head, and stays branch-scoped.
+// Owner ruling 2026-10-15: OPERATIONS heads are branch-scoped too. The `operations_head` role is not in the
+// list below and the head of the OPERATIONS department does not receive the synthetic `department_head`.
 export const DEPARTMENT_HEAD_ROLES = [
   "department_head",
-  "hr_head", "it_head", "tq_head", "qa_head", "operations_head", "security_head", "recruitment_head",
+  "hr_head", "it_head", "tq_head", "qa_head", "security_head", "recruitment_head",
   "compliance_head", "wfm_head", "training_head", "sales_head", "admin_head",
 ];
 
@@ -75,7 +77,8 @@ export const USER_ROLES_WITH_DEPARTMENT_HEAD_SQL = `SELECT role_key FROM user_ro
      SELECT 'department_head' AS role_key
        FROM department_master d
        JOIN employees de ON de.id = d.dept_head_employee_id
-      WHERE de.user_id = ? AND de.active_status = 1 AND d.active_status = 1`;
+      WHERE de.user_id = ? AND de.active_status = 1 AND d.active_status = 1
+        AND UPPER(TRIM(d.dept_name)) NOT LIKE 'OPERATION%'`;
 
 /**
  * True for super_admin and the org-wide exempt roles; false for everyone else, admin included.

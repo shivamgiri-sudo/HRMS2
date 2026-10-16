@@ -266,7 +266,7 @@ const REPORTS: Record<string, ReportDef> = {
           0                                                                          AS adv_taken,
           COALESCE(spl.advance_recovery, MAX(CASE WHEN c.component_code='ADV'  THEN c.amount END), 0) AS advance_recovery,
           0                                                                          AS loan_taken,
-          COALESCE(spl.loan_emi, MAX(CASE WHEN c.component_code='LOAN' THEN c.amount END), 0) AS loan_ded,
+          COALESCE(spl.loan_emi, MAX(CASE WHEN c.component_code IN ('LOAN_EMI','LOAN') THEN c.amount END), 0) AS loan_ded,
           spl.incentive_total,
           COALESCE(MAX(CASE WHEN c.component_code='EXTRA_DAY_INC' THEN c.amount END),0) AS extra_day_inc,
           COALESCE(MAX(CASE WHEN c.component_code='ARREAR'        THEN c.amount END),0) AS arrear,
@@ -293,7 +293,7 @@ const REPORTS: Record<string, ReportDef> = {
             + COALESCE(spl.tds, MAX(CASE WHEN c.component_code='TDS' THEN c.amount END), 0)
             + COALESCE(spl.professional_tax, MAX(CASE WHEN c.component_code='PT' THEN c.amount END), 0)
             + COALESCE(spl.lwp_deduction, MAX(CASE WHEN c.component_code='LWP' THEN c.amount END), 0)
-            + COALESCE(spl.loan_emi, MAX(CASE WHEN c.component_code='LOAN' THEN c.amount END), 0)
+            + COALESCE(spl.loan_emi, MAX(CASE WHEN c.component_code IN ('LOAN_EMI','LOAN') THEN c.amount END), 0)
             + COALESCE(spl.advance_recovery, MAX(CASE WHEN c.component_code='ADV' THEN c.amount END), 0)
             + COALESCE(spl.other_deductions, MAX(CASE WHEN c.component_code='OTHER_DED' THEN c.amount END), 0)
             + COALESCE(MAX(CASE WHEN c.component_code='MOBILE_DED' THEN c.amount END), 0)

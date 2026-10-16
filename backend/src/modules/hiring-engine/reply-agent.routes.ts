@@ -56,7 +56,7 @@ export function registerReplyAgentRoutes(r: Router, roles: { view: string[]; wri
       const v = validateReply({ text, facts: built.facts, deny });
       if (!v.ok) return void res.status(422).json({ success: false, message: `The reply was not sent: ${v.reason.replace(/_/g, " ")}`, code: v.reason });
       const subject = /^re:/i.test(String(c.subject ?? "")) ? String(c.subject) : `Re: ${String(c.subject ?? "") || "Your walk-in interview"}`;
-      await emailService.send({ to: String(c.from_email), subject, text, html: text.split("\n").map((l) => (l.trim() ? `<p style="margin:0 0 8px">${l.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>` : "")).join("") });
+      await emailService.send({ pool: "careers", to: String(c.from_email), subject, text, html: text.split("\n").map((l) => (l.trim() ? `<p style="margin:0 0 8px">${l.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>` : "")).join("") });
       await db.execute("UPDATE candidate_reply SET status = 'sent', sent_at = NOW(), reply_text = ?, handled_by = ? WHERE id = ?", [text, userOf(req), id]);
       res.json({ success: true });
     } catch { res.status(500).json({ success: false, message: "Could not send the reply" }); }

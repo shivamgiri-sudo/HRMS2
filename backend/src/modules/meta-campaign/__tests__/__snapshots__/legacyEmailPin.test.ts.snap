@@ -44,6 +44,7 @@ exports[`legacy Meta Notify pin (switches off) > email, WhatsApp, voice and meta
   <p style="font-size:11px;color:#bbb;margin-top:16px">Reference: R-1</p>
 </div>
 </body></html>",
+        "pool": "careers",
         "subject": "Congratulations Asha! Shortlisted for CSE at Mas Callnet",
         "to": "asha@x.in",
       },

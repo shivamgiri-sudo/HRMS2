@@ -22,6 +22,18 @@ const ESCALATION_COOLDOWN_MS = 48 * 60 * 60 * 1000; // 48h cooldown for escalati
 const MANAGER_ESCALATION_DAYS = 5;
 const HR_ESCALATION_DAYS = 6;
 
+/**
+ * Lifetime cap per employee+document and kind. 7-day audit: 509 reminder + 396 HR-escalation mails to the same
+ * few people for documents that were already being chased (every 24h/48h until signed or expired). A send that
+ * reached nobody releases its claim, so only delivered mails count toward the cap.
+ */
+const envCap = (k: string, d: number) => { const n = Number(process.env[k]); return Number.isFinite(n) && n > 0 ? Math.floor(n) : d; };
+const MAX_SENDS: Record<"reminder" | "manager_escalation" | "hr_escalation", number> = {
+  reminder: envCap("ESIGN_MAX_REMINDERS", 4),
+  manager_escalation: envCap("ESIGN_MAX_MANAGER_ESCALATIONS", 2),
+  hr_escalation: envCap("ESIGN_MAX_HR_ESCALATIONS", 2),
+};
+
 // ── Durable Cooldown Tracking ────────────────────────────────────────────────
 //
 // These cooldowns used to live in in-process Maps, and startEsignComplianceWorker
@@ -46,11 +58,12 @@ async function canSend(
 ): Promise<boolean> {
   try {
     const [rows]: any = await db.execute(
-      `SELECT last_sent_at FROM esign_notification_cooldown
+      `SELECT last_sent_at, send_count FROM esign_notification_cooldown
         WHERE employee_id = ? AND checklist_id = ? AND notification_kind = ?
         LIMIT 1`,
       [employeeId, checklistId, kind],
     );
+    if (Number(rows[0]?.send_count ?? 0) >= MAX_SENDS[kind]) return false;
     const last = rows[0]?.last_sent_at;
     if (!last) return true;
     return (Date.now() - new Date(String(last)).getTime()) >= cooldownMs;
