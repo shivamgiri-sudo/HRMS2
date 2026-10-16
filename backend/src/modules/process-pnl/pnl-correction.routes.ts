@@ -83,10 +83,11 @@ router.get(
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT pmc.id, pmc.period_code, pmc.company_name, pmc.line_item,
               pmc.amount, pmc.reason, pmc.created_by,
-              COALESCE(au.full_name, au.email) AS created_by_name,
+              COALESCE(e.full_name, au.email) AS created_by_name,
               pmc.created_at, pmc.updated_at
          FROM pnl_monthly_correction pmc
          LEFT JOIN auth_user au ON au.id = pmc.created_by
+         LEFT JOIN employees e ON e.user_id = pmc.created_by
          ${where}
          ORDER BY pmc.created_at DESC`,
       params,
@@ -137,10 +138,11 @@ router.post(
     const [created] = await db.execute<RowDataPacket[]>(
       `SELECT pmc.id, pmc.period_code, pmc.company_name, pmc.line_item,
               pmc.amount, pmc.reason, pmc.created_by,
-              COALESCE(au.full_name, au.email) AS created_by_name,
+              COALESCE(e.full_name, au.email) AS created_by_name,
               pmc.created_at, pmc.updated_at
          FROM pnl_monthly_correction pmc
          LEFT JOIN auth_user au ON au.id = pmc.created_by
+         LEFT JOIN employees e ON e.user_id = pmc.created_by
         WHERE pmc.id = ?`,
       [id],
     );
@@ -179,10 +181,11 @@ router.put(
     const [updated] = await db.execute<RowDataPacket[]>(
       `SELECT pmc.id, pmc.period_code, pmc.company_name, pmc.line_item,
               pmc.amount, pmc.reason, pmc.created_by,
-              COALESCE(au.full_name, au.email) AS created_by_name,
+              COALESCE(e.full_name, au.email) AS created_by_name,
               pmc.created_at, pmc.updated_at
          FROM pnl_monthly_correction pmc
          LEFT JOIN auth_user au ON au.id = pmc.created_by
+         LEFT JOIN employees e ON e.user_id = pmc.created_by
         WHERE pmc.id = ?`,
       [id],
     );

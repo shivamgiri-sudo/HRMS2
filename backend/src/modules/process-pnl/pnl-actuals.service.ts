@@ -513,7 +513,7 @@ export async function readGrnSpend(
           processId: null,
           amount: amt,
           ...(withDetail
-            ? { source: "mirror" as const, grnRef: null, label: "P&L GRN Correction", billDate: null }
+            ? { source: "db_bill_mirror" as const, grnRef: null, label: "P&L GRN Correction", billDate: null }
             : {}),
         });
       }

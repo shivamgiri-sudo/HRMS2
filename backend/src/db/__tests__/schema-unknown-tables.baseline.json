@@ -348,5 +348,8 @@
   ],
   "workers/bulk-import.worker.ts": [
     "bulk_import_queue"
+  ],
+  "shared/absencePenaltyConfig.ts": [
+    "absence_penalty_config"
   ]
 }
