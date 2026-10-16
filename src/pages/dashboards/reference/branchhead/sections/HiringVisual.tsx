@@ -7,6 +7,11 @@ import { extendTable, Grid, nn, selectByName, TileItem, Tiles, type VisualProps 
 
 const OFFER_EXTRA = ["Not joined", "Conversion (reported)"];
 
+/** Batch bar id -> its process name (the bars are keyed by index, so names can repeat). */
+export function batchProcessIndex(items: ReadonlyArray<{ id: string }>, batches: HiringData["batches"]): Map<string, string> {
+  return new Map(items.map((it, i) => [it.id, batches[i]?.process ?? ""]));
+}
+
 /** Chart props and table twins: funnel, offer meters, batches (open vs pipeline) and ATS outcomes. */
 export function buildHiring(d: HiringData) {
   const funnel: FunnelProps = {
@@ -66,7 +71,7 @@ export function HiringVisual(props: VisualProps) {
         const b = buildHiring(d);
         const a = d.ats;
         const pick = selectByName(props, "hiring");
-        const processOf = new Map(b.batches.items.map((it, i) => [it.id, d.batches[i]?.process ?? ""]));
+        const processOf = batchProcessIndex(b.batches.items, d.batches);
         return (
           <div className="space-y-3">
             <Tiles label="Hiring summary">

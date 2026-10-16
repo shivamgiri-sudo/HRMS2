@@ -1,4 +1,4 @@
-import { Glyph } from "./parts";
+import { Glyph, iconStyle } from "./parts";
 import { isNum, scale, type Tone } from "./scale";
 
 export type Band = "Good" | "Fair" | "Poor";
@@ -22,7 +22,7 @@ export function ScoreRing({ value, label, band, size = 120 }: { value: number; l
   const c = size / 2;
   return (
     <div className="bh-viz bh-ring">
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img"
+      <svg className="bh-icon" width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" style={iconStyle(size)}
         aria-label={`${label}: ${shown} out of 100, ${band}`}>
         <circle cx={c} cy={c} r={l.r} fill="none" stroke="var(--bh-grid)" strokeWidth={STROKE} />
         {l.dash > 0 ? (

@@ -32,15 +32,34 @@ export function drillResetKey(selectedBranchId: string, date: string | undefined
   return JSON.stringify([selectedBranchId, date ?? "", [...branchIds]]);
 }
 
-/** The state still valid for `data`: closed when its branch or its process is no longer in the payload. */
-export function liveDrill(s: DrillState, data: BranchHeadHealthPayload): DrillState {
-  const cur = s.current;
-  if (!cur) return s;
-  if (!data.branches.some((b) => b.branch.branchId === cur.branchId)) return EMPTY_DRILL;
-  if (cur.target.kind === "process") {
-    const id = cur.target.id;
-    const known = [...(data.processes?.active ?? []), ...(data.processes?.unmapped ?? [])].some((p) => p.processId === id);
-    if (!known) return EMPTY_DRILL;
-  }
-  return s;
+/**
+ * Whether an entry still makes sense for `data`: its branch is loaded and, for a process, the id is a
+ * known process (active or unmapped) or a row of that branch's process P&L (a P&L-only process).
+ */
+export function entryValid(e: DrillEntry, data: BranchHeadHealthPayload): boolean {
+  const row = data.branches.find((b) => b.branch.branchId === e.branchId);
+  if (!row) return false;
+  if (e.target.kind !== "process") return true;
+  const id = e.target.id;
+  if ([...(data.processes?.active ?? []), ...(data.processes?.unmapped ?? [])].some((p) => p.processId === id)) return true;
+  const pnl = row.overview.processPnl;
+  return pnl?.status === "ok" && Array.isArray(pnl.data?.rows) && pnl.data.rows.some((r) => r.processId === id);
+}
+
+/**
+ * The state with every stale entry removed: closed (EMPTY) when the open view vanished, else the open
+ * view with only the still-valid Back entries. Returns `s` itself when nothing changed.
+ */
+export function pruneDrill(s: DrillState, data: BranchHeadHealthPayload): DrillState {
+  if (!s.current) return s.back.length ? EMPTY_DRILL : s;
+  if (!entryValid(s.current, data)) return EMPTY_DRILL;
+  const back = s.back.filter((e) => entryValid(e, data));
+  return back.length === s.back.length ? s : { current: s.current, back };
+}
+
+/** What the host must do to its stored state after a payload change. */
+export function drillSync(s: DrillState, data: BranchHeadHealthPayload): "none" | "close" | "prune" {
+  const next = pruneDrill(s, data);
+  if (next === s) return "none";
+  return s.current && !next.current ? "close" : "prune";
 }

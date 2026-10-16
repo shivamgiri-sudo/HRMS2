@@ -8,6 +8,8 @@ import type { DrillTarget, MetricDrillId } from "../drill";
 import { ProcessDrawer } from "../drill/ProcessDrawer";
 import { MetricDrawer, METRIC_TITLES } from "../drill/MetricDrawer";
 import { PnlTable } from "../drill/metrics/PnlMetric";
+import { mmdd, trendProps } from "../drill/metrics/AttendanceMetric";
+import type { TrendPoint } from "@/hooks/useBranchTrends";
 import { DrillHost, type DrillHostApi } from "../drill/DrillHost";
 import { EMPTY_DRILL, pushDrill } from "../drill/history";
 import { drillHandlers } from "../BranchHeadReferenceLayout";
@@ -56,6 +58,13 @@ describe("ProcessDrawer", () => {
     const out = proc(ov, fx.payloadOf(ov), { kind: "process", id: "nope", name: "Ghost", branchId: "b1" });
     expect(out).toContain("No detail available for this process");
   });
+  it("a P&L-only process opens with its P&L tiles and honest empty lines elsewhere", () => {
+    const ov = fx.overviewOf();
+    const out = proc(ov, fx.payloadOf(ov), { kind: "process", id: "p2", name: "Process 2", branchId: "b1" });
+    for (const t of ["Not in the process coverage list", "Revenue", "₹3 L", "Operating profit", "-₹10,000", "18 / 20", "P&amp;L this month", "No attendance rostered today", "No operational metrics for this process"]) expect(out, t).toContain(t);
+    expect(out).not.toContain("Show agent list");
+    expect(out).not.toContain("No detail available");
+  });
   it("notes a billing mirror", () => {
     const ov = fx.overviewOf();
     const payload = fx.payloadOf(ov, { processes: { active: [fx.procRow({ billingMirror: true })], unmapped: [] } });
@@ -94,7 +103,7 @@ const EXPECT: Record<MetricDrillId, string[]> = {
 describe("MetricDrawer", () => {
   const ov = richOverview();
   ov.callmaster = fx.emptySection();
-  const render = (id: MetricDrillId, trends: Record<string, Array<number | null>> = {}) =>
+  const render = (id: MetricDrillId, trends: Record<string, TrendPoint[]> = {}) =>
     wrap(<MetricDrawer id={id} overview={ov} payload={fx.payloadOf(ov)} trends={trends} onOpen={() => {}} />);
   it.each(ALL)("%s renders its tables and a deep-link row", (id) => {
     const out = render(id);
@@ -105,8 +114,18 @@ describe("MetricDrawer", () => {
     expect(out).not.toContain("Secret Manager");
   });
   it("draws the trend once there are 3 points", () => {
-    expect(render("shrinkage", { shrinkagePct: [10, 12, 11] })).not.toContain("Trend appears after a few days of history");
-    expect(render("late", { totalLate: [3, 4] })).toContain("Trend appears after a few days of history");
+    const pts = (vs: number[]) => vs.map((value, i) => ({ date: `2026-10-1${i}`, value }));
+    const out = render("shrinkage", { shrinkagePct: pts([10, 12, 11]) });
+    expect(out).not.toContain("Trend appears after a few days of history");
+    expect(out).toContain("10-12");
+    expect(render("late", { totalLate: pts([3, 4]) })).toContain("Trend appears after a few days of history");
+  });
+  it("trend helpers label the x axis MM-DD and need 3 finite points", () => {
+    expect(mmdd("2026-10-05")).toBe("10-05");
+    expect(mmdd("odd")).toBe("odd");
+    const t = trendProps("S", [{ date: "2026-10-01", value: 1 }, { date: "2026-10-02", value: null }, { date: "2026-10-03", value: 2 }, { date: "2026-10-04", value: 3 }], String);
+    expect(t?.series[0].points.map((p) => p.x)).toEqual(["10-01", "10-02", "10-03", "10-04"]);
+    expect(trendProps("S", [{ date: "2026-10-01", value: 1 }, { date: "2026-10-02", value: null }, { date: "2026-10-03", value: 2 }], String)).toBeNull();
   });
   it("an errored section says so instead of rendering an empty drawer", () => {
     const bad = fx.overviewOf({ finance: fx.err("down") });
@@ -123,7 +142,7 @@ describe("MetricDrawer", () => {
 });
 
 describe("DrillHost", () => {
-  const host = (state = EMPTY_DRILL): DrillHostApi => ({ state, open: () => {}, back: () => {}, close: () => {} });
+  const host = (state = EMPTY_DRILL): DrillHostApi => ({ state, open: () => {}, back: () => {}, close: () => {}, prune: () => {} });
   const render = (h: DrillHostApi) => {
     const ov = richOverview();
     return wrap(<DrillHost host={h} data={fx.payloadOf(ov)} branchNames={{ b1: "Kolkata" }} inline />);

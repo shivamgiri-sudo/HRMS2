@@ -15,16 +15,20 @@ const SEVERITY = {
 
 const isDigit = (ch: string | undefined) => ch != null && ch >= "0" && ch <= "9";
 
-/** First number in the text ("12", "95%", "22.5%", "₹1,20,000"), or null. Scans characters: no regex. */
-export function chipCount(text: string): string | null {
-  const s = text ?? "";
-  let i = 0;
-  while (i < s.length && !isDigit(s[i])) i += 1;
-  if (i >= s.length) return null;
-  let j = i;
+/**
+ * The count shown on a chip: the number the detail STARTS with ("40 employees...", "20% absent...",
+ * "₹1,20,000 over budget"), kept with its % or rupee sign. None when the label already carries a
+ * number ("29 GRNs pending more than 3 days") or the detail does not open with one, so a later number
+ * in the sentence ("oldest is 60 days old") is never shown as the count. Scans characters: no regex.
+ */
+export function chipCount(detail: string, label = ""): string | null {
+  if ([...String(label ?? "")].some((ch) => isDigit(ch))) return null;
+  const s = String(detail ?? "").trimStart();
+  const start = s[0] === "₹" ? 1 : 0;
+  if (!isDigit(s[start])) return null;
+  let j = start;
   while (j < s.length && (isDigit(s[j]) || ((s[j] === "," || s[j] === ".") && isDigit(s[j + 1])))) j += 1;
-  const start = i > 0 && s[i - 1] === "₹" ? i - 1 : i;
-  return s.slice(start, j) + (s[j] === "%" ? "%" : "");
+  return s.slice(0, j) + (s[j] === "%" ? "%" : "");
 }
 
 /** Critical first, then warning; payload order kept within a severity. Ids are the payload index. */
@@ -61,7 +65,8 @@ export function AttentionItems({ items }: { items: Array<{ id: string; item: Ite
 export interface AttentionBoardProps {
   items: Item[];
   positives: Win[];
-  onOpenItem: (id: string) => void;
+  /** Optional extra hook per chip click; the chip always opens this board's drawer itself. */
+  onOpenItem?: (id: string) => void;
   /** Controlled drawer (the hero's "needs attention" button opens it too); uncontrolled when omitted. */
   drawerOpen?: boolean;
   onDrawerChange?: (open: boolean) => void;
@@ -90,10 +95,10 @@ export function AttentionBoard({ items, positives, onOpenItem, drawerOpen, onDra
         <ul className="flex list-none flex-wrap gap-2 p-0" aria-label="Needs attention, most severe first">
           {chips.map(({ id, item }) => {
             const s = SEVERITY[item.severity] ?? SEVERITY.warning;
-            const count = chipCount(item.detail);
+            const count = chipCount(item.detail, item.label);
             return (
               <li key={id} className="min-w-0 max-w-full">
-                <button type="button" data-chip={item.severity} onClick={() => { onOpenItem(id); setOpen(true); }}
+                <button type="button" data-chip={item.severity} onClick={() => { onOpenItem?.(id); setOpen(true); }}
                   className={`inline-flex min-h-[44px] max-w-full items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${s.cls}`}>
                   <SeverityIcon severity={item.severity} />
                   <span className="sr-only">{s.word}: </span>

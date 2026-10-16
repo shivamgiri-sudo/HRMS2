@@ -105,7 +105,8 @@
 
 /* Shared chart chrome */
 .bh-chart { position: relative; width: 100%; }
-.bh-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+/* Plot surfaces only: icons (bh-icon, lucide) keep their own size. */
+.bh-chart svg:not(.bh-icon):not(.lucide) { display: block; width: 100%; height: auto; overflow: visible; }
 .bh-empty { display: flex; align-items: center; justify-content: center; color: var(--bh-ink-3); font-size: 12px; border: 1px dashed var(--bh-grid); border-radius: 10px; }
 .bh-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--bh-ink-2); }
 .bh-legend li { display: inline-flex; align-items: center; gap: 6px; }
@@ -158,6 +159,8 @@ button.bh-tile:hover { border-color: var(--bh-axis); box-shadow: 0 6px 18px -12p
 .bh-delta-bad { color: var(--bh-text-bad); }
 .bh-delta-neutral { color: var(--bh-ink-2); }
 .bh-ring { display: inline-flex; align-items: center; gap: 12px; }
+/* Hero: band label stacked under the ring. */
+.bh-hero-left .bh-ring { flex-direction: column; gap: 6px; }
 .bh-ring-band { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: var(--bh-ink-1); }
 .bh-meter { display: grid; gap: 6px; }
 .bh-meter-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; font-size: 12px; color: var(--bh-ink-2); }

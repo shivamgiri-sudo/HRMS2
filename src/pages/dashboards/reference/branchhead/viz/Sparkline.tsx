@@ -1,4 +1,5 @@
 import { isNum, r1, scale, toneColor, type Tone } from "./scale";
+import { iconStyle } from "./parts";
 
 const PAD = 2;
 
@@ -33,9 +34,9 @@ export function Sparkline({ points, tone, width = 96, height = 28, label }: {
   if (!p) return null;
   const finite = points.filter(isNum);
   return (
-    <svg className="bh-viz" width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img"
+    <svg className="bh-viz bh-icon" width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img"
       aria-label={`${label}: ${finite.length} points, from ${r1(finite[0])} to ${r1(finite[finite.length - 1])}`}
-      style={{ overflow: "visible" }}>
+      style={{ ...iconStyle(width), height, overflow: "visible" }}>
       <path d={p.d} fill="none" stroke="var(--bh-other)" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
       <circle cx={p.last.x} cy={p.last.y} r="3" fill={toneColor(tone)} stroke="var(--bh-surface)" strokeWidth="1.5" />
     </svg>

@@ -43,8 +43,8 @@ export function PnlTable({ rows, onPick }: { rows: ProcessPnlRow[]; onPick: (row
           </tr>
         </thead>
         <tbody>
-          {sorted.length ? sorted.map((r) => (
-            <tr key={r.processId}>
+          {sorted.length ? sorted.map((r, i) => (
+            <tr key={`${r.processId}-${i}`}>
               <th scope="row"><button type="button" className={`${BTN} text-left underline-offset-2 hover:underline`} onClick={() => onPick(r)}>{r.processName}</button></th>
               {COLS.map(([key, , fmt]) => <td key={key}>{fmt(r)}</td>)}
             </tr>

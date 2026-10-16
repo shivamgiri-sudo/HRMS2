@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { EMPTY_DRILL, MAX_DRILL_DEPTH, backDrill, drillResetKey, liveDrill, pushDrill, type DrillEntry } from "../drill/history";
+import { EMPTY_DRILL, MAX_DRILL_DEPTH, backDrill, drillResetKey, drillSync, pruneDrill, pushDrill, type DrillEntry } from "../drill/history";
 import { DRILL_LINKS, linksFor } from "../drill/links";
 import { ariaSort, sortPnlRows } from "../drill/metrics/pnlSort";
 import { processTarget } from "../drill";
@@ -44,14 +44,35 @@ describe("drill history stack", () => {
     expect(drillResetKey("b1", "2026-10-14", ["b1"])).not.toBe(a);
     expect(drillResetKey("b1", "2026-10-15", ["b1", "b2"])).not.toBe(a);
   });
-  it("liveDrill closes when the payload loses the branch or the process", () => {
+  it("pruneDrill closes when the payload loses the branch or the process", () => {
     const data = fx.payloadOf();
     const open = pushDrill(EMPTY_DRILL, p("p-alpha"));
-    expect(liveDrill(open, data)).toBe(open);
-    expect(liveDrill(pushDrill(EMPTY_DRILL, p("p-gone")), data)).toEqual(EMPTY_DRILL);
-    expect(liveDrill(pushDrill(EMPTY_DRILL, m("pnl", "b9")), data)).toEqual(EMPTY_DRILL);
-    expect(liveDrill(pushDrill(EMPTY_DRILL, m("pnl")), data).current).toEqual(m("pnl"));
-    expect(liveDrill(EMPTY_DRILL, data)).toBe(EMPTY_DRILL);
+    expect(pruneDrill(open, data)).toBe(open);
+    expect(pruneDrill(pushDrill(EMPTY_DRILL, p("p-gone")), data)).toEqual(EMPTY_DRILL);
+    expect(pruneDrill(pushDrill(EMPTY_DRILL, m("pnl", "b9")), data)).toEqual(EMPTY_DRILL);
+    expect(pruneDrill(pushDrill(EMPTY_DRILL, m("pnl")), data).current).toEqual(m("pnl"));
+    expect(pruneDrill(EMPTY_DRILL, data)).toBe(EMPTY_DRILL);
+  });
+  it("a vanished current asks the host to close; a vanished Back entry is pruned", () => {
+    const data = fx.payloadOf();
+    const gone = pushDrill(pushDrill(EMPTY_DRILL, m("pnl")), p("p-gone"));
+    expect(drillSync(gone, data)).toBe("close");
+    const staleBack = pushDrill(pushDrill(pushDrill(EMPTY_DRILL, m("pnl")), p("p-gone")), p("p-alpha"));
+    expect(drillSync(staleBack, data)).toBe("prune");
+    expect(pruneDrill(staleBack, data)).toEqual({ current: p("p-alpha"), back: [m("pnl")] });
+    expect(drillSync(pushDrill(EMPTY_DRILL, p("p-alpha")), data)).toBe("none");
+  });
+  it("a process that reappears after being pruned does not pop the drawer open", () => {
+    const without = fx.payloadOf(undefined, { processes: { active: [], unmapped: [] } });
+    const closed = pruneDrill(pushDrill(EMPTY_DRILL, p("p-alpha")), without);
+    expect(closed).toEqual(EMPTY_DRILL);
+    expect(pruneDrill(closed, fx.payloadOf()).current).toBeNull();
+  });
+  it("a P&L-only process (not in the coverage lists) stays valid while its P&L row exists", () => {
+    const data = fx.payloadOf();
+    const s = pushDrill(EMPTY_DRILL, p("p2"));
+    expect(pruneDrill(s, data)).toBe(s);
+    expect(pruneDrill(pushDrill(EMPTY_DRILL, p("p2", "b9")), data)).toEqual(EMPTY_DRILL);
   });
 });
 
@@ -64,9 +85,18 @@ describe("process targets carry the branch", () => {
 });
 
 describe("deep links", () => {
-  it("every href exists in navConfig", () => {
+  it("every href is a real href/path entry of navConfig", () => {
     const nav = readFileSync(resolve(__dirname, "../../../../../components/layout/navConfig.tsx"), "utf8");
-    for (const l of Object.values(DRILL_LINKS)) expect(nav, l.href).toContain(`"${l.href}"`);
+    const routes = new Set<string>();
+    for (const key of ["href:", "path:"]) {
+      for (const part of nav.split(key).slice(1)) {
+        const t = part.trimStart();
+        const q = t[0];
+        if (q === '"' || q === "'" || q === "`") routes.add(t.slice(1, t.indexOf(q, 1)));
+      }
+    }
+    expect(routes.size).toBeGreaterThan(20);
+    for (const l of Object.values(DRILL_LINKS)) expect(routes.has(l.href), l.href).toBe(true);
   });
   it("uses the listed paths", () => {
     expect(Object.values(DRILL_LINKS).map((l) => l.href).sort()).toEqual([

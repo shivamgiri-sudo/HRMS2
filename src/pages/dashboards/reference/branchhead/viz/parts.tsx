@@ -58,11 +58,16 @@ const ICON_PATHS: Record<Tone | "up" | "down" | "flat" | "over", string> = {
   over: "M8 2.5 14 13H2zM8 6.5v3M8 11.2v.3",
 };
 
+/** Fixed box for any small decorative svg, so no chart-wide svg rule can stretch it. */
+export function iconStyle(size: number) {
+  return { width: size, height: size, display: "inline-block", flexShrink: 0 } as const;
+}
+
 /** Inline 16-unit stroke icon (no icon font, no dependency). Always paired with text by the caller. */
 export function Glyph({ name, size = 14 }: { name: keyof typeof ICON_PATHS; size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
-      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <svg className="bh-icon" width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" style={iconStyle(size)}>
       <path d={ICON_PATHS[name]} />
     </svg>
   );

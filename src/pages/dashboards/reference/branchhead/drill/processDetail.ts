@@ -21,6 +21,19 @@ export function findProcess(payload: BranchHeadHealthPayload, target: ProcessTar
   return key ? branchProcesses(payload, branchId).find((p) => normalizeProcessName(p.processName) === key) ?? null : null;
 }
 
+/**
+ * A process known only from this branch's P&L rows (not in the coverage lists): a stand-in built from
+ * the row, with no cost centres, no tier and no agent list. Null when the row is not there either.
+ */
+export function pnlOnlyProcess(ov: BranchOverview | null, target: ProcessTarget): BranchProcess | null {
+  const row = (okData<{ rows: ProcessPnlRow[] }>(ov?.processPnl)?.rows ?? []).find((r) => r.processId === target.id);
+  if (!row) return null;
+  return {
+    processId: row.processId, processCode: "", processName: row.processName, costCentres: [], viaLink: false,
+    mandatedSeats: row.mandatedSeats, headcount: nn(row.activeHc), tier: "not_wired", latestMetricDate: null, billingMirror: false, branchIds: [],
+  };
+}
+
 export interface ProcessDetail {
   pnl: ProcessPnlRow | null;
   slots: AttendanceData["bySlot"];
@@ -45,8 +58,12 @@ export function processDetail(ov: BranchOverview | null, p: BranchProcess): Proc
   const pnlRows = okData<{ rows: ProcessPnlRow[] }>(ov?.processPnl)?.rows ?? [];
   const opsRows = okData<OpsProcessRow[]>(ov?.operations);
   const qRows = okData<QualityRow[]>(ov?.quality);
-  const byCode = <T extends { processCode: string; processName: string }>(rows: T[] | null) =>
-    (Array.isArray(rows) ? rows : []).find((r) => r.processCode === p.processCode) ?? (Array.isArray(rows) ? rows : []).find((r) => same(r.processName)) ?? null;
+  // Code first (never on an empty code: two blank codes are not a match), then the normalised name.
+  const byCode = <T extends { processCode: string; processName: string }>(rows: T[] | null) => {
+    const list = Array.isArray(rows) ? rows : [];
+    const code = String(p.processCode ?? "").trim();
+    return (code ? list.find((r) => String(r.processCode ?? "").trim() === code) : undefined) ?? list.find((r) => same(r.processName)) ?? null;
+  };
   const ops = byCode(opsRows);
   const q = byCode(qRows);
   const qa = fin(q?.QA_QUALITY_PCT) ? q!.QA_QUALITY_PCT : fin(ops?.metrics?.QA_QUALITY_PCT) ? (ops!.metrics.QA_QUALITY_PCT as number) : null;

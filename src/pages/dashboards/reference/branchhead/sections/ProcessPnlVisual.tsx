@@ -13,12 +13,15 @@ const EXTRA_COLS = ["Client", "Status", "Revenue", "People cost", "Other cost", 
 
 /**
  * Bar click: the row's own processId when this branch knows it, else a name join within the branch,
- * else the P&L metric drawer. `rows` must already be limited to the overview's branch.
+ * else the P&L row itself as a process (the drawer shows what the P&L knows). `rows` must already be
+ * limited to the overview's branch.
  */
 export function pnlSelect(row: Pick<ProcessPnlRow, "processId" | "processName">, rows: readonly BranchProcess[], onSelect: (t: DrillTarget) => void, branchId?: string) {
   const own = rows.find((r) => r.processId === row.processId);
-  if (!own) { onSelect(processTarget(row.processName, rows, "pnl", branchId)); return; }
-  onSelect(branchId ? { kind: "process", id: own.processId, name: own.processName, branchId } : { kind: "process", id: own.processId, name: own.processName });
+  const named = own ? null : processTarget(row.processName, rows, "pnl", branchId);
+  const hit = own ? { id: own.processId, name: own.processName }
+    : named?.kind === "process" ? { id: named.id, name: named.name } : { id: row.processId, name: row.processName };
+  onSelect(branchId ? { kind: "process", ...hit, branchId } : { kind: "process", ...hit });
 }
 
 const idle = (r: ProcessPnlRow) => r.revenue === 0 && r.peopleCost === 0 && r.otherCost === 0;

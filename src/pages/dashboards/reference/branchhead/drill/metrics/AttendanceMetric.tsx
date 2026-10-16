@@ -1,3 +1,4 @@
+import type { TrendPoint } from "@/hooks/useBranchTrends";
 import type { AttendanceData } from "../../panelTypes";
 import { BarList, ChartFrame, DataTable, LineArea, StackedBar, lineAreaTable, type LineAreaProps, type TableSpec } from "../../viz";
 import { formatCount, formatPct } from "../../format";
@@ -8,11 +9,17 @@ import { asVisual, type MetricProps } from "./common";
 
 const MIN_TREND = 3;
 
-/** Trend props from snapshot values (oldest first); null below 3 finite points. */
-export function trendProps(label: string, values: Array<number | null> | undefined, format: (n: number) => string): LineAreaProps | null {
-  const pts = values ?? [];
-  if (pts.filter((v) => typeof v === "number" && Number.isFinite(v)).length < MIN_TREND) return null;
-  return { label, format, series: [{ key: "v", label, points: pts.map((y, i) => ({ x: `#${i + 1}`, y })) }] };
+/** "MM-DD" for a YYYY-MM-DD date; anything else unchanged. */
+export function mmdd(date: string): string {
+  const d = String(date ?? "");
+  return d.length >= 10 && d[4] === "-" && d[7] === "-" ? d.slice(5, 10) : d;
+}
+
+/** Trend props from dated snapshots (oldest first), x labelled MM-DD; null below 3 finite points. */
+export function trendProps(label: string, points: TrendPoint[] | undefined, format: (n: number) => string): LineAreaProps | null {
+  const pts = points ?? [];
+  if (pts.filter((p) => typeof p.value === "number" && Number.isFinite(p.value)).length < MIN_TREND) return null;
+  return { label, format, series: [{ key: "v", label, points: pts.map((p) => ({ x: mmdd(p.date), y: p.value })) }] };
 }
 
 export function slotTable(d: AttendanceData): TableSpec {

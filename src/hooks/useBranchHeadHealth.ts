@@ -1,4 +1,6 @@
+import { useRef } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { pendingPollInterval, type PollState } from "@/pages/dashboards/reference/branchhead/pending";
 import { hrmsApi } from "@/lib/hrmsApi";
 import type { BranchHeadHealthPayload } from "../../backend/src/modules/branch-head-health/types";
 import type { DrillRow } from "../../backend/src/modules/branch-head-health/processes";
@@ -24,12 +26,15 @@ export async function fetchProcessDrilldown(branchId: string, processId: string,
 }
 
 export function useBranchHeadHealth(branchIds: string[], date?: string) {
+  // Sections still calculating on a cold cache: poll every 20 s, at most 6 times in a row.
+  const poll = useRef<PollState>({ lastAt: 0, polls: 0 });
   const query = useQuery({
     queryKey: ["branch-head-health", branchIds.join(","), date ?? ""],
     queryFn: () => fetchBranchHeadHealth(branchIds, date),
     staleTime: 60_000,
     retry: 1,
     placeholderData: keepPreviousData,
+    refetchInterval: (q) => pendingPollInterval(poll.current, q.state.data, q.state.dataUpdatedAt),
   });
   return { data: query.data, isLoading: query.isLoading, isFetching: query.isFetching, error: query.error as Error | null, refetch: query.refetch };
 }

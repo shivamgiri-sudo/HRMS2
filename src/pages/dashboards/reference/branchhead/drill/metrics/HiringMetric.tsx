@@ -1,6 +1,6 @@
 import type { HiringData } from "../../panelTypes";
 import { BarList, ChartFrame, DataTable, StackedBar } from "../../viz";
-import { buildHiring } from "../../sections/HiringVisual";
+import { batchProcessIndex, buildHiring } from "../../sections/HiringVisual";
 import { selectByName } from "../../sections/shared";
 import { EmptyLine, SectionGate } from "../parts";
 import { asVisual, type MetricProps } from "./common";
@@ -12,7 +12,7 @@ export function HiringMetric(props: MetricProps) {
       {(d) => {
         const b = buildHiring(d);
         const pick = selectByName(asVisual(props), "hiring");
-        const processOf = new Map(b.batches.items.map((it, i) => [it.id, d.batches[i]?.process ?? ""]));
+        const processOf = batchProcessIndex(b.batches.items, d.batches);
         return (
           <div className="space-y-4">
             <ChartFrame title="Open batches" subtitle="Open positions per batch; marker = in pipeline" table={b.batchesTable} height={96}>

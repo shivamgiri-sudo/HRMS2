@@ -26,7 +26,7 @@ export function BranchOverviewTop({ branch, overview, score, onOpenKpi }: Branch
       <KpiStrip overview={overview} trends={trends} onOpen={onOpenKpi} />
       <Panel title="Attention and wins">
         {/* Attention chips open this board's own drawer (full list with details), not the drill host. */}
-        <AttentionBoard items={overview.attention} positives={overview.positives} onOpenItem={() => setAttentionOpen(true)}
+        <AttentionBoard items={overview.attention} positives={overview.positives}
           drawerOpen={attentionOpen} onDrawerChange={setAttentionOpen} />
       </Panel>
     </div>

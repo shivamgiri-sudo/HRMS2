@@ -10,7 +10,7 @@ import { mandateNote } from "../sections/PeopleVisual";
 import { buildHiring } from "../sections/HiringVisual";
 import { OPS_METRICS, num } from "../sections/OpsHeatGrid";
 import { nn, TileItem, Tiles } from "../sections/shared";
-import { findProcess, okData, processDetail, type ProcessDetail } from "./processDetail";
+import { findProcess, okData, pnlOnlyProcess, processDetail, type ProcessDetail } from "./processDetail";
 import { Block, DrillLinks, EmptyLine } from "./parts";
 
 type ProcessTarget = Extract<DrillTarget, { kind: "process" }>;
@@ -50,8 +50,11 @@ export function pnlBars(d: ProcessDetail): BarListProps | null {
   };
 }
 
-function Header({ p }: { p: NonNullable<ReturnType<typeof findProcess>> }) {
+function Header({ p, pnlOnly }: { p: NonNullable<ReturnType<typeof findProcess>>; pnlOnly: boolean }) {
   const cc = p.costCentres?.length ?? 0;
+  if (pnlOnly) {
+    return <p className="flex items-center gap-1 text-[13px] text-slate-700"><Info className="h-3.5 w-3.5" aria-hidden="true" />Not in the process coverage list; showing what this branch&apos;s P&amp;L knows about it</p>;
+  }
   return (
     <div className="flex flex-wrap items-center gap-2 text-[13px] text-slate-800">
       <CoverageBadge tier={p.tier} />
@@ -97,7 +100,8 @@ function Agents(props: { p: NonNullable<ReturnType<typeof findProcess>>; branchI
 /** Process 360: header, key tiles, mini charts, ops row, the agent list (only place names appear) and links. */
 export function ProcessDrawer({ payload, overview, target, branchNames }: ProcessDrawerProps) {
   const branchId = target.branchId ?? overview?.branch.branchId ?? "";
-  const p = findProcess(payload, target, branchId);
+  const known = findProcess(payload, target, branchId);
+  const p = known ?? pnlOnlyProcess(overview, target);
   if (!p) {
     return (
       <div className="space-y-4">
@@ -114,7 +118,7 @@ export function ProcessDrawer({ payload, overview, target, branchNames }: Proces
   const opsTiles = d.ops ? OPS_METRICS.filter(([k]) => typeof d.ops?.metrics?.[k] === "number") : [];
   return (
     <div className="space-y-5">
-      <Header p={p} />
+      <Header p={p} pnlOnly={!known} />
       <KeyTiles p={p} d={d} />
       <ChartFrame title="Attendance by shift slot" subtitle="Today" table={stackedBarTable(slots)} height={72}>
         {slots.rows.length ? <StackedBar {...slots} /> : <EmptyLine>No attendance rostered today</EmptyLine>}
@@ -135,7 +139,7 @@ export function ProcessDrawer({ payload, overview, target, branchNames }: Proces
           </>
         ) : <EmptyLine>No operational metrics for this process</EmptyLine>}
       </Block>
-      <Agents p={p} branchId={branchId} branchNames={branchNames} />
+      {known ? <Agents p={p} branchId={branchId} branchNames={branchNames} /> : null}
       <DrillLinks target={target} />
     </div>
   );

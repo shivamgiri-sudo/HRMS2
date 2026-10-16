@@ -1,11 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import type { BranchHeadHealthPayload } from "../../../../../../backend/src/modules/branch-head-health/types";
 import { useBranchTrends } from "@/hooks/useBranchTrends";
 import { DrillDrawer } from "../viz";
 import type { DrillTarget } from "../drill";
 import { KPI_TREND_METRICS } from "../kpiModel";
-import { EMPTY_DRILL, backDrill, liveDrill, pushDrill, type DrillEntry, type DrillState } from "./history";
+import { EMPTY_DRILL, backDrill, drillSync, pruneDrill, pushDrill, type DrillEntry, type DrillState } from "./history";
 import { MetricDrawer, METRIC_TITLES } from "./MetricDrawer";
 import { ProcessDrawer } from "./ProcessDrawer";
 
@@ -16,6 +16,8 @@ export interface DrillHostApi {
   open: (target: DrillTarget, branchId: string) => void;
   back: () => void;
   close: () => void;
+  /** Drops stale entries (process or branch gone from `data`) from the stored state. */
+  prune: (data: BranchHeadHealthPayload) => void;
 }
 
 export function useDrillHost(): DrillHostApi {
@@ -26,7 +28,8 @@ export function useDrillHost(): DrillHostApi {
   }, []);
   const back = useCallback(() => setState(backDrill), []);
   const close = useCallback(() => setState(EMPTY_DRILL), []);
-  return useMemo(() => ({ state, open, back, close }), [state, open, back, close]);
+  const prune = useCallback((data: BranchHeadHealthPayload) => setState((s) => pruneDrill(s, data)), []);
+  return useMemo(() => ({ state, open, back, close, prune }), [state, open, back, close, prune]);
 }
 
 const titleOf = (e: DrillEntry) => (e.target.kind === "process" ? e.target.name || "Process" : METRIC_TITLES[e.target.id]);
@@ -42,10 +45,18 @@ export interface DrillHostProps {
 
 /** The single drill drawer: a process 360 or a metric view, with Back through up to five earlier views. */
 export function DrillHost({ host, data, branchNames, inline }: DrillHostProps) {
-  const state = liveDrill(host.state, data);
+  // Render from the pruned state at once; the effect then clears the stored state, so a process that
+  // vanishes and later reappears never pops the drawer open again and Back never lands on a stale view.
+  const state = pruneDrill(host.state, data);
+  const action = drillSync(host.state, data);
+  const { close, prune } = host;
+  useEffect(() => {
+    if (action === "close") close();
+    else if (action === "prune") prune(data);
+  }, [action, close, prune, data]);
   const cur = state.current;
   const row = cur ? data.branches.find((b) => b.branch.branchId === cur.branchId) ?? null : null;
-  const { data: trends } = useBranchTrends(cur && cur.target.kind === "metric" ? cur.branchId : null, TRENDS);
+  const { points: trends } = useBranchTrends(cur && cur.target.kind === "metric" ? cur.branchId : null, TRENDS);
   const prev = state.back[state.back.length - 1];
   const onOpen = (t: DrillTarget) => host.open(t, cur?.branchId ?? "");
   const many = data.branches.length > 1;

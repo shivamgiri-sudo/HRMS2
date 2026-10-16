@@ -106,13 +106,15 @@ describe("ProcessPnlVisual", () => {
     expect(out).toContain("1 process has no P&amp;L activity this month");
     expect(out).toMatch(/<details(?![^>]*\bopen\b)[^>]*>\s*<summary[^>]*>\s*1 process has no/);
   });
-  it("click joins by process name, falls back to the P&L metric", () => {
+  it("click joins by process name, else opens the P&L row itself as a process", () => {
     const seen: DrillTarget[] = [];
     const rows = fx.payloadOf().processes.active;
     pnlSelect({ processId: "zz", processName: "process 1" }, rows, (t) => seen.push(t));
     pnlSelect({ processId: "zz", processName: "Unknown" }, rows, (t) => seen.push(t));
     pnlSelect({ processId: "p-beta", processName: "Renamed" }, rows, (t) => seen.push(t));
-    expect(seen).toEqual([{ kind: "process", id: "p1", name: "process 1" }, { kind: "metric", id: "pnl" }, { kind: "process", id: "p-beta", name: "Beta  Chat " }]);
+    expect(seen).toEqual([{ kind: "process", id: "p1", name: "process 1" }, { kind: "process", id: "zz", name: "Unknown" }, { kind: "process", id: "p-beta", name: "Beta  Chat " }]);
+    pnlSelect({ processId: "zz", processName: "Unknown" }, rows, (t) => seen.push(t), "b1");
+    expect(seen[3]).toEqual({ kind: "process", id: "zz", name: "Unknown", branchId: "b1" });
   });
   it("empty, error, missing and null OP %", () => {
     expect(render(ProcessPnlVisual as never, { processPnl: fx.emptySection() })).toContain("No process P&amp;L for this branch");

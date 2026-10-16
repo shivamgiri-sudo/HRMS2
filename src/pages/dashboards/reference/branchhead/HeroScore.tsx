@@ -76,30 +76,29 @@ export function HeroScore({ branch, overview, score, trend, onOpenAttention }: H
   const yesterday = vsYesterday(overview);
   const n = overview.attention.length;
   return (
-    <div className="kit-card grid gap-4 p-4 lg:grid-cols-[minmax(0,auto)_minmax(0,1fr)]">
-      <div className="flex min-w-0 flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+    <div className="kit-card grid gap-4 p-4 lg:grid-cols-[minmax(220px,auto)_minmax(0,1fr)]">
+      {/* Left column: centred stack (name and status, ring with band, trend, attention, date, vs yesterday). */}
+      <div className="bh-hero-left flex min-w-0 flex-col items-center justify-center gap-2 text-center">
+        <div className="flex flex-wrap items-center justify-center gap-2">
           <h2 className="min-w-0 text-[16px] font-bold text-slate-900">{branch.branchName}</h2>
           <StatusChip status={overview.status} />
         </div>
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-slate-700">
-          <span>{overview.date}</span>
-          {yesterday ? <span>{yesterday}</span> : null}
-          {n > 0 ? (
-            <button type="button" onClick={onOpenAttention}
-              className="inline-flex min-h-[44px] items-center font-semibold text-blue-800 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-              {n} {n === 1 ? "needs" : "need"} attention
-            </button>
-          ) : null}
-        </p>
         {score ? (
-          <div className="flex flex-wrap items-center gap-4">
-            <ScoreRing value={score.score} label="Health score" band={scoreBand(score.score).label} size={112} />
+          <>
+            <ScoreRing value={score.score} label="Health score" band={scoreBand(score.score).label} size={172} />
             {trend ? <Sparkline points={trend} label="Health score trend" width={120} height={32} /> : null}
-          </div>
+          </>
         ) : (
           <div className="text-[13px] text-slate-700"><span className="text-[28px] font-extrabold text-slate-900">—</span> Score unavailable</div>
         )}
+        {n > 0 ? (
+          <button type="button" onClick={onOpenAttention}
+            className="inline-flex min-h-[44px] items-center text-[13px] font-semibold text-blue-800 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+            {n} {n === 1 ? "needs" : "need"} attention
+          </button>
+        ) : null}
+        <p className="text-[12px] text-slate-700">{overview.date}</p>
+        {yesterday ? <p className="text-[12px] text-slate-700">{yesterday}</p> : null}
       </div>
       {score && (score.pillars.length > 0 || score.excluded.length > 0) ? <PillarBars score={score} /> : null}
     </div>

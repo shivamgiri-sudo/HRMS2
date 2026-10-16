@@ -3,11 +3,16 @@ import { Panel } from "../../../kit";
 import type { BranchHeadHealthPayload } from "../../../../../../backend/src/modules/branch-head-health/types";
 import { BarList, ChartFrame, barListTable, type BarListProps } from "../viz";
 import { formatCount } from "../format";
+import { isStillCalculating } from "../pending";
+import { SectionCalculating } from "../SectionPanels";
 
 const SUBTITLE = "Across the selected branches";
 
 /** Data-quality counts across the selected branches as chips; cost centres over mandate as bars + table. */
 export function DataHealthChips({ section }: { section: BranchHeadHealthPayload["dataHealth"] }) {
+  if (section?.status === "error" && isStillCalculating(section.message)) {
+    return <Panel title="Data health" subtitle={SUBTITLE}><SectionCalculating name="Data health" /></Panel>;
+  }
   if (!section || section.status === "error") {
     return <Panel title="Data health" subtitle={SUBTITLE}><p className="text-[13px] text-slate-700">Data health could not be loaded.</p></Panel>;
   }
