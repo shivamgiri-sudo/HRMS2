@@ -1,0 +1,178 @@
+/* Branch Head Health chart tokens and chrome. Scoped to .bh-viz so nothing leaks globally.
+   Values are the dataviz reference palette (validated; see the task-1 report). Light by default,
+   dark under the repo's class strategy (.dark on an ancestor). */
+.bh-viz {
+  color-scheme: light;
+  --bh-surface: #fcfcfb;
+  --bh-plane: #f9f9f7;
+  --bh-ink-1: #0b0b0b;
+  --bh-ink-2: #52514e;
+  --bh-ink-3: #52514e; /* axis/label text: secondary ink, 7.7:1 (palette muted #898781 is 3.5:1, too low for 11px text) */
+  --bh-grid: #e1e0d9;
+  --bh-axis: #c3c2b7;
+  --bh-border: rgba(11, 11, 11, 0.1);
+  /* categorical slots 1-4 */
+  --bh-s1: #2a78d6;
+  --bh-s2: #eb6834;
+  --bh-s3: #1baf7a;
+  --bh-s4: #eda100;
+  --bh-other: #898781;
+  /* status (fixed, never themed) */
+  --bh-good: #0ca30c;
+  --bh-warning: #fab219;
+  --bh-serious: #ec835a;
+  --bh-critical: #d03b3b;
+  --bh-neutral: #898781;
+  /* diverging poles + text deltas */
+  --bh-pos: #2a78d6;
+  --bh-neg: #e34948;
+  --bh-text-good: #006300;
+  --bh-text-bad: #d03b3b; /* status critical, 4.68:1 on the light surface */
+  /* ordinal blue ramp, steps 650 550 450 350 250 (light end >= 2:1) */
+  --bh-ord-1: #104281;
+  --bh-ord-2: #1c5cab;
+  --bh-ord-3: #2a78d6;
+  --bh-ord-4: #5598e7;
+  --bh-ord-5: #86b6ef;
+  --bh-track: #cde2fb;
+  color: var(--bh-ink-1);
+}
+.dark .bh-viz {
+  color-scheme: dark;
+  --bh-surface: #1a1a19;
+  --bh-plane: #0d0d0d;
+  --bh-ink-1: #f0efec;
+  --bh-ink-2: #c3c2b7;
+  --bh-ink-3: #c3c2b7;
+  --bh-grid: #2c2c2a;
+  --bh-axis: #383835;
+  --bh-border: rgba(255, 255, 255, 0.1);
+  --bh-s1: #3987e5;
+  --bh-s2: #d95926;
+  --bh-s3: #199e70;
+  --bh-s4: #c98500;
+  --bh-pos: #3987e5;
+  --bh-neg: #e66767;
+  --bh-text-good: #0ca30c;
+  --bh-text-bad: #e66767;
+  /* dark ordinal: 200 300 400 500 600 (dark end >= 2:1) */
+  --bh-ord-1: #9ec5f4;
+  --bh-ord-2: #6da7ec;
+  --bh-ord-3: #3987e5;
+  --bh-ord-4: #256abf;
+  --bh-ord-5: #184f95;
+  --bh-track: #104281;
+}
+
+/* role-dashboard-reference.css forces headings dark with !important; keep chart titles on tokens. */
+.role-dashboard-reference .bh-viz h2,
+.role-dashboard-reference .bh-viz h3 { color: var(--bh-ink-1) !important; }
+
+.bh-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.bh-num { font-variant-numeric: tabular-nums; }
+.bh-muted { color: var(--bh-ink-2); }
+.bh-axis-text { fill: var(--bh-ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.bh-label-text { fill: var(--bh-ink-2); font-size: 11px; }
+
+/* Frame */
+.bh-frame { background: var(--bh-surface); border: 1px solid var(--bh-border); border-radius: 14px; padding: 14px 16px; min-width: 0; }
+.bh-frame-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.bh-frame-title { font-size: 14px; font-weight: 600; line-height: 1.3; margin: 0; color: var(--bh-ink-1); }
+.bh-frame-sub { font-size: 12px; color: var(--bh-ink-2); margin: 2px 0 0; }
+.bh-frame-actions { display: flex; align-items: center; gap: 6px; }
+.bh-btn { min-height: 32px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--bh-border); background: transparent; color: var(--bh-ink-2); font-size: 12px; font-weight: 500; cursor: pointer; }
+.bh-btn[aria-pressed="true"] { background: var(--bh-plane); color: var(--bh-ink-1); }
+.bh-btn:focus-visible, .bh-focus:focus-visible, .bh-row-btn:focus-visible, .bh-tile:focus-visible { outline: 2px solid var(--bh-s1); outline-offset: 2px; }
+.bh-frame-body { position: relative; min-width: 0; }
+.bh-table-wrap { overflow-x: auto; max-width: 100%; }
+.bh-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.bh-table caption { text-align: left; font-size: 12px; color: var(--bh-ink-2); padding-bottom: 6px; }
+.bh-table th, .bh-table td { padding: 6px 8px; border-bottom: 1px solid var(--bh-grid); text-align: left; }
+.bh-table th { font-weight: 600; color: var(--bh-ink-2); }
+.bh-table td { font-variant-numeric: tabular-nums; }
+
+/* Shared chart chrome */
+.bh-chart { position: relative; width: 100%; }
+.bh-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.bh-empty { display: flex; align-items: center; justify-content: center; color: var(--bh-ink-3); font-size: 12px; border: 1px dashed var(--bh-grid); border-radius: 10px; }
+.bh-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--bh-ink-2); }
+.bh-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.bh-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.bh-linekey { display: inline-block; width: 14px; height: 0; border-top: 2px solid; flex: none; }
+.bh-linekey-dashed { border-top-style: dashed; }
+.bh-tip { position: absolute; z-index: 5; pointer-events: none; transform: translate(-50%, calc(-100% - 8px)); background: var(--bh-ink-1); color: var(--bh-surface); border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.35; white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); }
+.bh-tip strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.bh-tip-row { display: flex; align-items: center; gap: 6px; }
+.bh-tip-sub { opacity: 0.78; }
+.bh-mark { transition: opacity 0.15s ease; }
+.bh-dim .bh-mark { opacity: 0.55; }
+.bh-dim .bh-mark.bh-on { opacity: 1; }
+
+/* Row-based charts (BarList, StackedBar, DivergingBars, Funnel) */
+.bh-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.bh-row, .bh-row-btn { display: grid; grid-template-columns: minmax(84px, 32%) 1fr; align-items: center; gap: 4px 10px; width: 100%; min-height: 32px; padding: 4px 6px; border-radius: 8px; text-align: left; background: transparent; border: 0; color: inherit; font: inherit; }
+.bh-row-btn { min-height: 44px; cursor: pointer; }
+.bh-row-btn:hover { background: var(--bh-plane); }
+.bh-row-label { font-size: 12px; color: var(--bh-ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.bh-row-value { font-size: 12px; font-weight: 600; color: var(--bh-ink-1); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bh-row-note { grid-column: 2; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--bh-ink-2); }
+.bh-bar-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bh-track { position: relative; flex: 1; height: 12px; min-width: 0; }
+.bh-bar { position: absolute; top: 0; height: 12px; border-radius: 0 4px 4px 0; }
+.bh-bar-neg { border-radius: 4px 0 0 4px; }
+.bh-zero { position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--bh-axis); }
+.bh-marker { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--bh-ink-1); border-radius: 1px; }
+.bh-stack { display: flex; height: 12px; min-width: 0; }
+.bh-stack > span { display: block; height: 100%; min-width: 2px; }
+.bh-stack > span:last-child { border-radius: 0 4px 4px 0; }
+.bh-funnel-bar { height: 22px; border-radius: 4px; margin: 0 auto; min-width: 2px; }
+
+/* Figures */
+.bh-tile { position: relative; display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; background: var(--bh-surface); border: 1px solid var(--bh-border); border-radius: 12px; padding: 10px 12px; color: var(--bh-ink-1); font: inherit; }
+button.bh-tile { cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+button.bh-tile:hover { border-color: var(--bh-axis); box-shadow: 0 6px 18px -12px rgba(0, 0, 0, 0.35); }
+.bh-tile-accent { position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; }
+.bh-tile-label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--bh-ink-2); }
+.bh-tile-value { font-size: 22px; font-weight: 600; line-height: 1.15; }
+.bh-tile-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+.bh-tile-hint { font-size: 11px; color: var(--bh-ink-3); }
+.bh-delta { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 500; }
+.bh-delta-good { color: var(--bh-text-good); }
+.bh-delta-bad { color: var(--bh-text-bad); }
+.bh-delta-neutral { color: var(--bh-ink-2); }
+.bh-ring { display: inline-flex; align-items: center; gap: 12px; }
+.bh-ring-band { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: var(--bh-ink-1); }
+.bh-meter { display: grid; gap: 6px; }
+.bh-meter-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; font-size: 12px; color: var(--bh-ink-2); }
+.bh-meter-track { position: relative; height: 10px; border-radius: 5px; overflow: hidden; }
+.bh-meter-track > span { position: absolute; inset: 0; }
+.bh-meter-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; }
+.bh-over { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--bh-text-bad); }
+
+/* Drill drawer: bottom sheet below 768px, right-side sheet from 768px. */
+.bh-drawer-overlay { position: fixed; inset: 0; z-index: 130; background: rgba(13, 13, 13, 0.55); }
+.bh-drawer { position: fixed; z-index: 131; left: 0; right: 0; bottom: 0; max-height: 88vh; display: flex; flex-direction: column; background: var(--bh-surface); color: var(--bh-ink-1); border-radius: 16px 16px 0 0; box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.25); outline: none; }
+.bh-drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 16px 12px; border-bottom: 1px solid var(--bh-grid); }
+.bh-drawer-title { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.3; }
+.bh-drawer-sub { margin: 2px 0 0; font-size: 12px; color: var(--bh-ink-2); }
+.bh-drawer-close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin: -10px -10px 0 0; border: 0; border-radius: 10px; background: transparent; color: var(--bh-ink-2); cursor: pointer; }
+.bh-drawer-close:hover { background: var(--bh-plane); color: var(--bh-ink-1); }
+.bh-drawer-close:focus-visible { outline: 2px solid var(--bh-s1); outline-offset: -2px; }
+.bh-drawer-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px 24px; }
+@media (min-width: 768px) {
+  .bh-drawer { left: auto; top: 0; bottom: 0; right: 0; width: min(560px, 92vw); max-height: none; border-radius: 16px 0 0 16px; box-shadow: -12px 0 40px rgba(0, 0, 0, 0.25); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bh-drawer[data-state="open"] { animation: bh-sheet-up 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
+  .bh-drawer-overlay[data-state="open"] { animation: bh-fade 0.2s ease; }
+  @media (min-width: 768px) { .bh-drawer[data-state="open"] { animation-name: bh-sheet-left; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bh-mark, button.bh-tile { transition: none; }
+}
+@keyframes bh-sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes bh-sheet-left { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes bh-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (forced-colors: active) {
+  .bh-bar, .bh-stack > span, .bh-funnel-bar, .bh-meter-fill { forced-color-adjust: none; border: 1px solid CanvasText; }
+}
