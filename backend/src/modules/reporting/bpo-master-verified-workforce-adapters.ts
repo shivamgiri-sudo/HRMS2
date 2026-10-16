@@ -602,7 +602,8 @@ async function hrLifecycle(code:string,filters:VerifiedAdapterFilters,scope:Bran
     joins.push(`LEFT JOIN ${probationSql} prob ON prob.${quote("employee_id")}=e.${quote("id")}`);
     addField(fields,"PROBATION_STATUS",directField("prob","employee_probation",probationColumns,["status"]));
     const end=first(probationColumns,["extended_end_date","actual_end_date","probation_end_date"]); if(end)addField(fields,"PROBATION_END_DATE",derivedField("mas_hrms","employee_probation",end,fmtDate(`prob.${quote(end)}`),"EFFECTIVE PROBATION END"));
-    if(end)addField(fields,"CONFIRMATION_DUE_DATE",derivedField("mas_hrms","employee_probation",end,fmtDate(`prob.${quote(end)}`),"PROBATION END AS CONFIRMATION DUE"));
+    if(end){addField(fields,"CONFIRMATION_DUE_DATE",derivedField("mas_hrms","employee_probation",end,fmtDate(`prob.${quote(end)}`),"PROBATION END AS CONFIRMATION DUE"));
+    addField(fields,"CONFIRMATION_DATE",derivedField("mas_hrms","employee_probation",end,fmtDate(`prob.${quote(end)}`),"CONFIRMATION DATE = PROBATION END DATE"));}
     addField(fields,"CONFIRMATION_STATUS",has(probationColumns,"status")?derivedField("mas_hrms","employee_probation","status","CASE WHEN prob.status='confirmed' THEN 'CONFIRMED' WHEN prob.status='extended' THEN 'EXTENDED' ELSE 'PENDING' END","PROBATION STATUS TO CONFIRMATION STATUS"):null);
   }
   const contractSql=await sourceTableSql("employee_contract"); const contractColumns=await sourceColumns("employee_contract");
@@ -617,6 +618,7 @@ async function hrLifecycle(code:string,filters:VerifiedAdapterFilters,scope:Bran
     addField(fields,"LIFECYCLE_EVENT_COUNT",derivedField("mas_hrms","employee_lifecycle_event","id","life.event_count","COUNT LIFECYCLE EVENTS"));
     addField(fields,"LAST_PROMOTION_DATE",derivedField("mas_hrms","employee_lifecycle_event","effective_date",fmtDate("life.promotion_date"),"LATEST PROMOTION"));
     addField(fields,"LAST_INCREMENT_DATE",derivedField("mas_hrms","employee_lifecycle_event","effective_date",fmtDate("life.increment_date"),"LATEST INCREMENT"));
+    addField(fields,"LAST_SALARY_REVISION_DATE",derivedField("mas_hrms","employee_lifecycle_event","effective_date",fmtDate("life.increment_date"),"LATEST SALARY INCREMENT DATE"));
     addField(fields,"LAST_TRANSFER_DATE",derivedField("mas_hrms","employee_lifecycle_event","effective_date",fmtDate("life.transfer_date"),"LATEST TRANSFER/MOVEMENT"));
   }
   const docsSql=await sourceTableSql("employee_documents"); const docsColumns=await sourceColumns("employee_documents");
@@ -653,7 +655,9 @@ async function hrLifecycle(code:string,filters:VerifiedAdapterFilters,scope:Bran
   if(exitSql&&has(exitColumns,"employee_id")&&has(exitColumns,"created_at")){
     joins.push(`LEFT JOIN (SELECT er.* FROM ${exitSql} er JOIN (SELECT ${quote("employee_id")} employee_id,MAX(${quote("created_at")}) max_created FROM ${exitSql} GROUP BY ${quote("employee_id")}) x ON x.employee_id=er.${quote("employee_id")} AND x.max_created=er.${quote("created_at")}) ex ON ex.${quote("employee_id")}=e.${quote("id")}`);
     const res=first(exitColumns,["submitted_at","created_at"]);const lwd=first(exitColumns,["last_working_day_confirmed","last_working_day_proposed"]);if(res)addField(fields,"RESIGNATION_DATE",derivedField("mas_hrms","exit_request",res,fmtDate(`ex.${quote(res)}`),"EXIT REQUEST SUBMISSION"));if(lwd)addField(fields,"LAST_WORKING_DATE",derivedField("mas_hrms","exit_request",lwd,fmtDate(`ex.${quote(lwd)}`),"CONFIRMED/PROPOSED LWD"));
-    addField(fields,"EXIT_REASON",directField("ex","exit_request",exitColumns,["resignation_reason","exit_reason_category"]));addField(fields,"ATTRITION_TYPE",directField("ex","exit_request",exitColumns,["exit_type","exit_sub_type"]));
+    addField(fields,"EXIT_REASON",directField("ex","exit_request",exitColumns,["resignation_reason","exit_reason_category"]));
+    addField(fields,"ATTRITION_TYPE",directField("ex","exit_request",exitColumns,["exit_type","exit_sub_type"]));
+    addField(fields,"EXIT_TYPE",directField("ex","exit_request",exitColumns,["exit_type","exit_sub_type"]));
   }
   // 2026-08-19: was exit_clearance_checklist (0 live rows) — exit_clearance_task is what the
   // exit module writes (24 live rows). Only needs exit_request_id + status, both present on
@@ -661,6 +665,8 @@ async function hrLifecycle(code:string,filters:VerifiedAdapterFilters,scope:Bran
   const clearanceSql=await sourceTableSql("exit_clearance_task");const clearanceColumns=await sourceColumns("exit_clearance_task");
   if(clearanceSql&&exitSql&&has(clearanceColumns,"exit_request_id")&&has(clearanceColumns,"status")){joins.push(`LEFT JOIN (SELECT ${quote("exit_request_id")} exit_request_id,COUNT(*) items,SUM(${quote("status")} IN ('cleared','waived')) cleared_items FROM ${clearanceSql} GROUP BY ${quote("exit_request_id")}) clr ON clr.exit_request_id=ex.${quote("id")}`);addField(fields,"CLEARANCE_STATUS",derivedField("mas_hrms","exit_clearance_task","status","CASE WHEN clr.items IS NULL THEN 'NOT STARTED' WHEN clr.items=clr.cleared_items THEN 'CLEARED' ELSE 'PENDING' END","ALL TASKS CLEARED/WAIVED"));}
   addField(fields,"EARLY_ATTRITION_FLAG",has(employee.columns,"date_of_joining")&&first(employee.columns,["date_of_exit","date_of_leaving"])?derivedField("mas_hrms","employees","joining/exit",`CASE WHEN DATEDIFF(e.${quote(first(employee.columns,["date_of_exit","date_of_leaving"])!)},e.${quote("date_of_joining")})<=90 THEN 'YES' ELSE 'NO' END`,`EXIT WITHIN 90 DAYS`):null);
+  addField(fields,"REHIRE_ELIGIBILITY",has(employee.columns,"rehire_eligible")?derivedField("mas_hrms","employees","rehire_eligible","CASE WHEN e.rehire_eligible=1 THEN 'ELIGIBLE' WHEN e.rehire_eligible=0 THEN 'NOT ELIGIBLE' ELSE 'NOT ASSESSED' END","FROM employees.rehire_eligible"):null);
+  addField(fields,"ATTRITION_FLAG",has(employee.columns,"attrition_date")?derivedField("mas_hrms","employees","attrition_date","CASE WHEN e.attrition_date IS NOT NULL THEN 'YES' ELSE 'NO' END","YES if attrition_date is set"):null);
   addField(fields,"HR_DATA_COMPLETENESS_PERCENTAGE",constantField("ROUND((CASE WHEN e.employee_code IS NOT NULL THEN 1 ELSE 0 END+CASE WHEN e.branch_id IS NOT NULL THEN 1 ELSE 0 END+CASE WHEN e.department_id IS NOT NULL THEN 1 ELSE 0 END+CASE WHEN e.designation_id IS NOT NULL THEN 1 ELSE 0 END+CASE WHEN e.process_id IS NOT NULL THEN 1 ELSE 0 END)/5*100,2)","CORE HR DIMENSIONS"));
   addField(fields,"DATA_SOURCE",constantField("'EMPLOYEE+ADDRESS+PROBATION+CONTRACT+LIFECYCLE+DOCUMENTS+BGV+STATUTORY+ASSET+EXIT'","EXPLICIT GOVERNED SOURCE SET"));
   const scoped=branchScopeWhere(scope,filters,{branch:employee.branchExpression,process:employee.processExpression,employeeCode:employee.employeeCodeExpression});
