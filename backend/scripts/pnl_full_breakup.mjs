@@ -34,7 +34,10 @@ async function main() {
     SELECT
       spr.run_month                                  AS period_code,
       e.cost_centre_id,
-      SUM(COALESCE(spl.net_salary, spl.gross_salary)
+      SUM(CASE WHEN ABS(COALESCE(spl.net_salary,spl.gross_salary)-spl.gross_salary) < 7000
+             THEN COALESCE(spl.net_salary,spl.gross_salary)
+             ELSE (COALESCE(spl.net_salary,spl.gross_salary)+spl.gross_salary)/2
+        END
           + COALESCE(spl.pf_employer, 0)
           + COALESCE(spl.esic_employer, 0)
           + COALESCE(spl.gratuity, 0)

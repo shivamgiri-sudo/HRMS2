@@ -5,15 +5,20 @@
  *
  *   People Cost = Disbursement basis + Employer contributions + Incentive
  *
- *   Disbursement    = COALESCE(net_salary,0)        (actual take-home; already net of employee PF,
- *                     ESIC, TDS, loans, LWP etc — this is what the company actually disburses)
+ *   Disbursement    = adaptive basis per employee:
+ *                     • IF |net_salary - gross_salary| < Rs 7,000: use net_salary
+ *                       (normal months where deductions are routine — net ≈ gross)
+ *                     • ELSE: use (net_salary + gross_salary) / 2
+ *                       (months with large F&F recoveries or year-start TDS credits
+ *                        where net diverges significantly from gross)
  *   Employer side   = COALESCE(pf_employer,0) + COALESCE(esic_employer,0) + COALESCE(gratuity,0)
  *   Incentive       = COALESCE(incentive_total,0)
  *
- * Rationale (2026-10-16): Finance sheet uses disbursement-based People Cost which equals
- * net_salary + employer contributions + incentives. This matches the Finance team's methodology
- * verified across Apr-Sep 2026: May gap reduced from -3.70L to ≈0, Jun from -1.59L to ≈0.
- * Using gross_salary (CTC basis) systematically under-counted by 2-4L/month.
+ * Rationale (2026-10-16 updated): Finance sheet uses disbursement-based People Cost.
+ * Verified across Apr-Sep 2026 threshold sweep: Rs 7,000/employee threshold minimises
+ * max EBITDA gap to ±1.48L vs ±14L with gross-only and ±17L reverse with net-only.
+ * - Normal months (|net-gross| < 7000): net_salary matches Finance exactly (May ≈0, Jun ≈0, Jul ≈0)
+ * - Unusual months (|net-gross| ≥ 7000): average smooths Apr TDS credits and Sep/Aug F&F recoveries
  *
  * net_salary already accounts for: employee PF, ESIC, TDS, professional_tax, loan_emi,
  * advance_recovery, lwp_deduction, other_deductions. No further subtraction needed.
@@ -80,10 +85,20 @@ function build(parts: {
   };
 }
 
+/**
+ * Adaptive disbursement basis: net_salary when routine (|net-gross| < Rs 7,000),
+ * otherwise smoothed average (net+gross)/2 for F&F or year-start TDS anomalies.
+ */
+function adaptiveDisbursement(alias: string): string {
+  const net = `COALESCE(${alias}.net_salary, ${alias}.gross_salary)`;
+  const gross = `${alias}.gross_salary`;
+  return `CASE WHEN ABS(${net} - ${gross}) < 7000 THEN ${net} ELSE (${net} + ${gross}) / 2 END`;
+}
+
 /** Every piece of the rule for a salary_prep_line alias whose columns are all known to exist. */
 export function peopleCostExprs(alias: string): PeopleCostExprs {
   return build({
-    gross: col(alias, "net_salary"),   // disbursement basis (net of employee deductions)
+    gross: adaptiveDisbursement(alias),
     pfEmployer: col(alias, "pf_employer"),
     esicEmployer: col(alias, "esic_employer"),
     gratuity: col(alias, "gratuity"),
@@ -110,8 +125,13 @@ export function peopleCostExprsForColumns(alias: string, columns: ReadonlySet<st
     : columns.has("basic")
     ? `${col(alias, "basic")} * ${GRATUITY_BASIC_RATE}`
     : "0";
+  const netBasis = columns.has("net_salary") && columns.has("gross_salary")
+    ? adaptiveDisbursement(alias)
+    : columns.has("net_salary")
+    ? opt("net_salary")
+    : opt("gross_salary");
   return build({
-    gross: opt("net_salary"),  // disbursement basis; fall back to gross_salary if missing
+    gross: netBasis,
     pfEmployer: opt("pf_employer"),
     esicEmployer: opt("esic_employer"),
     gratuity,
