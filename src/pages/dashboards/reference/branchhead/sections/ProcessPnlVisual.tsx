@@ -1,19 +1,23 @@
 import { AlertOctagon, AlertTriangle, CheckCircle2 } from "lucide-react";
 import type { BranchProcess } from "../../../../../../backend/src/modules/branch-head-health/processes";
 import type { ProcessPnlData, ProcessPnlRow } from "../../../../../../backend/src/modules/branch-head-health/types";
-import { ChartFrame, DivergingBars, StatTile, divergingBarsTable, type DivergingBarsProps, type TableSpec } from "../viz";
+import { ChartFrame, DivergingBars, StatTile, divergingBarsTable, divergingDomain, type DivergingBarsProps, type TableSpec } from "../viz";
 import { processTarget, type DrillTarget } from "../drill";
 import { formatInr, formatPct } from "../format";
 import { SectionShell } from "../ui";
-import { extendTable, Fold, Foot, TileItem, Tiles, type VisualProps } from "./shared";
+import { branchProcesses, extendTable, Fold, Foot, TileItem, Tiles, type VisualProps } from "./shared";
 
 const VISIBLE = 8;
 const STATUS_WORD: Record<ProcessPnlRow["status"], string> = { "loss-making": "Loss-making", "at-risk": "At risk", profitable: "Profitable" };
 const EXTRA_COLS = ["Client", "Status", "Revenue", "People cost", "Other cost", "OP %", "Seat fill", "Receivable"];
 
-/** Bar click: the process drawer when the name joins to a known process, else the P&L metric drawer. */
-export function pnlSelect(name: string, rows: readonly BranchProcess[], onSelect: (t: DrillTarget) => void) {
-  onSelect(processTarget(name, rows, "pnl"));
+/**
+ * Bar click: the row's own processId when this branch knows it, else a name join within the branch,
+ * else the P&L metric drawer. `rows` must already be limited to the overview's branch.
+ */
+export function pnlSelect(row: Pick<ProcessPnlRow, "processId" | "processName">, rows: readonly BranchProcess[], onSelect: (t: DrillTarget) => void) {
+  const own = rows.find((r) => r.processId === row.processId);
+  onSelect(own ? { kind: "process", id: own.processId, name: own.processName } : processTarget(row.processName, rows, "pnl"));
 }
 
 const idle = (r: ProcessPnlRow) => r.revenue === 0 && r.peopleCost === 0 && r.otherCost === 0;
@@ -46,7 +50,8 @@ export function buildPnl(d: ProcessPnlData) {
     rows: [...base.rows, [`Total (${active.length} processes)`, formatInr(totals.operatingProfit), null, null, null,
       formatInr(totals.revenue), formatInr(totals.people), formatInr(totals.other), formatPct(totals.opPct), null, formatInr(t.outstandingReceivable)]],
   };
-  return { active, idleRows, bars, table, totals };
+  // One scale for the drawn rows and the folded overflow, so bar lengths and zero match.
+  return { active, idleRows, bars, table, totals, domain: divergingDomain(bars.items) };
 }
 
 function Chips({ t }: { t: ProcessPnlData["totals"] }) {
@@ -60,6 +65,7 @@ function Chips({ t }: { t: ProcessPnlData["totals"] }) {
 }
 
 export function ProcessPnlVisual({ overview, payload, onSelect }: VisualProps) {
+  const scoped = branchProcesses(payload, overview.branch.branchId);
   const section = overview.processPnl;
   const period = section?.status === "ok" && section.data ? section.data.period : "";
   return (
@@ -67,10 +73,13 @@ export function ProcessPnlVisual({ overview, payload, onSelect }: VisualProps) {
       emptyText="No process P&L for this branch" errorName="Process P&L">
       {(d) => {
         const b = buildPnl(d);
-        const nameOf = new Map(b.active.map((r) => [r.processId, r.processName]));
-        const select = (id: string) => pnlSelect(nameOf.get(id) ?? "", payload.processes?.active ?? [], onSelect);
-        const first = { ...b.bars, items: b.bars.items.slice(0, VISIBLE) };
-        const rest = { ...b.bars, items: b.bars.items.slice(VISIBLE), label: "Remaining processes, continuing the order above" };
+        const select = (id: string) => {
+          const row = b.active.find((r) => r.processId === id);
+          if (row) pnlSelect(row, scoped, onSelect);
+          else onSelect({ kind: "metric", id: "pnl" });
+        };
+        const first = { ...b.bars, domain: b.domain, items: b.bars.items.slice(0, VISIBLE) };
+        const rest = { ...b.bars, domain: b.domain, items: b.bars.items.slice(VISIBLE), label: "Remaining processes, continuing the order above" };
         return (
           <div className="space-y-3">
             <Chips t={d.totals} />

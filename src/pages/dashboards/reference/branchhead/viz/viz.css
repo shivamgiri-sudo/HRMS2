@@ -36,6 +36,11 @@
   --bh-ord-4: #5598e7;
   --bh-ord-5: #86b6ef;
   --bh-track: #cde2fb;
+  /* attrition risk: ordinal single-hue warm ramp, low -> critical (validated --ordinal) */
+  --bh-risk-1: #eb9572;
+  --bh-risk-2: #d2603d;
+  --bh-risk-3: #b03a2c;
+  --bh-risk-4: #7a1d18;
   color: var(--bh-ink-1);
 }
 .dark .bh-viz {
@@ -64,6 +69,10 @@
   --bh-ord-4: #256abf;
   --bh-ord-5: #184f95;
   --bh-track: #104281;
+  --bh-risk-1: #a33a2c;
+  --bh-risk-2: #c9563c;
+  --bh-risk-3: #e47a57;
+  --bh-risk-4: #f3a98c;
 }
 
 /* role-dashboard-reference.css forces headings dark with !important; keep chart titles on tokens. */

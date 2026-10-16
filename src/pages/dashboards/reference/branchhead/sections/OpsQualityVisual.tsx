@@ -31,17 +31,18 @@ export function qualityBars(rows: QualityRow[]): BarListProps {
     label: "Lowest QA quality processes, lowest first",
     format: formatPct,
     max: 100,
-    items: rows.map((r) => ({
-      id: r.processCode, label: r.processName, value: typeof r.QA_QUALITY_PCT === "number" ? r.QA_QUALITY_PCT : 0,
+    items: rows.map((r, i) => ({
+      // A missing score stays missing: NaN draws no bar and formats as "—" (never a fake 0).
+      id: `r${i}`, label: r.processName, value: typeof r.QA_QUALITY_PCT === "number" ? r.QA_QUALITY_PCT : Number.NaN,
       note: r.stale ? `Stale, latest ${r.latestDate ?? "—"}` : `Latest ${r.latestDate ?? "—"}`,
     })),
   };
 }
 
-export function OpsQualityVisual({ overview, payload, onSelect }: VisualProps) {
-  const { operations, quality, callmaster } = overview;
+export function OpsQualityVisual(props: VisualProps) {
+  const { operations, quality, callmaster } = props.overview;
   if (!operations && !quality && !callmaster) return <SectionShell title={TITLE} section={undefined} emptyText="">{() => null}</SectionShell>;
-  const pick = selectByName(payload, onSelect, "ops");
+  const pick = selectByName(props, "ops");
   return (
     <Panel title={TITLE} subtitle={operations?.status === "ok" ? `As of ${operations.asOf}` : undefined}>
       <div className="space-y-4">
@@ -56,7 +57,7 @@ export function OpsQualityVisual({ overview, payload, onSelect }: VisualProps) {
           {(rows) => {
             const bars = qualityBars(rows);
             return (
-              <ChartFrame title="Lowest quality processes" subtitle="QA quality %, lowest first" table={barListTable(bars)} height={96}>
+              <ChartFrame title="Lowest quality processes" subtitle={`QA quality %, lowest first${quality?.status === "ok" ? ` · As of ${quality.asOf}` : ""}`} table={barListTable(bars)} height={96}>
                 <BarList {...bars} />
               </ChartFrame>
             );
@@ -65,6 +66,7 @@ export function OpsQualityVisual({ overview, payload, onSelect }: VisualProps) {
         {callmaster ? (
           <div>
             <h3 className="text-[14px] font-bold text-slate-900">Callmaster</h3>
+            {callmaster.status === "ok" ? <p className="text-[12px] text-slate-700">As of {callmaster.asOf}</p> : null}
             <CallmasterBlock section={callmaster} />
           </div>
         ) : null}

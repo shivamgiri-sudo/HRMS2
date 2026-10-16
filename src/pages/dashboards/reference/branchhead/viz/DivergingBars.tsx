@@ -3,25 +3,33 @@ import { isNum, r1, safeFormat, summarize, type TableSpec } from "./scale";
 import { useChartTooltip } from "./useChartTooltip";
 
 export interface DivergingItem { id: string; label: string; value: number }
+/** A shared scale so several lists (e.g. a folded overflow) keep the same zero position and bar lengths. */
+export interface DivergingDomain { maxAbs: number; hasPositive: boolean; hasNegative: boolean }
 export interface DivergingBarsProps {
   items: DivergingItem[];
   format: (n: number) => string;
   onSelect?: (id: string) => void;
   positiveLabel: string;
   negativeLabel: string;
+  /** Shared scale from `divergingDomain(allItems)`; defaults to this list's own items. */
+  domain?: DivergingDomain;
   /** Names the data for assistive tech and the table caption. */
   label?: string;
+}
+
+/** Scale facts over a set of items; pass the result of the full list to every partial list. */
+export function divergingDomain(items: DivergingItem[]): DivergingDomain {
+  const vals = items.map((it) => (isNum(it.value) ? it.value : 0));
+  return { hasPositive: vals.some((v) => v > 0), hasNegative: vals.some((v) => v < 0), maxAbs: Math.max(0, ...vals.map(Math.abs)) };
 }
 
 /**
  * Bars around a zero line. Mixed signs: zero centred (50 %), each arm scaled to the largest |value|.
  * All non-negative: zero at the left edge; all non-positive: zero at the right edge (full width each).
  */
-export function divergingLayout(items: DivergingItem[]) {
+export function divergingLayout(items: DivergingItem[], domain?: DivergingDomain) {
   const vals = items.map((it) => (isNum(it.value) ? it.value : 0));
-  const hasPositive = vals.some((v) => v > 0);
-  const hasNegative = vals.some((v) => v < 0);
-  const maxAbs = Math.max(0, ...vals.map(Math.abs));
+  const { hasPositive, hasNegative, maxAbs } = domain ?? divergingDomain(items);
   const zeroPct = hasPositive && hasNegative ? 50 : hasNegative ? 100 : 0;
   const arm = hasPositive && hasNegative ? 50 : 100;
   return {
@@ -30,7 +38,7 @@ export function divergingLayout(items: DivergingItem[]) {
     hasNegative,
     rows: items.map((it, i) => {
       const v = vals[i];
-      const widthPct = maxAbs > 0 ? r1((Math.abs(v) / maxAbs) * arm) : 0;
+      const widthPct = maxAbs > 0 ? r1(Math.min(1, Math.abs(v) / maxAbs) * arm) : 0;
       const sign: "pos" | "neg" | "zero" = v > 0 ? "pos" : v < 0 ? "neg" : "zero";
       return { id: it.id, sign, widthPct, leftPct: sign === "neg" ? r1(zeroPct - widthPct) : zeroPct };
     }),
@@ -45,7 +53,7 @@ function signWordFor(p: Pick<DivergingBarsProps, "positiveLabel" | "negativeLabe
 
 /** Table twin built from the same props: value and which side of zero it falls. */
 export function divergingBarsTable(p: DivergingBarsProps, caption = p.label ?? "Values"): TableSpec {
-  const l = divergingLayout(p.items);
+  const l = divergingLayout(p.items, p.domain);
   return {
     caption,
     columns: ["Item", "Value", "Side"],
@@ -56,7 +64,7 @@ export function divergingBarsTable(p: DivergingBarsProps, caption = p.label ?? "
 /** Profit / loss style bars: diverging blue <-> red poles, sign also carried by the legend and text. */
 export function DivergingBars(p: DivergingBarsProps) {
   const { items, format, onSelect, positiveLabel, negativeLabel, label = "Values" } = p;
-  const layout = divergingLayout(items);
+  const layout = divergingLayout(items, p.domain);
   const n = items.length;
   const signWord = (s: "pos" | "neg" | "zero") => signWordFor(p, s);
   const { focusProps, markProps, surfaceProps, tooltip, active } = useChartTooltip(items.map((it, i) => ({

@@ -58,13 +58,15 @@ export function buildHiring(d: HiringData) {
   return { funnel, funnelTable: funnelTable(funnel), offers, offersTable, batches, batchesTable, ats, atsTable };
 }
 
-export function HiringVisual({ overview, payload, onSelect }: VisualProps) {
+export function HiringVisual(props: VisualProps) {
+  const { overview } = props;
   return (
     <SectionShell<HiringData> title="Hiring" section={overview.hiring} emptyText="No hiring data for this date">
       {(d) => {
         const b = buildHiring(d);
         const a = d.ats;
-        const pick = selectByName(payload, onSelect, "hiring");
+        const pick = selectByName(props, "hiring");
+        const processOf = new Map(b.batches.items.map((it, i) => [it.id, d.batches[i]?.process ?? ""]));
         return (
           <div className="space-y-3">
             <Tiles label="Hiring summary">
@@ -83,7 +85,7 @@ export function HiringVisual({ overview, payload, onSelect }: VisualProps) {
             </Grid>
             <ChartFrame title="Open batches" subtitle="Open positions per batch; marker = in pipeline" table={b.batchesTable} height={96}>
               {b.batches.items.length ? (
-                <BarList {...b.batches} onSelect={(id) => pick(d.batches[Number(id.slice(6))]?.process ?? "")} />
+                <BarList {...b.batches} onSelect={(id) => pick(processOf.get(id) ?? "")} />
               ) : <p className="text-[13px] text-slate-700">No open batches.</p>}
             </ChartFrame>
             {a ? (

@@ -56,7 +56,7 @@ export function barListTable(p: BarListProps, caption = p.label ?? "Values"): Ta
     columns: ["Item", "Value", ...(hasMarker ? [markerLabel] : []), "Note"],
     rows: p.items.map((it, i) => [
       it.label,
-      safeFormat(p.format, l.rows[i].value),
+      safeFormat(p.format, it.value),
       ...(hasMarker ? [l.rows[i].marker == null ? null : p.format(l.rows[i].marker as number)] : []),
       noteFor(it, l.rows[i].over, markerLabel) ?? (it.tone && it.tone !== "neutral" ? TONE_LABEL[it.tone] : null),
     ]),

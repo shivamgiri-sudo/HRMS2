@@ -109,9 +109,10 @@ describe("ProcessPnlVisual", () => {
   it("click joins by process name, falls back to the P&L metric", () => {
     const seen: DrillTarget[] = [];
     const rows = fx.payloadOf().processes.active;
-    pnlSelect("process 1", rows, (t) => seen.push(t));
-    pnlSelect("Unknown", rows, (t) => seen.push(t));
-    expect(seen).toEqual([{ kind: "process", id: "p1", name: "process 1" }, { kind: "metric", id: "pnl" }]);
+    pnlSelect({ processId: "zz", processName: "process 1" }, rows, (t) => seen.push(t));
+    pnlSelect({ processId: "zz", processName: "Unknown" }, rows, (t) => seen.push(t));
+    pnlSelect({ processId: "p-beta", processName: "Renamed" }, rows, (t) => seen.push(t));
+    expect(seen).toEqual([{ kind: "process", id: "p1", name: "process 1" }, { kind: "metric", id: "pnl" }, { kind: "process", id: "p-beta", name: "Beta  Chat " }]);
   });
   it("empty, error, missing and null OP %", () => {
     expect(render(ProcessPnlVisual as never, { processPnl: fx.emptySection() })).toContain("No process P&amp;L for this branch");

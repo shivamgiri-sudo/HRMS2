@@ -10,7 +10,7 @@ export { Sparkline, sparklinePath } from "./Sparkline";
 export { StatTile, type StatDelta, type StatTileProps } from "./StatTile";
 export { BarList, barListLayout, barListTable, type BarItem, type BarListProps } from "./BarList";
 export { StackedBar, stackLayout, stackedBarTable, STACK_GAP_PX, type StackRow, type StackSeries, type StackedBarProps } from "./StackedBar";
-export { DivergingBars, divergingLayout, divergingBarsTable, type DivergingItem, type DivergingBarsProps } from "./DivergingBars";
+export { DivergingBars, divergingLayout, divergingDomain, divergingBarsTable, type DivergingItem, type DivergingDomain, type DivergingBarsProps } from "./DivergingBars";
 export { LineArea, lineLayout, lineAreaTable, type LineSeries, type LineAreaProps } from "./LineArea";
 export { Funnel, funnelLayout, funnelTable, type FunnelStage, type FunnelProps } from "./Funnel";
 export { Waterfall, waterfallLayout, waterfallTable, type WaterfallStep, type WaterfallProps } from "./Waterfall";

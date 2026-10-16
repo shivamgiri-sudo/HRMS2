@@ -2,11 +2,11 @@ import type { AttritionData } from "../../../../../../backend/src/modules/branch
 import { BarList, ChartFrame, LineArea, StackedBar, StatTile, barListTable, lineAreaTable, stackedBarTable, type BarListProps, type LineAreaProps, type LineSeries, type StackedBarProps } from "../viz";
 import { formatCount, formatPct } from "../format";
 import { SectionShell } from "../ui";
-import { Foot, Grid, nn, selectByName, TileItem, Tiles, type VisualProps } from "./shared";
+import { byLabel, Foot, Grid, nn, selectByName, TileItem, Tiles, type VisualProps } from "./shared";
 
-/** Status-to-sequential tier colours: severity reads warm to cool, never red/green only. */
-export const RISK_TIER_COLORS = { critical: "#d03b3b", high: "#ec835a", medium: "#eda100", low: "#9ec5f4" } as const;
-const TIERS = [["critical", "Critical"], ["high", "High"], ["medium", "Medium"], ["low", "Low"]] as const;
+/** Ordinal warm ramp tokens (viz.css, light and dark): darker = more severe; legend and table carry the words. */
+export const RISK_TIER_COLORS = { low: "var(--bh-risk-1)", medium: "var(--bh-risk-2)", high: "var(--bh-risk-3)", critical: "var(--bh-risk-4)" } as const;
+const TIERS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["critical", "Critical"]] as const;
 
 /** Chart props and table twins; `date` (YYYY-MM-DD) places the 30-day expected exits on the current month. */
 export function buildAttrition(d: AttritionData, date: string) {
@@ -28,8 +28,8 @@ export function buildAttrition(d: AttritionData, date: string) {
   const byProcess: BarListProps = {
     label: "High attrition risk by process",
     format: formatCount,
-    items: (d.byProcess ?? []).map((p) => ({
-      id: p.process, label: p.process, value: nn(p.highRisk),
+    items: (d.byProcess ?? []).map((p, i) => ({
+      id: `r${i}`, label: p.process, value: nn(p.highRisk),
       note: `${formatCount(p.headcount)} headcount, ${formatCount(p.absentStreak)} absent streak`,
     })),
   };
@@ -41,7 +41,8 @@ export function buildAttrition(d: AttritionData, date: string) {
 }
 
 /** Counts and charts only: no person is named at branch level. */
-export function AttritionVisual({ overview, payload, onSelect }: VisualProps) {
+export function AttritionVisual(props: VisualProps) {
+  const { overview } = props;
   return (
     <SectionShell<AttritionData> title="Attrition and retention" section={overview.attrition} emptyText="Attrition analysis is not available for this branch right now">
       {(d) => {
@@ -62,7 +63,7 @@ export function AttritionVisual({ overview, payload, onSelect }: VisualProps) {
                 <LineArea {...b.exits} />
               </ChartFrame>
               <ChartFrame title="High risk by process" table={b.byProcessTable} height={96}>
-                <BarList {...b.byProcess} onSelect={selectByName(payload, onSelect, "attrition")} />
+                <BarList {...b.byProcess} onSelect={byLabel(b.byProcess.items, selectByName(props, "attrition"))} />
               </ChartFrame>
             </Grid>
             {d.calibrationNote ? <Foot>{d.calibrationNote}</Foot> : null}

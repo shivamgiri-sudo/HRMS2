@@ -11,9 +11,21 @@ export interface VisualProps {
   onSelect: (target: DrillTarget) => void;
 }
 
-/** Click handler for a chart row whose id is a process name: process drawer when it joins, else the metric. */
-export function selectByName(payload: BranchHeadHealthPayload, onSelect: VisualProps["onSelect"], fallback: MetricDrillId) {
-  return (name: string) => onSelect(processTarget(name, payload.processes?.active ?? [], fallback));
+/** Active processes reachable from this branch (a process name can repeat across branches). */
+export function branchProcesses(payload: BranchHeadHealthPayload, branchId: string) {
+  return (payload.processes?.active ?? []).filter((p) => (p.branchIds ?? []).includes(branchId));
+}
+
+/** Click handler for a process name: this branch's process drawer when it joins, else the section metric. */
+export function selectByName({ overview, payload, onSelect }: VisualProps, fallback: MetricDrillId) {
+  const rows = branchProcesses(payload, overview.branch.branchId);
+  return (name: string) => onSelect(processTarget(name, rows, fallback));
+}
+
+/** Rows keyed by index (names can repeat); maps a clicked row id back to its label for the join. */
+export function byLabel(items: ReadonlyArray<{ id: string; label: string }>, select: (name: string) => void) {
+  const names = new Map(items.map((it) => [it.id, it.label]));
+  return (id: string) => select(names.get(id) ?? "");
 }
 
 /**

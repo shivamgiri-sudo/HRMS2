@@ -2,7 +2,7 @@ import { BarList, ChartFrame, DataTable, StackedBar, StatTile, barListTable, sta
 import type { PeopleData } from "../panelTypes";
 import { formatCount } from "../format";
 import { SectionShell } from "../ui";
-import { extendTable, Fold, Grid, nn, selectByName, TileItem, Tiles, type VisualProps } from "./shared";
+import { byLabel, extendTable, Fold, Grid, nn, selectByName, TileItem, Tiles, type VisualProps } from "./shared";
 
 /** A zero or missing mandate is "No mandate", never "over". */
 export function mandateNote(active: number, seats: number | null): string {
@@ -17,8 +17,8 @@ export function buildPeople(d: PeopleData) {
     label: "Headcount versus mandate by process",
     markerLabel: "Mandate seats",
     format: formatCount,
-    items: rows.map((r) => ({
-      id: r.process,
+    items: rows.map((r, i) => ({
+      id: `r${i}`,
       label: r.process,
       value: nn(r.active),
       marker: r.mandateSeats != null && r.mandateSeats > 0 ? r.mandateSeats : null,
@@ -40,7 +40,8 @@ export function buildPeople(d: PeopleData) {
   return { bars, table, lob, lobTable: stackedBarTable(lob), lobs };
 }
 
-export function PeopleVisual({ overview, payload, onSelect }: VisualProps) {
+export function PeopleVisual(props: VisualProps) {
+  const { overview } = props;
   return (
     <SectionShell<PeopleData> title="Headcount" section={overview.people} emptyText="No headcount data for this date">
       {(d) => {
@@ -57,7 +58,7 @@ export function PeopleVisual({ overview, payload, onSelect }: VisualProps) {
             <Grid>
               <ChartFrame title="Headcount vs mandate" table={b.table} height={120}
                 subtitle={`${formatCount(d.totalActive)} active${seats != null && seats > 0 ? ` of ${formatCount(seats)} mandate seats` : ", no mandate set"}`}>
-                <BarList {...b.bars} onSelect={selectByName(payload, onSelect, "headcount")} />
+                <BarList {...b.bars} onSelect={byLabel(b.bars.items, selectByName(props, "headcount"))} />
               </ChartFrame>
               <ChartFrame title="Line of business" subtitle="Active headcount, top three and Other" table={b.lobTable} height={96}>
                 <StackedBar {...b.lob} />

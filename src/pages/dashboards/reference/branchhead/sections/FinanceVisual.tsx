@@ -12,7 +12,8 @@ export function modeLabel(m: string): string {
   return String(m ?? "").split("_").join(" ").toLowerCase();
 }
 
-const cost = (v: number) => (nn(v) ? -nn(v) : 0);
+/** A cost is subtracted whatever its sign (a reversal adds back), so the steps reconcile to the OP total. */
+const cost = (v: number) => (typeof v === "number" && Number.isFinite(v) && v !== 0 ? -v : 0);
 
 /** Top heads and over-budget heads, once each, in payload order (top first). */
 function heads(d: FinanceData): HeadRow[] {
@@ -44,7 +45,7 @@ export function buildFinance(d: FinanceData) {
     markerLabel: "Budget",
     format: formatInr,
     items: heads(d).map((h) => ({
-      id: h.head, label: h.head, value: nn(h.charged), marker: h.budget > 0 ? h.budget : null,
+      id: h.head, label: h.head, value: nn(h.charged), marker: typeof h.budget === "number" && Number.isFinite(h.budget) ? h.budget : null,
       note: h.pct > 100 ? `Over budget, ${formatPct(h.pct)} used` : `${formatPct(h.pct)} used`,
     })),
   };

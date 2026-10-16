@@ -93,12 +93,14 @@ describe("AttendanceVisual", () => {
 
 describe("AttritionVisual", () => {
   const out = render(AttritionVisual);
-  it("tiers in critical-to-low order with the agreed colours, and the names sentence", () => {
+  it("tiers low to critical on the ordinal risk tokens, and the names sentence", () => {
     const b = buildAttrition(fx.attrition, "2026-10-15");
-    expect(b.tiers.series.map((s) => s.label)).toEqual(["Critical", "High", "Medium", "Low"]);
-    expect(b.tiers.series.map((s) => s.color)).toEqual([RISK_TIER_COLORS.critical, RISK_TIER_COLORS.high, RISK_TIER_COLORS.medium, RISK_TIER_COLORS.low]);
-    expect(RISK_TIER_COLORS).toEqual({ critical: "#d03b3b", high: "#ec835a", medium: "#eda100", low: "#9ec5f4" });
-    expect(flat(b.tiersTable)).toContain("Risk tiers|2|5|9|30|46");
+    expect(b.tiers.series.map((s) => s.label)).toEqual(["Low", "Medium", "High", "Critical"]);
+    expect(b.tiers.series.map((s) => s.color)).toEqual(["var(--bh-risk-1)", "var(--bh-risk-2)", "var(--bh-risk-3)", "var(--bh-risk-4)"]);
+    expect(RISK_TIER_COLORS).toEqual({ low: "var(--bh-risk-1)", medium: "var(--bh-risk-2)", high: "var(--bh-risk-3)", critical: "var(--bh-risk-4)" });
+    expect(flat(b.tiersTable)).toContain("Risk tiers|30|9|5|2|46");
+    expect(out).toContain("background:var(--bh-risk-4)");
+    expect(out).toContain("Employees by attrition risk tier: Risk tiers 46 (Low 30, Medium 9, High 5, Critical 2)");
     for (const t of ["Attrition and retention", "Names are available in the process drill-down.", "7 people are flagged as top risk", "Model calibrated on 12 months of exits", "Expected exits (30 days)", "Absent streak", "New joiner risk", "Early exit share", "35.5%"]) expect(out).toContain(t);
   });
   it("monthly exits line with a dashed expected point at the current month", () => {
