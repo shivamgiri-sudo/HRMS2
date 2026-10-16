@@ -84,9 +84,12 @@ const scope: any = { companyId: "ops", isSuperAdmin: true, branchScope: all, pro
   console.table(excluded.map((r) => ({ process: r.process_name, branch: r.branch_name, active_emps: r.active_emps, reason: reason(r) })));
 
   // Multi-select (comma-separated ids): the result must be exactly the union of the single selections.
-  const [pa, pb] = wide.processes.slice(0, 2);
+  const dayM = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const busiest = ((await getShiftAdherence(dayM, 0, undefined, undefined)).processes as any[])
+    .filter((p) => p.processId && p.planned > 0).sort((x, y) => y.planned - x.planned).slice(0, 2)
+    .map((p) => ({ id: String(p.processId) }));
+  const [pa, pb] = busiest;
   if (pa && pb) {
-    const dayM = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     const lobNone = { kind: "none" } as const;
     const both: any = await getShiftAdherence(dayM, 0, undefined, { processId: `${pa.id},${pb.id}`, lob: lobNone as any });
     const one: any = await getShiftAdherence(dayM, 0, undefined, { processId: pa.id, lob: lobNone as any });
