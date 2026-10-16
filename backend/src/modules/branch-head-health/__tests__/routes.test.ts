@@ -255,6 +255,21 @@ describe("branch-head-health routes", () => {
     expect(r.body.data.processesError).toBe(true);
     expect(r.body.data.branches[0].overview.processPnl.status).toBe("ok");
   });
+  it("starts P&L loads before the report loads finish and still isolates a failing branch", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const order: string[] = [];
+    loadReport.mockImplementation(async (br: any) => { order.push(`report:${br.branchId}`); await gate; if (br.branchId === "b1") throw new Error("boom"); return { raw: {} }; });
+    buildProcessPnl.mockImplementation(async (br: any) => { order.push(`pnl:${br.branchId}`); release(); return section; });
+    const r = await request(app()).get("/api/branch-head-health/overview");
+    expect(r.status).toBe(200);
+    expect(order.indexOf("pnl:b1")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("pnl:b1")).toBeLessThan(order.length - 1);
+    expect(order.filter((x) => x.startsWith("pnl:")).length).toBe(2);
+    expect(r.body.data.branches[0].overview.people.status).toBe("error");
+    expect(r.body.data.branches[1].overview.people.status).toBe("ok");
+    expect(r.body.data.branches[0].overview.processPnl.status).toBe("ok");
+  });
   it("all requested branchIds out of scope gives a clear emptyReason", async () => {
     const r = await request(app()).get("/api/branch-head-health/overview?branchIds=zzz");
     expect(r.body.data.branches).toEqual([]);

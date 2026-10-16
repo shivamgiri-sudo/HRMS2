@@ -160,7 +160,7 @@ describe("buildOpsSections", () => {
       const p = buildOpsSections([proc("p1")], range);
       await vi.advanceTimersByTimeAsync(20_001);
       const r = await p;
-      expect(r.callmaster).toMatchObject({ status: "error", message: "Timed out" });
+      expect(r.callmaster).toMatchObject({ status: "error", message: "Still calculating - first load of a month can take up to a minute. Refresh shortly." });
       expect(r.operations.status).toBe("ok");
     } finally {
       vi.useRealTimers();

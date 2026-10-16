@@ -35,6 +35,11 @@ async function loadMasBranches(branchIds: string[] | null): Promise<HeadBranch[]
   }));
 }
 
+/** Every active MAS Call Net branch (used by the cache warmer; not scope-checked). */
+export function listAllMasBranches(): Promise<HeadBranch[]> {
+  return loadMasBranches(null);
+}
+
 /** Branches a Branch Head sees: MAS Call Net, active, not closed. Never identified by name. */
 export async function resolveHeadBranches(userId: string): Promise<HeadScope> {
   let scope: Awaited<ReturnType<typeof resolveDashboardScope>>;

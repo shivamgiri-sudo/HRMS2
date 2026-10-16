@@ -66,6 +66,9 @@ describe("worker registration parity", () => {
     // the MIS email scheduler, enable on ONE backend. A copy in all-workers.ts would start a
     // second ticker in hrms2-workers from the same backend/.env.
     "startAhmSnapshotScheduler",
+    // Branch Head Health cache warmer: fills the API process's in-memory report/ops/P&L caches
+    // (branch-head-health/loaders.ts); self-gated on BRANCH_HEAD_HEALTH_ENABLED.
+    "startBranchHealthWarmer",
   ];
 
   // server.ts with every `if (!WORKERS_EXTERNAL) { ... }` block cut out: what is

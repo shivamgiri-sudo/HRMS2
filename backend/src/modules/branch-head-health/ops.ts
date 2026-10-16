@@ -4,7 +4,7 @@ import { getInboundProjects } from "../call-master/inbound-projects.js";
 import { getKPIs, getQualityTrend, getCXParameters, getFatalAgentSummary } from "../call-master/call-master.service.js";
 import type { BranchProcess } from "./processes.js";
 import type { SectionResult } from "./types.js";
-import { withTimeout } from "./cache.js";
+import { withTimeout, STILL_CALCULATING } from "./cache.js";
 
 export const SECTION_TIMEOUT_MS = 20_000;
 
@@ -164,7 +164,7 @@ export async function buildOpsSections(
     return ok(rows, asOf);
   }, "ops metrics");
 
-  const timedOut = <T,>(): SectionResult<T> => ({ status: "error", data: null, asOf, message: "Timed out" });
+  const timedOut = <T,>(): SectionResult<T> => ({ status: "error", data: null, asOf, message: STILL_CALCULATING });
   const callmasterP = withTimeout(safe(asOf, () => buildCallmaster(ids, range), "callmaster"), SECTION_TIMEOUT_MS, () => timedOut<unknown>());
   const metrics = await withTimeout(metricsP, SECTION_TIMEOUT_MS, () => timedOut<OpsProcessRow[]>());
 
