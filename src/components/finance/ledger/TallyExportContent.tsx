@@ -14,21 +14,22 @@ import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 
 type Summary = {
   month: string;
-  counts: { grn: number; payments: number; journals: number; exceptions: number };
-  totals: { grn: number; payments: number; journals: number };
+  counts: { grn: number; imprest: number; payments: number; journals: number; exceptions: number };
+  totals: { grn: number; imprest: number; payments: number; journals: number };
   masters: { ledgers: number; costCategories: number; costCentres: number; voucherTypes: number };
   exceptions: { kind: string; ref: string; reason: string }[];
 };
-type Kind = "all" | "masters" | "grn" | "payments" | "journals";
+type Kind = "all" | "masters" | "grn" | "imprest" | "payments" | "journals";
 type Format = "xml" | "xlsx";
 
 const INR = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
 const FILES: { kind: Kind; title: string; detail: (s?: Summary) => string }[] = [
-  { kind: "all", title: "Everything for the month", detail: (s) => s ? `Masters + ${s.counts.grn + s.counts.payments + s.counts.journals} vouchers, in import order` : "" },
+  { kind: "all", title: "Everything for the month", detail: (s) => s ? `Masters + ${s.counts.grn + s.counts.imprest + s.counts.payments + s.counts.journals} vouchers, in import order` : "" },
   { kind: "masters", title: "Masters", detail: (s) => s ? `${s.masters.ledgers} ledgers, ${s.masters.costCentres} cost centres, ${s.masters.voucherTypes} voucher types` : "" },
-  { kind: "grn", title: "GRN purchases (JrnlP / JRNLIMP)", detail: (s) => s ? `${s.counts.grn} vouchers, ₹${INR.format(s.totals.grn)}` : "" },
+  { kind: "grn", title: "Vendor GRN purchases (JrnlP)", detail: (s) => s ? `${s.counts.grn} vouchers, ₹${INR.format(s.totals.grn)}. Excel = legacy MASSEP sheet` : "" },
+  { kind: "imprest", title: "Imprest GRNs (JrnlImp)", detail: (s) => s ? `${s.counts.imprest} vouchers, ₹${INR.format(s.totals.imprest)}. Excel = legacy MASAUGIMP sheet` : "" },
   { kind: "payments", title: "Payments, receipts, contra", detail: (s) => s ? `${s.counts.payments} vouchers, ₹${INR.format(s.totals.payments)}` : "" },
   { kind: "journals", title: "Journal vouchers & bank adjustments", detail: (s) => s ? `${s.counts.journals} vouchers, ₹${INR.format(s.totals.journals)}` : "" },
 ];
@@ -78,7 +79,7 @@ export function TallyExportContent() {
             Import in TallyPrime with Import → Transactions → XML (masters first, or use “Everything”, which puts the masters
             first). Trial Balance, P&amp;L, Balance Sheet and party ledgers are built by Tally from these vouchers.
             Payroll (Salary Voucher page) and GST sales invoices (GST Export page) have their own Tally files.
-            GRNs raised in HRMS only: GRNs imported from the legacy billing system are not exported. Excel carries the same month,
+            Only GRNs raised in HRMS and fully approved are exported: GRNs imported from the legacy billing system, and GRNs still pending approval, are not. The vendor and imprest GRN Excel files are single-sheet files in the legacy import layouts. Excel carries the same month,
             vouchers and exceptions (Import sheet in the legacy import columns, plus Vouchers, Masters, Summary, Exceptions).
           </p>
         </div>

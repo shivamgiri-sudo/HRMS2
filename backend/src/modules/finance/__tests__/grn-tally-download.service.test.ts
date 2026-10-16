@@ -139,7 +139,7 @@ describe("imprest holder", () => {
     ];
     const data = await loadGrnTallyDownload({ ...all, grnType: "imprest" });
     expect(data.rows[0].entries.at(-1)).toEqual({ ledger: "Aman Lawaniya", side: "Cr", amount: 1000 });
-    expect(data.rows[0].voucherType).toBe("JRNLIMP");
+    expect(data.rows[0].voucherType).toBe("JrnlImp");
     expect(data.rows[1].entries.at(-1)).toEqual({ ledger: "Dharrmendra Kumar", side: "Cr", amount: 1000 });
     expect(data.rows[2].exception).toMatch(/float holder/);
     const select = h.state.calls.find((c) => /FROM grn_request g/.test(c.sql))!;
@@ -257,6 +257,27 @@ describe("file builders", () => {
     });
     expect(dr).toBe(118000);
     expect(cr).toBe(118000);
+  });
+
+  it("imprest Excel is the legacy MASAUGIMP sheet: GRN no, approval day, Amount + D/C, JrnlImp, no bill details", async () => {
+    const imp = { grn_type: "imprest", vendor_id: null, sub_head: "Tour Expenses", amount_without_tax: 1000, tax_amount: 0, amount_with_tax: 1000, amount: 1000, gst_type: "none", imprest_ledger_entry_id: "led1", invoice_number: "B-77" };
+    h.state.rows = [row("g1", "Mas/7/22/238", imp)];
+    const data = await loadGrnTallyDownload({ ...all, grnType: "imprest" });
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load((await buildGrnTallyXlsx(data)) as any);
+    expect(wb.worksheets.map((w) => w.name)).toEqual(["Import"]);
+    const ws = wb.worksheets[0];
+    expect((ws.getRow(1).values as unknown[]).slice(1).join(",")).toBe("Vch No,Date,Details,Amount,DebitCredit,Cost Category,Cost Centre,Narration for Each Entry,Narration,VchType");
+    expect(ws.rowCount).toBe(3);
+    const r2 = (ws.getRow(2).values as unknown[]).slice(1);
+    const r3 = (ws.getRow(3).values as unknown[]).slice(1);
+    expect(r2[0]).toBe("Mas/7/22/238");
+    expect(r2[1]).toBeInstanceOf(Date);
+    expect([r2[3], r2[4], r3[2], r3[3], r3[4]]).toEqual([1000, "D", "Aman Lawaniya", 1000, "C"]);
+    expect(String(r2[8])).toMatch(/ GRN NO\.: Mas\/7\/22\/238$/);
+    expect(String(r2[8])).not.toMatch(/Bill/);
+    expect(r2[9]).toBe("JrnlImp");
+    expect(ws.getRow(2).getCell(2).numFmt).toBe("d-mmm-yy");
   });
 
   it("check workbook lists every GRN with TDS basis and the reason any was left out", async () => {

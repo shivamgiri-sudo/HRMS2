@@ -31,13 +31,15 @@ const h = vi.hoisted(() => {
 vi.mock("../../../db/mysql.js", () => ({ db: { query: h.run, execute: h.run } }));
 vi.mock("../grn-tally-download.service.js", () => ({
   GRN_IMPORT_COLUMNS: ["Vch No", "Date", "Effective Date", "Details", "Debit Amount", "Credit Amount", "Cost Category", "Cost Centre", "Narration for Each Entry", "Narration", "VchType"],
+  IMPREST_IMPORT_COLUMNS: ["Vch No", "Date", "Details", "Amount", "DebitCredit", "Cost Category", "Cost Centre", "Narration for Each Entry", "Narration", "VchType"],
+  buildGrnTallyXlsx: async () => { const wb = new (await import("exceljs")).default.Workbook(); wb.addWorksheet("Import").addRow(["Vch No"]); return Buffer.from(await wb.xlsx.writeBuffer()); },
   grnImportRows: (data: any) => data.rows.flatMap((r: any) => r.exception || !r.header ? [] : r.entries.map((e: any) => [
     r.header.voucherNumber, r.header.date, r.header.effectiveDate, e.ledger, e.side === "Dr" ? e.amount : "", e.side === "Cr" ? e.amount : "",
     r.header.costCategory, r.header.costCentre, r.header.narrationEntry ?? "", r.header.narration ?? "", r.header.voucherType,
   ])),
   loadGrnTallyDownload: async () => ({
     rows: [{
-      grnNumber: "MAS/09/26/0001", grnType: "vendor", exception: null, gross: 517902,
+      grnNumber: "MAS/09/26/0001", grnType: "vendor", exception: null, gross: 517902, voucherXml: '<VOUCHER VCHTYPE="JrnlP"></VOUCHER>',
       header: { voucherNumber: "INV/MAS/09/26/0001", date: "2026-09-30", effectiveDate: "2026-09-01", costCategory: "NOIDA-2", costCentre: "NOIDA-2/2609", narrationEntry: "x", narration: "x", voucherType: "JrnlP" },
       entries: [
         { ledger: "Office Rent", side: "Dr", amount: 438900 },
@@ -180,7 +182,7 @@ describe("buildLedgerTallyXlsx", () => {
     expect(imp[0]).toEqual(["Vch No", "Date", "Effective Date", "Details", "Debit Amount", "Credit Amount", "Cost Category", "Cost Centre", "Narration for Each Entry", "Narration", "VchType"]);
     expect(imp.filter((r) => r[0] === "INV/MAS/09/26/0001")).toHaveLength(5); // one row per GRN ledger line
     const pay = imp.filter((r) => r[0] === "PV/HQ/202609/0001");
-    expect(pay.map((r) => [r[3], r[4], r[5]])).toEqual([["OESPL Private Limited", 45000, ""], ["HDFC Bank CA", "", 45000]]); // TDS booked on the GRN, vendor net
+    expect(pay.map((r) => [r[3], r[4], r[5]])).toEqual([["OESPL Private Limited", 45000, undefined], ["HDFC Bank CA", undefined, 45000]]); // TDS booked on the GRN, vendor net
     expect(imp.some((r) => r[0] === "JV/2026/0007" && r[10] === "Journal")).toBe(true);
     const vs = rowsOf(wb.getWorksheet("Vouchers")!);
     expect(vs.length - 1).toBe(summary.counts.grn + summary.counts.payments + summary.counts.journals);

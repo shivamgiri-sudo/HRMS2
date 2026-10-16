@@ -9,7 +9,7 @@ import { buildLedgerTallyExport, buildLedgerTallyXlsx, type LedgerTallyKind } fr
 export const ledgerTallyRouter = Router();
 ledgerTallyRouter.use(requireAuth);
 
-const KINDS: LedgerTallyKind[] = ["all", "masters", "grn", "payments", "journals"];
+const KINDS: LedgerTallyKind[] = ["all", "masters", "grn", "imprest", "payments", "journals"];
 
 function parse(req: AuthenticatedRequest): { month: string; kind: LedgerTallyKind; format: "xml" | "xlsx" } {
   const month = String(req.query.month ?? "");

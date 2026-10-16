@@ -74,6 +74,8 @@ const MAX_ROWS = 5000;
 export type GrnTallyDownloadRow = {
   grnId: string;
   grnNumber: string;
+  /** The Tally XML voucher for this GRN; null when it did not build. */
+  voucherXml: string | null;
   grnType: string;
   status: string;
   financeMonth: string;
@@ -193,6 +195,7 @@ export async function loadGrnTallyDownload(
     return {
       grnId: String(r.id),
       grnNumber: String(r.grn_number),
+      voucherXml: built.ok ? built.xml : null,
       grnType: String(r.grn_type ?? ""),
       status: String(r.status ?? ""),
       financeMonth: String(r.accounting_period ?? ""),
@@ -231,24 +234,41 @@ export const GRN_IMPORT_COLUMNS = [
   "Cost Category", "Cost Centre", "Narration for Each Entry", "Narration", "VchType",
 ] as const;
 
-/** One row per ledger line of every GRN that built cleanly. Dates stay YYYY-MM-DD here. */
-export function grnImportRows(data: GrnTallyDownloadData): (string | number | null)[][] {
+/** The legacy imprest import sheet's columns (MASAUGIMP.xlsx): one Amount column and a D/C flag, no Effective Date. */
+export const IMPREST_IMPORT_COLUMNS = [
+  "Vch No", "Date", "Details", "Amount", "DebitCredit",
+  "Cost Category", "Cost Centre", "Narration for Each Entry", "Narration", "VchType",
+] as const;
+
+export type GrnImportKind = "vendor" | "imprest";
+const isImprest = (r: GrnTallyDownloadRow) => r.grnType === "imprest";
+
+/**
+ * One row per ledger line of every GRN that built cleanly. Dates stay YYYY-MM-DD here.
+ * vendor  -> MASSEP.xlsx layout (Debit Amount / Credit Amount columns)
+ * imprest -> MASAUGIMP.xlsx layout (Amount + D/C)
+ * Without `kind`, vendor GRNs only (the original sheet).
+ */
+export function grnImportRows(data: GrnTallyDownloadData, kind: GrnImportKind = "vendor"): (string | number | null)[][] {
   const out: (string | number | null)[][] = [];
   for (const r of data.rows) {
-    if (r.exception || !r.header) continue;
+    if (r.exception || !r.header || isImprest(r) !== (kind === "imprest")) continue;
     const h = r.header;
     for (const e of r.entries) {
-      out.push([
-        h.voucherNumber, h.date, h.effectiveDate, e.ledger,
-        e.side === "Dr" ? e.amount : null, e.side === "Cr" ? e.amount : null,
-        h.costCategory, h.costCentre, h.narrationEntry, h.narration, h.voucherType,
-      ]);
+      out.push(kind === "imprest"
+        ? [h.voucherNumber, h.date, e.ledger, e.amount, e.side === "Dr" ? "D" : "C", h.costCategory, h.costCentre, h.narrationEntry, h.narration, h.voucherType]
+        : [
+          h.voucherNumber, h.date, h.effectiveDate, e.ledger,
+          e.side === "Dr" ? e.amount : null, e.side === "Cr" ? e.amount : null,
+          h.costCategory, h.costCentre, h.narrationEntry, h.narration, h.voucherType,
+        ]);
     }
   }
   return out;
 }
 
-const DATE_COLUMNS = new Set([1, 2]);
+/** Columns holding a date, by layout. */
+const dateColumns = (kind: GrnImportKind) => (kind === "imprest" ? new Set([1]) : new Set([1, 2]));
 
 export function buildGrnTallyXml(data: GrnTallyDownloadData): string {
   return wrapTallyEnvelope(data.vouchersXml, data.company);
@@ -264,24 +284,29 @@ function csvCell(value: unknown): string {
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export function buildGrnTallyCsv(data: GrnTallyDownloadData): string {
-  const lines = grnImportRows(data).map((row) =>
-    row.map((v, i) => csvCell(DATE_COLUMNS.has(i) ? dmy(String(v)) : v)).join(","),
+const hasKind = (data: GrnTallyDownloadData, kind: GrnImportKind) =>
+  data.rows.some((r) => !r.exception && r.header && isImprest(r) === (kind === "imprest"));
+/** One layout per file, as the legacy sheets: imprest only when there are imprest GRNs and no vendor ones. */
+const csvKind = (data: GrnTallyDownloadData): GrnImportKind =>
+  !hasKind(data, "vendor") && hasKind(data, "imprest") ? "imprest" : "vendor";
+const columnsOf = (kind: GrnImportKind) => (kind === "imprest" ? IMPREST_IMPORT_COLUMNS : GRN_IMPORT_COLUMNS);
+
+export function buildGrnTallyCsv(data: GrnTallyDownloadData, kind: GrnImportKind = csvKind(data)): string {
+  const dates = dateColumns(kind);
+  const lines = grnImportRows(data, kind).map((row) =>
+    row.map((v, i) => csvCell(dates.has(i) ? dmy(String(v)) : v)).join(","),
   );
-  return [GRN_IMPORT_COLUMNS.map(csvCell).join(","), ...lines].join("\r\n") + "\r\n";
+  return [columnsOf(kind).map(csvCell).join(","), ...lines].join("\r\n") + "\r\n";
 }
 
-/** The import sheet: one worksheet, legacy columns, real dates, numbers as numbers. */
-export async function buildGrnTallyXlsx(data: GrnTallyDownloadData): Promise<Buffer> {
-  const wb = new ExcelJS.Workbook();
-  wb.creator = "MAS PeopleOS";
-  wb.created = new Date();
-  const ws = wb.addWorksheet("Import");
-  ws.addRow([...GRN_IMPORT_COLUMNS]).font = { bold: true };
-  for (const row of grnImportRows(data)) {
+function addImportSheet(wb: ExcelJS.Workbook, data: GrnTallyDownloadData, kind: GrnImportKind, name: string) {
+  const ws = wb.addWorksheet(name);
+  const dates = dateColumns(kind);
+  ws.addRow([...columnsOf(kind)]).font = { bold: true };
+  for (const row of grnImportRows(data, kind)) {
     ws.addRow(
       row.map((v, i) => {
-        if (DATE_COLUMNS.has(i)) {
+        if (dates.has(i)) {
           const [y, m, d] = String(v).split("-").map(Number);
           return new Date(Date.UTC(y, m - 1, d));
         }
@@ -289,10 +314,24 @@ export async function buildGrnTallyXlsx(data: GrnTallyDownloadData): Promise<Buf
       }),
     );
   }
-  DATE_COLUMNS.forEach((i) => (ws.getColumn(i + 1).numFmt = "dd-mmm-yy"));
-  const widths = [34, 11, 11, 40, 14, 14, 22, 16, 40, 70, 8];
+  dates.forEach((i) => (ws.getColumn(i + 1).numFmt = "d-mmm-yy"));
+  const widths = kind === "imprest" ? [28, 11, 36, 12, 11, 26, 28, 40, 40, 10] : [34, 11, 11, 40, 14, 14, 22, 16, 40, 70, 8];
   widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
   ws.views = [{ state: "frozen", ySplit: 1 }];
+}
+
+/**
+ * The import sheet(s): legacy columns, real dates, numbers as numbers, one worksheet per layout.
+ * Vendor GRNs -> "Import" (MASSEP layout); imprest GRNs -> "Imprest Import" (MASAUGIMP layout), or "Import" when
+ * the file is imprest only, so a single-kind file is exactly the legacy file.
+ */
+export async function buildGrnTallyXlsx(data: GrnTallyDownloadData, only?: GrnImportKind): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "MAS PeopleOS";
+  wb.created = new Date();
+  const kinds: GrnImportKind[] = only ? [only] : (["vendor", "imprest"] as GrnImportKind[]).filter((k) => hasKind(data, k));
+  if (!kinds.length) kinds.push("vendor");
+  kinds.forEach((k) => addImportSheet(wb, data, k, kinds.length === 1 || k === "vendor" ? "Import" : "Imprest Import"));
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
