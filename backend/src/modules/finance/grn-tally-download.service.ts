@@ -59,6 +59,8 @@ export type GrnTallyDownloadFilters = {
   grnType?: "vendor" | "imprest" | "all";
   /** Posting month, YYYY-MM: the month the GRN was approved in. */
   month?: string;
+  /** Validation only: keep GRNs the db_bill duplicate guard would drop, to compare them with the legacy file. */
+  includeLegacyDuplicates?: boolean;
 };
 
 const APPROVED_ON = "COALESCE(g.approved_at, g.finance_head_reviewed_at)";
@@ -181,7 +183,7 @@ export async function loadGrnTallyDownload(
       context,
       config.names,
     );
-    const duplicate = input.grnType === "vendor" ? legacyDuplicate(legacyBills, r, input.gross) : null;
+    const duplicate = input.grnType === "vendor" && !filters.includeLegacyDuplicates ? legacyDuplicate(legacyBills, r, input.gross) : null;
     const voucher = buildGrnVoucher(input, config.names);
     const built = duplicate
       ? ({ ok: false, grnId: input.grnId, grnNumber: input.grnNumber, reason: duplicateReason(duplicate) } as const)
