@@ -1394,6 +1394,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2217_address_bgv_reminder_log.sql", // Registered 2026-10-15. Additive: new address_bgv_reminder_log table (one row per reminder email sent for an unused address-verification link; unique per verification and reminder number).
   "migrations/2218_client_invoice_is_duplicate.sql", // Registered 2026-10-16. Additive ALTER: adds is_duplicate TINYINT(1) DEFAULT 0 to client_invoice; used to flag billing-error duplicate invoices confirmed in db_bill (same CC/month/amount/client raised days apart) so they are excluded from P&L revenue totals. Revert: DROP COLUMN.
   "migrations/2219_grn_cost_centre_allocation.sql", // Registered 2026-10-16. Additive: new table grn_cost_centre_allocation maps each db_bill expense_entry_particular row (cost-center split of a GRN) to an HRMS cost_centre_master record; one row per (bill_source_id, cost_centre_id) pair. Filled by scripts/sync-grn-cost-centre.mjs. Revert: DROP TABLE.
+  "migrations/2220_grn_expense_master_snapshot.sql", // Registered 2026-10-16. Additive: new table grn_expense_master_snapshot holds a full sync of db_bill.expense_master rows for the five mapped branches (BranchId IN 3,9,18,19,24). Parallel research snapshot alongside grn_entry_snapshot. Filled by scripts/sync-grn-expense-master.mjs. Revert: DROP TABLE.
 ];
 
 export type MigrationHealth = {
