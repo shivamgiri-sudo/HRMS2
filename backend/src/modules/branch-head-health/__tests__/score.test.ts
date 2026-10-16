@@ -72,7 +72,8 @@ describe("computeScore", () => {
       offers: { offered: 5, conversionPct: 0 }, regularization: { over3Days: 99 }, leaveAging: { over3Days: 99 },
       ats: { slaBreaches: 20, slaTotal: 20 },
     }));
-    expect(bad.score).toBe(0);
+    expect(bad.score).toBeLessThan(1);
+    expect(bad.score).toBeGreaterThanOrEqual(0);
     const good = computeScore(report({
       shrinkage: { scheduled: 10, shrinkagePct: 0 }, lateStats: { totalLate: 0 },
       headcount: { totalActive: 10, leftMtd: 0, exitsNotClosed: 0, mandateSeatsTotal: 10 },
@@ -89,6 +90,52 @@ describe("computeScore", () => {
     expect(f(80)).toBe(100);
     expect(f(95)).toBe(60);
     expect(f(100)).toBe(40);
+  });
+});
+
+describe("calibration on the live MAS branches (2026-10-16)", () => {
+  const live = (o: { shrink: number; sched: number; late: number; active: number; left: number; notClosed: number; seats: number | null; reg: number; leave: number; grn: number }) =>
+    report({
+      shrinkage: { scheduled: o.sched, shrinkagePct: o.shrink }, lateStats: { totalLate: o.late },
+      headcount: { totalActive: o.active, leftMtd: o.left, exitsNotClosed: o.notClosed, mandateSeatsTotal: o.seats },
+      regularization: { over3Days: o.reg }, leaveAging: { over3Days: o.leave },
+      grnStats: { unbudgeted: { count: 0 }, pendingOver3Days: o.grn },
+    });
+  const noida = live({ shrink: 17, sched: 178, late: 22, active: 451, left: 6, notClosed: 42, seats: 319, reg: 0, leave: 0, grn: 25 });
+  const noida2 = live({ shrink: 23, sched: 111, late: 24, active: 395, left: 9, notClosed: 41, seats: 227, reg: 57, leave: 2, grn: 29 });
+  const ahm = live({ shrink: 34, sched: 245, late: 94, active: 290, left: 0, notClosed: 1, seats: 238, reg: 20, leave: 0, grn: 70 });
+  const ho = live({ shrink: 0, sched: 2, late: 0, active: 13, left: 0, notClosed: 0, seats: null, reg: 0, leave: 1, grn: 1 });
+  const pill = (r: ReturnType<typeof computeScore>, k: string) => r.pillars.find((p) => p.key === k)?.score as number;
+
+  it("no busy branch is flattened to 0 on attendance, people or compliance", () => {
+    for (const r of [noida, noida2, ahm].map((x) => computeScore(x))) {
+      expect(pill(r, "people")).toBeGreaterThan(0);
+      expect(pill(r, "compliance")).toBeGreaterThan(0);
+    }
+    expect(pill(computeScore(noida), "attendance")).toBeGreaterThan(0);
+    expect(pill(computeScore(noida2), "attendance")).toBeGreaterThan(0);
+  });
+
+  it("orders the branches sensibly and keeps worse attendance lower", () => {
+    expect(pill(computeScore(ho), "attendance")).toBe(100);
+    expect(pill(computeScore(noida), "attendance")).toBeGreaterThan(pill(computeScore(noida2), "attendance"));
+    expect(pill(computeScore(noida2), "attendance")).toBeGreaterThan(pill(computeScore(ahm), "attendance"));
+    expect(computeScore(ho).score).toBeGreaterThan(computeScore(noida).score);
+    expect(computeScore(noida).score).toBeGreaterThan(computeScore(noida2).score);
+  });
+
+  it("shrinkage within the 10% tolerance costs nothing; the exit-not-closed penalty is capped", () => {
+    expect(pill(computeScore(live({ shrink: 10, sched: 100, late: 0, active: 100, left: 0, notClosed: 0, seats: 100, reg: 0, leave: 0, grn: 0 })), "attendance")).toBe(100);
+    const lots = computeScore(live({ shrink: 0, sched: 100, late: 0, active: 100, left: 0, notClosed: 500, seats: 100, reg: 0, leave: 0, grn: 0 }));
+    expect(pill(lots, "people")).toBe(70);
+  });
+
+  it("compliance decays smoothly instead of a cliff", () => {
+    const c = (n: number) => pill(computeScore(live({ shrink: 0, sched: 100, late: 0, active: 100, left: 0, notClosed: 0, seats: 100, reg: n, leave: 0, grn: 0 })), "compliance");
+    expect(c(0)).toBe(100);
+    expect(c(30)).toBeGreaterThan(c(60));
+    expect(c(60)).toBeGreaterThan(c(120));
+    expect(c(120)).toBeGreaterThan(0);
   });
 });
 

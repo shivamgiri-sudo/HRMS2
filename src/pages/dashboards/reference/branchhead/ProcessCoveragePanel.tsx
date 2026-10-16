@@ -69,7 +69,9 @@ function ProcessRow({ p, selectedBranchId, branchNames }: { p: BranchProcess; se
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState("");
   const drillBranch = p.branchIds.includes(picked) ? picked : defaultDrillBranch(p, selectedBranchId);
-  const over = p.mandatedSeats != null && p.headcount > p.mandatedSeats;
+  // Zero (or no) mandated seats means the process is not mandated, so headcount cannot be "over" it.
+  const mandated = p.mandatedSeats != null && p.mandatedSeats > 0;
+  const over = mandated && p.headcount > (p.mandatedSeats as number);
   return (
     <li className="border-t border-slate-100 first:border-t-0">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
@@ -78,7 +80,7 @@ function ProcessRow({ p, selectedBranchId, branchNames }: { p: BranchProcess; se
         <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-slate-900">{p.processName}</span>
         <CoverageBadge tier={p.tier} />
         <span className="text-[12px] text-slate-700">
-          {p.headcount} of {p.mandatedSeats ?? "—"} seats
+          {mandated ? `${p.headcount} of ${p.mandatedSeats} seats` : `${p.headcount} headcount - no mandated seats`}
           {over ? <span className="ml-1 inline-flex items-center gap-1 font-bold text-rose-900"><ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />Over mandate</span> : null}
         </span>
       </button>

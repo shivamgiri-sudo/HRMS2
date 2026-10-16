@@ -20,11 +20,17 @@ export const DEFAULT_WEIGHTS: Record<PillarKey, number> = {
 const PILLAR_ORDER: PillarKey[] = ["attendance", "people", "finance", "hiring", "compliance", "quality"];
 
 // ─── pillar rules (all tunables live here) ───────────────────────────────────
+// Calibrated 2026-10-16 on the four live MAS branches (shrinkage 0-34%, late 0-38% of scheduled, 40+ unclosed
+// exits, 25-90 aged items). The first cut was linear and hit 0 for every busy branch, which hid real differences.
 export const PILLAR_RULES = {
-  attendance: { shrinkagePctFactor: 4, lateCap: 20, lateFactor: 1.5 },
-  people: { attritionPctFactor: 8, exitNotClosedFactor: 2, seatGapFactor: 50 },
+  // Shrinkage up to 10% of scheduled is normal for a contact centre and costs nothing; late arrivals are judged as
+  // a share of scheduled staff, with the first 5% free.
+  attendance: { shrinkTolerancePct: 10, shrinkFactor: 3, lateRateTolerancePct: 5, lateRateFactor: 0.5 },
+  // Each penalty is capped so one noisy input cannot zero the whole pillar.
+  people: { attritionPctFactor: 6, attritionCap: 40, exitNotClosedFactor: 0.5, exitNotClosedCap: 30, seatGapFactor: 30, seatGapCap: 30 },
   finance: { fullUpToPct: 80, floorAtPct: 95, floorScore: 60, overScore: 40, unbudgetedFactor: 3 },
-  compliance: { backlogFactor: 5 },
+  // Smooth decay: 100 at no backlog, ~37 at `backlogScale` aged items, never a hard 0 cliff.
+  compliance: { backlogScale: 60 },
   quality: { breachPctFactor: 2 },
 } as const;
 
@@ -38,10 +44,13 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 type Raw = BranchHealthReport["raw"];
 
 function attendance(raw: Raw): number | null {
-  if (!raw.shrinkage || num(raw.shrinkage.scheduled) === 0) return null;
+  const scheduled = num(raw.shrinkage?.scheduled);
+  if (!raw.shrinkage || scheduled === 0) return null;
   const r = PILLAR_RULES.attendance;
-  const late = Math.min(num(raw.lateStats?.totalLate), r.lateCap);
-  return clamp(100 - num(raw.shrinkage.shrinkagePct) * r.shrinkagePctFactor - late * r.lateFactor);
+  const shrinkPenalty = Math.max(0, num(raw.shrinkage.shrinkagePct) - r.shrinkTolerancePct) * r.shrinkFactor;
+  const lateRate = (num(raw.lateStats?.totalLate) / scheduled) * 100;
+  const latePenalty = Math.max(0, lateRate - r.lateRateTolerancePct) * r.lateRateFactor;
+  return clamp(100 - shrinkPenalty - latePenalty);
 }
 
 function people(raw: Raw): number | null {
@@ -50,8 +59,10 @@ function people(raw: Raw): number | null {
   if (!h || active === 0) return null;
   const r = PILLAR_RULES.people;
   const seats = num(h.mandateSeatsTotal);
-  const gap = seats > 0 ? Math.abs(1 - active / seats) * r.seatGapFactor : 0;
-  return clamp(100 - (num(h.leftMtd) / active) * 100 * r.attritionPctFactor - num(h.exitsNotClosed) * r.exitNotClosedFactor - gap);
+  const attrition = Math.min(r.attritionCap, (num(h.leftMtd) / active) * 100 * r.attritionPctFactor);
+  const unclosed = Math.min(r.exitNotClosedCap, num(h.exitsNotClosed) * r.exitNotClosedFactor);
+  const gap = seats > 0 ? Math.min(r.seatGapCap, Math.abs(1 - active / seats) * r.seatGapFactor) : 0;
+  return clamp(100 - attrition - unclosed - gap);
 }
 
 function finance(raw: Raw): number | null {
@@ -74,7 +85,7 @@ function hiring(raw: Raw): number | null {
 function compliance(raw: Raw): number {
   const backlog =
     num(raw.regularization?.over3Days) + num(raw.leaveAging?.over3Days) + num(raw.grnStats?.pendingOver3Days);
-  return clamp(100 - backlog * PILLAR_RULES.compliance.backlogFactor);
+  return clamp(100 * Math.exp(-backlog / PILLAR_RULES.compliance.backlogScale));
 }
 
 function quality(raw: Raw): number | null {

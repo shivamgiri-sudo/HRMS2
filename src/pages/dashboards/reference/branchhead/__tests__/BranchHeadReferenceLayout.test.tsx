@@ -102,6 +102,15 @@ describe("BranchHeadReferenceLayout", () => {
     const out = html(payload({ processes: { active: [proc({ mandatedSeats: 5, headcount: 8 })], unmapped: [] } }));
     expect(out).toContain("Over mandate");
   });
+
+  it("does not call a process over mandate when it has no mandated seats", () => {
+    for (const seats of [0, null]) {
+      const out = html(payload({ processes: { active: [proc({ mandatedSeats: seats, headcount: 51 })], unmapped: [] } }));
+      expect(out).not.toContain("Over mandate");
+      expect(out).toContain("51 headcount - no mandated seats");
+      expect(out).not.toContain("of 0 seats");
+    }
+  });
   it("drill branch defaults to the selected branch if reachable, else the process's first branch", () => {
     const p2 = proc({ branchIds: ["b2", "b3"] });
     expect(defaultDrillBranch(p2, "b3")).toBe("b3");
