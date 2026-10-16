@@ -4,6 +4,25 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-10-16 — P&L Data Fixes + GRN Cost-Centre Mapping
+
+**Commits:** db data fixes + migration 2219
+**Pages affected:** P&L / Finance dashboard (backend data only)
+
+**Changes applied to production DB:**
+- Revenue: CORP/BLD invoices excluded from P&L (Apr/May/Sep now within ±1L of sheet)
+- Revenue: Aug proforma (1.81L) approved; Sep duplicate (30.45L) marked
+- GRN: Fixed 282 incorrectly-rejected entries (Reject=1 = active, not rejected)
+- GRN: 39,260 non-MAS-Callnet entries removed (Dialdesk, Delhi, Jaipur, etc.)
+- GRN: 107 missing 2026-27 entries synced from db_bill
+- GRN: New table `grn_cost_centre_allocation` — 41,394 process-level allocations
+- GRN: Complete sync — all 28,809 db_bill MAS Callnet entries in grn_entry_snapshot
+
+**Not verified in browser:** P&L data changes only, no frontend UI changes.
+**Remaining gap:** Jun GRN -14.49L (data missing from db_bill source — Finance action needed).
+
+---
+
 ## 2026-10-12 — GRN Reports: Tally Import Test Export (XML / Excel / CSV)
 
 **Method:** `npm run build` + backend `tsc --noEmit` clean. The service and HTTP routes were run against a throwaway `mysql:8` (Docker) seeded with 10 GRNs: numbered HRMS GRNs, a draft, a submitted one, a legacy `bill_source_id` row, a cancelled one, a DialDesk-branch row, a DialDesk-cost-centre row and an already-connector-sent one. The UI was checked with a temporary Vite harness and mocked `/api` (the download responses were the real files from the MySQL run) in headless Playwright Chromium. Harness removed.
@@ -453,3 +472,28 @@ Verified on production data via the localhost preview API + Playwright (zero con
 ## 2026-10-14 — Report Library process dropdown, attendance-register range, roster export; Finance Head maker-checker exemption
 - Verified: npm run build passes; backend tsc --noEmit clean; vitest over reporting, process, process-pnl and finance passes except 3 GRN-submit tests (duplicate-GRN guard, code not touched here).
 - NOT verified: no browser run and no real MySQL (no Docker daemon, no database). The roster SQL, Process dropdown rendering, stacked attendance-register export and Finance Head approvals were checked by type-check and unit tests only.
+
+## 2026-10-16 — Employee Master Report Column Fix & Validation
+
+**Commit**: `11055264e` (catalog fix) → `3d1cbdbd2` (adapter fix)
+**Pages checked**: BPO Master Report API — `bpo-hr-workforce-lifecycle-master`
+**Method**: Direct API calls via curl + Python parsing
+
+### What was verified
+- `REHIRE_ELIGIBILITY`: Present in rows, value `NOT ASSESSED` ✓
+- `CONFIRMATION_DATE`: Present in rows (null for legacy employees with no probation record) ✓
+- `LAST_SALARY_REVISION_DATE`: Present in rows (null for employees with no lifecycle events) ✓
+- `EXIT_TYPE`: Present in rows (null for active employees) ✓
+- `ATTRITION_FLAG`: Present in rows, value `NO` ✓
+- Coverage: 87.7% (71 of 81 catalog columns available, 10 unavailable)
+- Total rows: 7,707 employees returned correctly
+- Export (`?export=true`): Returns unmasked JSON (no server-side CSV; frontend converts to Excel)
+
+### Root cause that was fixed
+`normalize()` in `executeVerifiedReport` filters rows to catalog-defined columns only.
+The 4 new adapter fields were added to the SQL SELECT and lineage, but not the catalog definition.
+Fix: Added `CONFIRMATION_DATE`, `LAST_SALARY_REVISION_DATE`, `EXIT_TYPE`, `ATTRITION_FLAG` to catalog.
+
+### Could NOT be verified
+- Actual data values for new columns (all 3 sampled employees are legacy with no probation/lifecycle/exit data)
+- Frontend UI rendering of the new columns (would require browser login)
