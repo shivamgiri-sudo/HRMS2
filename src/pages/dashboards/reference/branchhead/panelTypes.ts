@@ -1,5 +1,3 @@
-import type { SectionResult } from "../../../../../backend/src/modules/branch-head-health/types";
-
 /** Shapes of the enriched overview sections (built field by field in backend overview.ts). */
 export interface PeopleData {
   totalActive: number; joinedToday: number; leftToday: number; joinedMtd: number; leftMtd: number;
@@ -65,7 +63,3 @@ export interface FinanceData {
     oldestIncrementDays: number | null;
   } | null;
 }
-
-/** The overview types these sections as `unknown`; panels narrow them here in one place. */
-export const asData = <T,>(s: SectionResult<unknown> | undefined): { section: SectionResult<unknown>; data: T | null } | null =>
-  s ? { section: s, data: s.status === "ok" ? (s.data as T | null) : null } : null;

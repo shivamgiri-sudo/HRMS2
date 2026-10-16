@@ -153,9 +153,20 @@ describe("BranchHeadReferenceLayout", () => {
     expect(at.every((i) => i >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
   });
-  it("branch-level output has no person names from the fixtures", () => {
-    const out = html(payload());
-    for (const n of ["Secret Manager", "Asha Roy"]) expect(out).not.toContain(n);
+  it("branch-level output has no person names even if a payload carries them", () => {
+    const b = branch("b1", "Kolkata");
+    const leak = (o: object, k: string, v: string) => ({ ...o, [k]: v });
+    b.overview.hiring = fx.ok({ ...fx.hiring, candidateName: "Zed Candidate", batches: fx.hiring.batches.map((x) => leak(x, "requester", "Qasim Requester")) }) as any;
+    b.overview.people = fx.ok({ ...fx.people, joinedNames: ["Nita Joiner"], byProcess: fx.people.byProcess.map((x) => leak(x, "managerName", "Olga Manager")) }) as any;
+    b.overview.attrition = fx.ok({ ...fx.attrition, topRisk: [{ name: "Paul Risky" }], byProcess: fx.attrition.byProcess.map((x) => leak(x, "name", "Rita Risky")) }) as any;
+    const out = html(payload({ branches: [b] }));
+    for (const n of ["Secret Manager", "Zed Candidate", "Qasim Requester", "Nita Joiner", "Olga Manager", "Paul Risky", "Rita Risky"]) expect(out).not.toContain(n);
+  });
+  it("missing optional sections render an honest placeholder", () => {
+    const b = branch("b1", "Kolkata");
+    delete b.overview.attrition; delete b.overview.backlogs; delete b.overview.processPnl;
+    const out = html(payload({ branches: [b] }));
+    expect(out.split("Not available yet").length - 1).toBe(3);
   });
   it("route is omitted when the flag is off and present when on", () => {
     expect(branchHeadRoute(false, <div />)).toBeNull();

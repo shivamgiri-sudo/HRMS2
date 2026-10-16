@@ -54,6 +54,12 @@ describe("FinancePanel", () => {
   it("shows budget, heads, GRN pipeline and tie-out", () => {
     for (const t of ["Available", "₹7.5 L", "Rent", "Utilities", "Over budget", "Branch Head", "Vendor GRN", "Unbudgeted", "Tie-out", "Imprest reserved with no cost centre", "Pending regularization"]) expect(out).toContain(t);
   });
+  it("maps the P&L mode to a readable label", () => {
+    expect(out).toContain("Live, month to date");
+    const o = (m: string) => r(<FinancePanel section={fx.ok({ ...fx.finance, pnl: { ...fx.finance.pnl, mode: m } })} />);
+    expect(o("FINAL")).toContain("Final, month closed");
+    expect(o("SOME_MODE")).toContain("some mode");
+  });
   it("renders error inline", () => {
     expect(r(<FinancePanel section={fx.err("P&L source timed out")} />)).toContain("P&amp;L source timed out");
   });
@@ -73,6 +79,20 @@ describe("ProcessPnlPanel", () => {
     expect(out).toMatch(/<details(?![^>]*\bopen\b)/);
     expect(out).toContain("Process 11");
     expect(out.split("<details")[0]).not.toContain("Process 9");
+  });
+  it("totals row sums people and other cost across all rows and agrees with operating profit", () => {
+    const d = fx.pnl(12);
+    const people = d.rows.reduce((a, x) => a + x.peopleCost, 0);
+    const other = d.rows.reduce((a, x) => a + x.otherCost, 0);
+    d.totals.revenue = 12000000; d.totals.operatingProfit = 12000000 - people - other;
+    const out = r(<ProcessPnlPanel section={fx.ok(d)} />);
+    const foot = out.slice(out.indexOf("<tfoot>"), out.indexOf("</tfoot>"));
+    const cells = foot.split("<td").slice(1).map((c) => c.slice(c.indexOf(">") + 1, c.indexOf("</td>")));
+    expect(cells[3]).toBe(formatInr(people));
+    expect(cells[4]).toBe(formatInr(other));
+    expect(cells[2]).toBe(formatInr(12000000));
+    expect(cells[5]).toBe(formatInr(12000000 - people - other));
+    expect(cells[0]).toContain(`Total cost ${formatInr(people + other)}`);
   });
   it("empty and error states", () => {
     expect(r(<ProcessPnlPanel section={fx.emptySection()} />)).toContain("No process P&amp;L for this branch");
@@ -105,6 +125,11 @@ describe("AttendanceDetailPanel", () => {
     expect(out).toContain("-3.0 pts");
     expect(out).toContain("down");
   });
+  it("zero scheduled yesterday is treated as no data", () => {
+    const out = r(<AttendanceDetailPanel section={fx.ok({ ...fx.attendance, previousDay: { shrinkagePct: 0, absent: 0, scheduled: 0 } })} />);
+    expect(out).toContain("No data for yesterday");
+    expect(out).not.toContain("vs yesterday (");
+  });
   it("no previous day", () => {
     expect(r(<AttendanceDetailPanel section={fx.ok({ ...fx.attendance, previousDay: null })} />)).toContain("No data for yesterday");
   });
@@ -125,6 +150,12 @@ describe("HiringPanel", () => {
   it("shows batches, offers and ATS", () => {
     const out = r(<HiringPanel section={fx.ok(fx.hiring)} />);
     for (const t of ["Telecaller", "Batch A", "Last 30 days", "Month to date", "70.0%", "Joining in next 7 days", "Walk-ins", "SLA breaches", "GRNs awaiting approval"]) expect(out).toContain(t);
+  });
+});
+
+describe("optional sections", () => {
+  it("render Not available yet when undefined", () => {
+    for (const el of [<AttritionPanel />, <BacklogPanel />, <ProcessPnlPanel />]) expect(r(el)).toContain("Not available yet");
   });
 });
 

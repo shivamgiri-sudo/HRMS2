@@ -4,6 +4,12 @@ import { FinanceGrn } from "./FinanceGrn";
 import { formatInr, formatPct } from "./format";
 import { Note, SectionShell, Stat, Stats, SubHead, Table, Td } from "./ui";
 
+function modeLabel(m: string): string {
+  if (m === "LIVE_MTD") return "Live, month to date";
+  if (m === "FINAL") return "Final, month closed";
+  return m.split("_").join(" ").toLowerCase();
+}
+
 const heads = (caption: string, rows: HeadRow[]) => (
   <Table caption={caption} cols={[{ label: "Head" }, { label: "Budget", right: true }, { label: "Charged", right: true }, { label: "Used" }]} minWidth={360}>
     {rows.map((r) => <tr key={r.head}><Td strong>{r.head}</Td><Td right>{formatInr(r.budget)}</Td><Td right>{formatInr(r.charged)}</Td><Td>{formatPct(r.pct)}{r.pct > 100 ? " - Over budget" : ""}</Td></tr>)}
@@ -18,7 +24,7 @@ export function FinancePanel({ section }: { section?: SectionResult<unknown> }) 
         const b = d.budget;
         return (
           <>
-            <Note>Period {p.periodCode}, day {p.daysElapsed} of {p.daysInMonth} ({p.mode}). Cost centres: {p.costCentres}, estimated: {p.estimatedCostCentres}.</Note>
+            <Note>Period {p.periodCode}, day {p.daysElapsed} of {p.daysInMonth} ({modeLabel(p.mode)}). Cost centres: {p.costCentres}, estimated: {p.estimatedCostCentres}.</Note>
             <Stats label="Running P&L">
               <Stat label="Revenue" value={formatInr(p.revenueRunning)} />
               <Stat label="Total cost" value={formatInr(p.totalCostRunning)} />

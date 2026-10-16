@@ -50,7 +50,7 @@ export const Note = ({ children }: { children: ReactNode }) => <p className="mt-
 export function SectionShell<T>({ title, subtitle, section, emptyText, errorName, children }: {
   title: string; subtitle?: ReactNode; section: SectionResult<unknown> | undefined; emptyText: string; errorName?: string; children: (data: T) => ReactNode;
 }) {
-  if (!section) return null;
+  if (!section) return <Panel title={title}><p className="flex items-center gap-2 text-[13px] text-slate-700"><Inbox className="h-4 w-4" aria-hidden="true" />Not available yet</p></Panel>;
   let body: ReactNode;
   if (section.status === "error") body = <SectionError name={errorName ?? title} message={section.message} />;
   else if (section.status !== "ok" || section.data == null) {

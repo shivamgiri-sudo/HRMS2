@@ -5,7 +5,7 @@ import { formatCount, formatPct } from "./format";
 import { Note, SectionShell, Stat, Stats, SubHead, Table, Td } from "./ui";
 
 function Change({ now, prev }: { now: number; prev: AttendanceData["previousDay"] }) {
-  if (!prev) return <>No data for yesterday</>;
+  if (!prev || prev.scheduled <= 0) return <>No data for yesterday</>;
   const delta = Math.round((now - prev.shrinkagePct) * 10) / 10;
   if (delta === 0) return <span className="inline-flex items-center gap-1"><Minus className="h-3.5 w-3.5" aria-hidden="true" />0.0 pts, no change vs yesterday ({formatPct(prev.shrinkagePct)})</span>;
   const up = delta > 0;

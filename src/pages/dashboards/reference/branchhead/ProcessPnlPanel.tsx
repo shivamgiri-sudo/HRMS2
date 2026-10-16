@@ -42,6 +42,8 @@ export function ProcessPnlPanel({ section }: { section?: SectionResult<ProcessPn
         const first = d.rows.slice(0, VISIBLE);
         const rest = d.rows.slice(VISIBLE);
         const t = d.totals;
+        const people = d.rows.reduce((a, r) => a + r.peopleCost, 0);
+        const other = d.rows.reduce((a, r) => a + r.otherCost, 0);
         return (
           <>
             <p className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] font-semibold text-slate-900">
@@ -53,8 +55,8 @@ export function ProcessPnlPanel({ section }: { section?: SectionResult<ProcessPn
               caption="Process P&L, worst operating profit first" cols={COLS} minWidth={860}
               foot={(
                 <tr className="font-bold text-slate-900">
-                  <Td strong>Total ({d.rows.length} processes)</Td><Td>{" "}</Td><Td right>{formatInr(t.revenue)}</Td>
-                  <Td right>{formatInr(t.totalCost)}</Td><Td>{" "}</Td><Td right strong>{formatInr(t.operatingProfit)}</Td>
+                  <Td strong>Total ({d.rows.length} processes)<span className="block text-[12px] font-normal">Total cost {formatInr(people + other)}</span></Td><Td>{" "}</Td><Td right>{formatInr(t.revenue)}</Td>
+                  <Td right>{formatInr(people)}</Td><Td right>{formatInr(other)}</Td><Td right strong>{formatInr(t.operatingProfit)}</Td>
                   <Td right>{formatPct(t.opPct)}</Td><Td>{" "}</Td><Td right>{formatInr(t.outstandingReceivable)}</Td>
                 </tr>
               )}
