@@ -6,6 +6,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AICommandBar } from "@/components/ai/AICommandBar";
 import CookieConsent from "@/components/layout/CookieConsent";
 import { OfflineFallback } from "@/components/layout/OfflineFallback";
+import { DeploymentNotice } from "@/components/layout/DeploymentNotice";
 import ScrollToTop from "@/components/layout/ScrollToTop";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -64,6 +65,7 @@ const App = () => (
           </ErrorBoundary>
           <StaffChrome />
           <OfflineFallback />
+          <DeploymentNotice />
           </ViewAsProvider>
         </AuthProvider>
       </BrowserRouter>

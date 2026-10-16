@@ -203,6 +203,11 @@ function isNetworkFailure(err: unknown): boolean {
   return err instanceof TypeError && /failed to fetch|networkerror|load failed|network request failed/i.test(err.message);
 }
 
+/** Tells DeploymentNotice a request got no answer or a gateway error; it confirms against /api/health. */
+function signalServerTrouble(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("hrms:server-trouble"));
+}
+
 export const NETWORK_FAILURE_MESSAGE =
   "Could not reach the HRMS server. Check your connection and try again — if a release is going out, the server is back within a minute.";
 
@@ -226,6 +231,7 @@ async function fetchWithNetworkRetry(
         if (!isNetworkFailure(retryErr)) throw retryErr;
       }
     }
+    signalServerTrouble();
     throw new Error(NETWORK_FAILURE_MESSAGE);
   }
 }
@@ -235,6 +241,7 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
   const normalizedPath = normalizeRequestPath(path);
 
   let res = await fetchWithNetworkRetry(normalizedPath, method, body, timeoutMs, signal);
+  if (res.status === 502 || res.status === 503 || res.status === 504) signalServerTrouble();
 
   // On 401, try a silent token refresh once and retry the original request
   if (res.status === 401 && !path.includes("/api/auth/")) {
