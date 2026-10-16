@@ -104,10 +104,10 @@ describe("loadGrnTallyDownload", () => {
     // db_bill migration also wrote suffixed child rows with bill_source_id NULL; its sentinel creator marks them.
     expect(select.sql).toMatch(/COALESCE\(g\.created_by, ''\) NOT LIKE '00000000-%'/);
     expect(select.sql).toMatch(/g\.grn_number IS NOT NULL/);
-    expect(select.sql).toMatch(/g\.status NOT IN/);
+    expect(select.sql).toMatch(/g\.status IN \(\?,\?\)\) OR \(g\.grn_type <> .imprest. AND g\.status IN \(\?,\?,\?,\?,\?\)/);
     // The month is the posting (approval) month, as in the legacy import.
     expect(select.sql).toMatch(/COALESCE\(g\.approved_at, g\.finance_head_reviewed_at\) >= \?/);
-    expect(select.params).toEqual(["cancelled", "consumption_reversed", "vendor", "2026-09-01", "2026-09-30"]);
+    expect(select.params).toEqual(["approved", "paid", "finance_head_approved", "pending_accounts_payment", "payment_scheduled", "partially_paid", "paid", "vendor", "2026-09-01", "2026-09-30"]);
     expect(h.state.calls.some((c) => /INSERT|UPDATE|DELETE/i.test(c.sql))).toBe(false);
   });
 

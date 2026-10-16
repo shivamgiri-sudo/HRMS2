@@ -33,9 +33,8 @@ import {
  * On-demand download of HRMS GRNs for a Tally import test, as Tally XML, Excel or CSV.
  *
  * Which GRNs: raised in HRMS (no bill_source_id and not created by the db_bill migration user, so nothing migrated from db_bill), carrying
- * a GRN number (a number exists only from Finance Head approval onwards, so drafts and pending
- * GRNs are out by construction), and not cancelled or consumption-reversed — a spend that was
- * undone is not something to book. Same branch scope and own-company rule as the GRN Register.
+ * a GRN number and in a fully approved status (VENDOR_BOOKED / IMPREST_BOOKED): drafts, pending, returned,
+ * rejected, cancelled and consumption-reversed GRNs are not something to book. Same branch scope and own-company rule as the GRN Register.
  *
  * Excel and CSV are the legacy billing system's GRN import sheet, column for column (Vch No, Date,
  * Effective Date, Details, Debit Amount, Credit Amount, Cost Category, Cost Centre, Narration for
@@ -63,7 +62,13 @@ export type GrnTallyDownloadFilters = {
 };
 
 const APPROVED_ON = "COALESCE(g.approved_at, g.finance_head_reviewed_at)";
-const EXCLUDED_STATUSES = ["cancelled", "consumption_reversed"] as const;
+/**
+ * Only GRNs that have cleared final approval. A number alone is not enough: a GRN returned for correction
+ * or reopened keeps the number it was given, but is not an approved spend again until it clears approval.
+ * Same sets as the connector feed (grn-tally-export.service.ts), plus payment_scheduled (approved, awaiting payment).
+ */
+const VENDOR_BOOKED = ["finance_head_approved", "pending_accounts_payment", "payment_scheduled", "partially_paid", "paid"] as const;
+const IMPREST_BOOKED = ["approved", "paid"] as const;
 const MAX_ROWS = 5000;
 
 export type GrnTallyDownloadRow = {
@@ -125,9 +130,10 @@ export async function loadGrnTallyDownload(
     hrmsRaisedGrnSql("g"),
     "g.grn_number IS NOT NULL",
     "TRIM(g.grn_number) <> ''",
-    `g.status NOT IN (${EXCLUDED_STATUSES.map(() => "?").join(",")})`,
+    `((g.grn_type = 'imprest' AND g.status IN (${IMPREST_BOOKED.map(() => "?").join(",")}))`
+      + ` OR (g.grn_type <> 'imprest' AND g.status IN (${VENDOR_BOOKED.map(() => "?").join(",")})))`,
   ];
-  const params: unknown[] = [...EXCLUDED_STATUSES];
+  const params: unknown[] = [...IMPREST_BOOKED, ...VENDOR_BOOKED];
   const scope = grnBranchVisibility(filters.branchScope, "g");
   if (scope.sql !== "1=1") {
     conditions.push(scope.sql);
@@ -226,15 +232,15 @@ export const GRN_IMPORT_COLUMNS = [
 ] as const;
 
 /** One row per ledger line of every GRN that built cleanly. Dates stay YYYY-MM-DD here. */
-export function grnImportRows(data: GrnTallyDownloadData): (string | number)[][] {
-  const out: (string | number)[][] = [];
+export function grnImportRows(data: GrnTallyDownloadData): (string | number | null)[][] {
+  const out: (string | number | null)[][] = [];
   for (const r of data.rows) {
     if (r.exception || !r.header) continue;
     const h = r.header;
     for (const e of r.entries) {
       out.push([
         h.voucherNumber, h.date, h.effectiveDate, e.ledger,
-        e.side === "Dr" ? e.amount : "", e.side === "Cr" ? e.amount : "",
+        e.side === "Dr" ? e.amount : null, e.side === "Cr" ? e.amount : null,
         h.costCategory, h.costCentre, h.narrationEntry, h.narration, h.voucherType,
       ]);
     }
@@ -243,7 +249,6 @@ export function grnImportRows(data: GrnTallyDownloadData): (string | number)[][]
 }
 
 const DATE_COLUMNS = new Set([1, 2]);
-const MONEY_COLUMNS = new Set([4, 5]);
 
 export function buildGrnTallyXml(data: GrnTallyDownloadData): string {
   return wrapTallyEnvelope(data.vouchersXml, data.company);
@@ -285,7 +290,6 @@ export async function buildGrnTallyXlsx(data: GrnTallyDownloadData): Promise<Buf
     );
   }
   DATE_COLUMNS.forEach((i) => (ws.getColumn(i + 1).numFmt = "dd-mmm-yy"));
-  MONEY_COLUMNS.forEach((i) => (ws.getColumn(i + 1).numFmt = "0.00"));
   const widths = [34, 11, 11, 40, 14, 14, 22, 16, 40, 70, 8];
   widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
   ws.views = [{ state: "frozen", ySplit: 1 }];

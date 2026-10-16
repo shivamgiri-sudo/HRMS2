@@ -2,7 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { grnBranchCode } from "./grn-tally-context.js";
 import ExcelJS from "exceljs";
-import { grnImportRows, GRN_IMPORT_COLUMNS, loadGrnTallyDownload } from "./grn-tally-download.service.js";
+import { buildGrnTallyXlsx, grnImportRows, GRN_IMPORT_COLUMNS, loadGrnTallyDownload } from "./grn-tally-download.service.js";
 import { readGrnTallyConfig } from "./grn-tally-export.service.js";
 import { monthEnd, wrapTallyEnvelope, xmlEscape } from "./grn-tally-voucher.js";
 import { grnLedgerGroup, TallyMasters, type TallyGroup } from "./tally-ledger-masters.js";
@@ -327,6 +327,8 @@ export async function buildLedgerTallyXlsx(opts: { month: string; kind: LedgerTa
   const collected = await collectLedgerTally(month);
   const { masters, vouchers, grn, exceptions } = collected;
   const summary = summarise(month, collected);
+  // GRN purchases: exactly the legacy import sheet (MASSEP.xlsx) — one "Import" sheet, GRN rows only, nothing else.
+  if (kind === "grn") return { buffer: await buildGrnTallyXlsx(grn), summary };
   const wanted = (k: Voucher["kind"]) => kind === "all" || kind === k;
 
   const wb = new ExcelJS.Workbook();
@@ -347,7 +349,7 @@ export async function buildLedgerTallyXlsx(opts: { month: string; kind: LedgerTa
     for (const v of vouchers) {
       if (v.kind === "grn" || !wanted(v.kind)) continue;
       for (const l of v.lines) {
-        imp.addRow([v.number, asDate(v.date), asDate(v.date), l.ledger, l.dr ? l.amount : "", l.dr ? "" : l.amount,
+        imp.addRow([v.number, asDate(v.date), asDate(v.date), l.ledger, l.dr ? l.amount : null, l.dr ? null : l.amount,
           l.costCategory ?? "", l.costCentre ?? "", "", safe(v.narration), v.type]);
       }
     }
