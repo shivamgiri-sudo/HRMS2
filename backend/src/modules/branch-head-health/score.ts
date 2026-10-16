@@ -31,7 +31,8 @@ export const PILLAR_RULES = {
   finance: { fullUpToPct: 80, floorAtPct: 95, floorScore: 60, overScore: 40, unbudgetedFactor: 3 },
   // Smooth decay: 100 at no backlog, ~37 at `backlogScale` aged items, never a hard 0 cliff.
   compliance: { backlogScale: 60 },
-  quality: { breachPctFactor: 2 },
+  // Small samples are noise: 1 breach of 2 tokens must not zero the pillar.
+  quality: { breachPctFactor: 2, minTokens: 10 },
 } as const;
 
 const clamp = (n: number): number => Math.max(0, Math.min(100, n));
@@ -90,7 +91,7 @@ function compliance(raw: Raw): number {
 
 function quality(raw: Raw): number | null {
   const total = num(raw.ats?.slaTotal);
-  if (total === 0) return null;
+  if (total < PILLAR_RULES.quality.minTokens) return null;
   const pct = (num(raw.ats.slaBreaches) / total) * 100;
   return clamp(100 - pct * PILLAR_RULES.quality.breachPctFactor);
 }

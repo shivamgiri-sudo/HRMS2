@@ -41,7 +41,7 @@ describe("buildProcessPnl", () => {
     expect(r.data!.rows[1]).toMatchObject({ revenueVsBudget: null, seatFillPct: null, mandatedSeats: null });
     expect(r.data!.totals).toEqual({
       revenue: 3000, totalCost: 2890, operatingProfit: 110, opPct: (110 / 3000) * 100,
-      loss: 1, atRisk: 1, profitable: 1, outstandingReceivable: 90,
+      loss: 1, atRisk: 1, profitable: 1, noActivity: 0, outstandingReceivable: 90,
     });
   });
   it("keeps the true otherCost difference (no flooring)", async () => {
@@ -69,5 +69,14 @@ describe("buildProcessPnl", () => {
     const r = await buildProcessPnl(branch, "2026-10-15");
     expect(r.data!.totals.opPct).toBeNull();
     expect(r.data!.rows[0].opPct).toBeNull();
+  });
+  it("zero-activity rows are not counted as loss/at-risk/profitable and are reported as noActivity", async () => {
+    summary.mockResolvedValue({ rows: [
+      row({ processId: "a", recognizedRevenue: 1000, totalOperatingCost: 900, totalPeopleCost: 500, operatingProfit: 100, operatingProfitPct: 10, processStatus: "profitable" }),
+      row({ processId: "z", processName: "BSS_X", recognizedRevenue: 0, totalOperatingCost: 0, totalPeopleCost: 0, operatingProfit: 0, operatingProfitPct: null, processStatus: "at-risk" }),
+    ] });
+    const r = await buildProcessPnl(branch, "2026-10-15");
+    expect(r.data!.totals).toMatchObject({ loss: 0, atRisk: 0, profitable: 1, noActivity: 1 });
+    expect(r.data!.rows).toHaveLength(2);
   });
 });

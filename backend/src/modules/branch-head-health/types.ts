@@ -50,7 +50,7 @@ export interface ProcessPnlData {
   period: string;
   totals: {
     revenue: number; totalCost: number; operatingProfit: number; opPct: number | null;
-    loss: number; atRisk: number; profitable: number; outstandingReceivable: number;
+    loss: number; atRisk: number; profitable: number; noActivity: number; outstandingReceivable: number;
   };
   rows: ProcessPnlRow[];
 }

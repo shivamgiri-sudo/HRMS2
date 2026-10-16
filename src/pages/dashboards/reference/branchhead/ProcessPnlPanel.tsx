@@ -39,11 +39,15 @@ export function ProcessPnlPanel({ section }: { section?: SectionResult<ProcessPn
       emptyText="No process P&L for this branch" errorName="Process P&L"
     >
       {(d) => {
-        const first = d.rows.slice(0, VISIBLE);
-        const rest = d.rows.slice(VISIBLE);
+        // Rows with no revenue and no cost (billing mirrors etc.) are noise: folded away below the table.
+        const idle = (r: ProcessPnlRow) => r.revenue === 0 && r.peopleCost === 0 && r.otherCost === 0;
+        const active = d.rows.filter((r) => !idle(r));
+        const idleRows = d.rows.filter(idle);
+        const first = active.slice(0, VISIBLE);
+        const rest = active.slice(VISIBLE);
         const t = d.totals;
-        const people = d.rows.reduce((a, r) => a + r.peopleCost, 0);
-        const other = d.rows.reduce((a, r) => a + r.otherCost, 0);
+        const people = active.reduce((a, r) => a + r.peopleCost, 0);
+        const other = active.reduce((a, r) => a + r.otherCost, 0);
         return (
           <>
             <p className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] font-semibold text-slate-900">
@@ -55,7 +59,7 @@ export function ProcessPnlPanel({ section }: { section?: SectionResult<ProcessPn
               caption="Process P&L, worst operating profit first" cols={COLS} minWidth={860}
               foot={(
                 <tr className="font-bold text-slate-900">
-                  <Td strong>Total ({d.rows.length} processes)<span className="block text-[12px] font-normal">Total cost {formatInr(people + other)}</span></Td><Td>{" "}</Td><Td right>{formatInr(t.revenue)}</Td>
+                  <Td strong>Total ({active.length} processes)<span className="block text-[12px] font-normal">Total cost {formatInr(people + other)}</span></Td><Td>{" "}</Td><Td right>{formatInr(t.revenue)}</Td>
                   <Td right>{formatInr(people)}</Td><Td right>{formatInr(other)}</Td><Td right strong>{formatInr(t.operatingProfit)}</Td>
                   <Td right>{formatPct(t.opPct)}</Td><Td>{" "}</Td><Td right>{formatInr(t.outstandingReceivable)}</Td>
                 </tr>
@@ -65,12 +69,20 @@ export function ProcessPnlPanel({ section }: { section?: SectionResult<ProcessPn
             </Table>
             {rest.length > 0 ? (
               <details className="mt-3 rounded-lg border border-slate-200">
-                <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-[13px] font-bold text-slate-900">Show all {d.rows.length} processes</summary>
+                <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-[13px] font-bold text-slate-900">Show all {active.length} processes</summary>
                 <div className="p-3">
                   <Table caption="Remaining processes, continuing the order above" cols={COLS} minWidth={860}>
                     {rest.map((r) => <Row key={r.processId} r={r} />)}
                   </Table>
                 </div>
+              </details>
+            ) : null}
+            {idleRows.length > 0 ? (
+              <details className="mt-3 text-[13px] text-slate-900">
+                <summary className="flex min-h-[44px] cursor-pointer items-center font-semibold">
+                  {idleRows.length} {idleRows.length === 1 ? "process has" : "processes have"} no P&amp;L activity this month
+                </summary>
+                <ul className="list-disc pl-6">{idleRows.map((r) => <li key={r.processId}>{r.processName}</li>)}</ul>
               </details>
             ) : null}
             <Note>Uses the same calculation as the Process P&amp;L pages, so it can differ from the month-to-date running figures above.</Note>

@@ -64,7 +64,7 @@ export const pnl = (n = 3): ProcessPnlData => {
     totals: {
       revenue: 9000000, totalCost: 8000000, operatingProfit: 1000000, opPct: 11.1,
       loss: rows.filter((r) => r.status === "loss-making").length, atRisk: rows.filter((r) => r.status === "at-risk").length,
-      profitable: rows.filter((r) => r.status === "profitable").length, outstandingReceivable: 777000,
+      profitable: rows.filter((r) => r.status === "profitable").length, noActivity: 0, outstandingReceivable: 777000,
     },
     rows,
   };

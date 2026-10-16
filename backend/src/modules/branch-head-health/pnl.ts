@@ -43,7 +43,9 @@ export async function buildProcessPnl(branch: HeadBranch, date: string): Promise
     const sum = (f: (r: ProcessPnlRow) => number) => rows.reduce((s, r) => s + f(r), 0);
     const revenue = sum((r) => r.revenue);
     const operatingProfit = sum((r) => r.operatingProfit);
-    const count = (s: ProcessPnlRow["status"]) => rows.filter((r) => r.status === s).length;
+    // Rows with no revenue and no cost (e.g. billing-mirror rows) are noise: not counted as loss/at-risk/profitable.
+    const idle = (r: ProcessPnlRow) => r.revenue === 0 && r.peopleCost === 0 && r.otherCost === 0;
+    const count = (s: ProcessPnlRow["status"]) => rows.filter((r) => !idle(r) && r.status === s).length;
     return {
       status: "ok", asOf: date,
       data: {
@@ -51,7 +53,7 @@ export async function buildProcessPnl(branch: HeadBranch, date: string): Promise
         totals: {
           revenue, totalCost: sum((r) => r.peopleCost + r.otherCost), operatingProfit,
           opPct: revenue > 0 ? (operatingProfit / revenue) * 100 : null,
-          loss: count("loss-making"), atRisk: count("at-risk"), profitable: count("profitable"),
+          loss: count("loss-making"), atRisk: count("at-risk"), profitable: count("profitable"), noActivity: rows.filter(idle).length,
           outstandingReceivable: sum((r) => r.outstandingReceivable),
         },
         rows,

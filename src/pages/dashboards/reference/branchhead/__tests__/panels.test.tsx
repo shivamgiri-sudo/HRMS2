@@ -94,6 +94,21 @@ describe("ProcessPnlPanel", () => {
     expect(cells[5]).toBe(formatInr(12000000 - people - other));
     expect(cells[0]).toContain(`Total cost ${formatInr(people + other)}`);
   });
+  it("zero-activity rows are folded into a collapsed details and left out of the table and total count", () => {
+    const d = fx.pnl(3);
+    d.rows.push(
+      { ...d.rows[0], processId: "z1", processName: "BSS_IDLE_ONE", revenue: 0, peopleCost: 0, otherCost: 0, operatingProfit: 0, opPct: null, status: "at-risk" },
+      { ...d.rows[0], processId: "z2", processName: "BSS_IDLE_TWO", revenue: 0, peopleCost: 0, otherCost: 0, operatingProfit: 0, opPct: null, status: "at-risk" },
+    );
+    const out = r(<ProcessPnlPanel section={fx.ok(d)} />);
+    const table = out.slice(out.indexOf("<table"), out.indexOf("</table>"));
+    expect(table).not.toContain("BSS_IDLE_ONE");
+    expect(out).toContain("Total (3 processes)");
+    expect(out).toContain("2 processes have no P&amp;L activity this month");
+    expect(out).toContain("BSS_IDLE_ONE");
+    expect(out).toContain("BSS_IDLE_TWO");
+    expect(out).toMatch(/<details(?![^>]*\bopen\b)[^>]*>\s*<summary[^>]*>\s*2 processes have no/);
+  });
   it("empty and error states", () => {
     expect(r(<ProcessPnlPanel section={fx.emptySection()} />)).toContain("No process P&amp;L for this branch");
     expect(r(<ProcessPnlPanel section={fx.err("P&L could not be loaded")} />)).toContain("role=\"alert\"");

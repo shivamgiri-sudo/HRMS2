@@ -163,4 +163,13 @@ describe("snapshot", () => {
     expect(out).toEqual([{ date: "2026-10-14", value: 3 }, { date: "2026-10-15", value: null }]);
     expect((execute.mock.calls[0] as [string])[0]).toMatch(/ORDER BY snap_date ASC/);
   });
+
+  it("quality pillar ignores tiny ATS samples", () => {
+    const q = (breaches: number, total: number) => computeScore(report({ ats: { slaBreaches: breaches, slaTotal: total } }))
+      .pillars.find((p) => p.key === "quality")?.score;
+    expect(q(1, 2)).toBeNull();
+    expect(q(5, 9)).toBeNull();
+    expect(q(5, 10)).toBe(0);
+    expect(q(1, 20)).toBe(90);
+  });
 });
