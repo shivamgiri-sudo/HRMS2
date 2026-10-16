@@ -1,0 +1,41 @@
+name: Ops Candidate Onboarding Link (manual, read-only)
+
+# Prints the onboarding link + state for the given candidate codes. SELECT only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      codes:
+        description: "Candidate codes, space separated (e.g. CND-ABC123 CND-DEF456)"
+        required: true
+        type: string
+
+concurrency:
+  group: ops-candidate-onboarding-link
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Audit
+        working-directory: backend
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          CODES: ${{ inputs.codes }}
+        run: npx tsx scripts/probe-candidate-onboarding.ts ${CODES}
