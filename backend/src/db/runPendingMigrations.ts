@@ -1393,6 +1393,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2216_branch_health_snapshot.sql", // Registered 2026-10-15. Additive side table: branch_health_snapshot (daily per-branch health score, pillars and headline metrics for the Branch Head Health trend). No FK, no ALTER. Revert: DROP TABLE.
   "migrations/2217_address_bgv_reminder_log.sql", // Registered 2026-10-15. Additive: new address_bgv_reminder_log table (one row per reminder email sent for an unused address-verification link; unique per verification and reminder number).
   "migrations/2218_client_invoice_is_duplicate.sql", // Registered 2026-10-16. Additive ALTER: adds is_duplicate TINYINT(1) DEFAULT 0 to client_invoice; used to flag billing-error duplicate invoices confirmed in db_bill (same CC/month/amount/client raised days apart) so they are excluded from P&L revenue totals. Revert: DROP COLUMN.
+  "migrations/2219_grn_cost_centre_allocation.sql", // Registered 2026-10-16. Additive: new table grn_cost_centre_allocation maps each db_bill expense_entry_particular row (cost-center split of a GRN) to an HRMS cost_centre_master record; one row per (bill_source_id, cost_centre_id) pair. Filled by scripts/sync-grn-cost-centre.mjs. Revert: DROP TABLE.
 ];
 
 export type MigrationHealth = {
