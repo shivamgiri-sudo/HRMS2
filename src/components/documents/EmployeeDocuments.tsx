@@ -113,6 +113,9 @@ function PendingDocumentsUploader({ employeeId }: { employeeId: string }) {
   );
 }
 
+/** Legacy import markers (legacy://document_master/...) point at no file on this server. */
+const isLegacyUnmigrated = (fileUrl?: string | null) => String(fileUrl ?? "").startsWith("legacy://");
+
 interface EmployeeDocumentsProps {
   employeeId: string;
   canUpload?: boolean;
@@ -296,7 +299,10 @@ export function EmployeeDocuments({ employeeId, canUpload = false, canDelete = f
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
-                      {doc.file_url ? (
+                      {isLegacyUnmigrated(doc.file_url) ? (
+                        // Row came from the db_bill import; the file bytes were never copied, so View/Download would 404.
+                        <Badge variant="outline" title="Imported from the legacy system; the file was not migrated">Legacy record — file not migrated</Badge>
+                      ) : doc.file_url ? (
                         <>
                           <Button
                             variant="ghost"
