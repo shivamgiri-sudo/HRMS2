@@ -47,5 +47,7 @@ if (ids.length) {
   await q("audit_action_log mentioning these exit requests / employee",
     `SELECT * FROM audit_action_log WHERE (entity_id IN (${ph}) OR entity_id = ?) ORDER BY created_at`, [...ids, empId]);
 }
+await q("employee dates", `SELECT DATE_FORMAT(date_of_joining,'%Y-%m-%d') doj, DATE_FORMAT(salary_start_date,'%Y-%m-%d') salary_start, DATE_FORMAT(date_of_exit,'%Y-%m-%d') date_of_exit, employment_status, updated_at FROM employees WHERE id = ?`, [empId]);
+await q("attendance since joining (one row per day)", `SELECT DATE_FORMAT(attendance_date,'%Y-%m-%d') d, status, first_in_time, last_out_time, source FROM attendance_daily_record WHERE employee_id = ? AND attendance_date >= DATE_SUB(CURDATE(), INTERVAL 25 DAY) ORDER BY attendance_date`, [empId]);
 await q("other exit-adjacent events for the employee (noc cases)", `SELECT id, status, initiated_at, last_working_day, updated_at FROM noc_case WHERE employee_id = ?`, [empId]);
 await c.end();
