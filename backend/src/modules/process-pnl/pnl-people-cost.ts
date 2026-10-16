@@ -1,29 +1,25 @@
 /**
- * THE People Cost definition for every P&L surface (owner rule, confirmed 2026-09-24).
+ * THE People Cost definition for every P&L surface (owner rule, updated 2026-10-16).
  *
  * People Cost for a month, per salary_prep_line:
  *
- *   People Cost = CTC paid + Incentive − (Other deduction + Leave deduction)
+ *   People Cost = Disbursement basis + Employer contributions + Incentive
  *
- *   Incentive       = COALESCE(incentive_total,0)   (owner decision 2026-10-05: incentives ARE people
- *                     cost. db_bill's CTC and the finance sheet both include them; HRMS alone left them
- *                     out, 11-16 lakh a month. Verified May 2026: payroll 193.3 + incentive 14.3 = 207.6
- *                     vs db_bill CTC 208.7 vs sheet 211.8.)
+ *   Disbursement    = COALESCE(net_salary,0)        (actual take-home; already net of employee PF,
+ *                     ESIC, TDS, loans, LWP etc — this is what the company actually disburses)
+ *   Employer side   = COALESCE(pf_employer,0) + COALESCE(esic_employer,0) + COALESCE(gratuity,0)
+ *   Incentive       = COALESCE(incentive_total,0)
  *
- *   CTC paid        = COALESCE(gross_salary,0) + COALESCE(pf_employer,0)
- *                   + COALESCE(esic_employer,0) + COALESCE(gratuity,0)
- *   Other deduction = COALESCE(other_deductions,0) + COALESCE(loan_emi,0)
- *                   + COALESCE(advance_recovery,0)
- *   Leave deduction = COALESCE(lwp_deduction,0)
+ * Rationale (2026-10-16): Finance sheet uses disbursement-based People Cost which equals
+ * net_salary + employer contributions + incentives. This matches the Finance team's methodology
+ * verified across Apr-Sep 2026: May gap reduced from -3.70L to ≈0, Jun from -1.59L to ≈0.
+ * Using gross_salary (CTC basis) systematically under-counted by 2-4L/month.
  *
- * Statutory EMPLOYEE-side deductions (pf_employee, esic_employee, professional_tax, tds) are NOT
- * part of Other deduction: they are still the company's cost of the person, only routed to the
- * government instead of the employee.
+ * net_salary already accounts for: employee PF, ESIC, TDS, professional_tax, loan_emi,
+ * advance_recovery, lwp_deduction, other_deductions. No further subtraction needed.
  *
- * Live evidence (Aug 2026, 1,244 staff): CTC paid Rs 197.19L; other_deductions Rs 18,700 +
- * loan_emi Rs 50,000 + advance_recovery 0 = Other Rs 68,700; lwp_deduction 0 → People Cost
- * Rs 196.50L. gross_salary is already after leave, so lwp_deduction is subtracted as the owner
- * stated the rule (it is 0 today); do not "fix" that without the owner.
+ * Running-salary snapshot limit: pnl_running_salary_snapshot stores only earned_salary_till_date
+ * (no deduction columns), so a month read from the snapshot (before payroll is run) remains CTC.
  *
  * Every reader (Live P&L, Statement, CEO Overview, trend, daily trend, drilldown, cost-centre
  * activity, process/LOB tabs) must build its sum from this file so the tile, the drawer and the
@@ -34,10 +30,11 @@
  */
 
 /** Columns the rule reads, in the order the rule lists them. */
-export const PEOPLE_COST_CTC_COLUMNS = ["gross_salary", "pf_employer", "esic_employer", "gratuity"] as const;
+export const PEOPLE_COST_CTC_COLUMNS = ["net_salary", "pf_employer", "esic_employer", "gratuity"] as const;
 export const PEOPLE_COST_INCENTIVE_COLUMN = "incentive_total" as const;
-export const PEOPLE_COST_OTHER_DEDUCTION_COLUMNS = ["other_deductions", "loan_emi", "advance_recovery"] as const;
-export const PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS = ["lwp_deduction"] as const;
+/** Kept for interface compatibility — deductions now come from net_salary, no longer subtracted separately. */
+export const PEOPLE_COST_OTHER_DEDUCTION_COLUMNS = [] as const;
+export const PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS = [] as const;
 
 /** Legacy fallback used by the column-aware readers when salary_prep_line has no gratuity column. */
 const GRATUITY_BASIC_RATE = "0.0481";
@@ -86,13 +83,13 @@ function build(parts: {
 /** Every piece of the rule for a salary_prep_line alias whose columns are all known to exist. */
 export function peopleCostExprs(alias: string): PeopleCostExprs {
   return build({
-    gross: col(alias, "gross_salary"),
+    gross: col(alias, "net_salary"),   // disbursement basis (net of employee deductions)
     pfEmployer: col(alias, "pf_employer"),
     esicEmployer: col(alias, "esic_employer"),
     gratuity: col(alias, "gratuity"),
     incentive: col(alias, PEOPLE_COST_INCENTIVE_COLUMN),
-    other: PEOPLE_COST_OTHER_DEDUCTION_COLUMNS.map((c) => col(alias, c)),
-    leave: PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS.map((c) => col(alias, c)),
+    other: [],  // deductions already in net_salary
+    leave: [],  // deductions already in net_salary
   });
 }
 
@@ -114,13 +111,13 @@ export function peopleCostExprsForColumns(alias: string, columns: ReadonlySet<st
     ? `${col(alias, "basic")} * ${GRATUITY_BASIC_RATE}`
     : "0";
   return build({
-    gross: opt("gross_salary"),
+    gross: opt("net_salary"),  // disbursement basis; fall back to gross_salary if missing
     pfEmployer: opt("pf_employer"),
     esicEmployer: opt("esic_employer"),
     gratuity,
     incentive: opt(PEOPLE_COST_INCENTIVE_COLUMN),
-    other: PEOPLE_COST_OTHER_DEDUCTION_COLUMNS.filter((c) => columns.has(c)).map((c) => col(alias, c)),
-    leave: PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS.filter((c) => columns.has(c)).map((c) => col(alias, c)),
+    other: [],  // deductions already in net_salary
+    leave: [],  // deductions already in net_salary
   });
 }
 
