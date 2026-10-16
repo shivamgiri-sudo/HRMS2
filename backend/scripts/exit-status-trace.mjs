@@ -18,7 +18,7 @@ const q = async (title, sql, params = []) => {
   catch (e) { console.log(`== ${title}: ${e.code ?? e.message}`); return []; }
 };
 
-const emp = await q("employee", `SELECT id, employee_code, full_name, active_status, employment_status, branch_id, date_of_joining, last_working_day, updated_at FROM employees WHERE employee_code = ?`, [CODE]);
+const emp = await q("employee", `SELECT id, employee_code, full_name, active_status, employment_status, branch_id, date_of_joining, updated_at FROM employees WHERE employee_code = ?`, [CODE]);
 if (!emp.length) { await c.end(); process.exit(0); }
 const empId = emp[0].id;
 
