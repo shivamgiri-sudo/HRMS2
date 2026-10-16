@@ -83,6 +83,24 @@ const scope: any = { companyId: "ops", isSuperAdmin: true, branchScope: all, pro
   console.log(`processes WITH active employees but missing from the dropdown: ${excluded.length}`);
   console.table(excluded.map((r) => ({ process: r.process_name, branch: r.branch_name, active_emps: r.active_emps, reason: reason(r) })));
 
+  // Multi-select (comma-separated ids): the result must be exactly the union of the single selections.
+  const [pa, pb] = wide.processes.slice(0, 2);
+  if (pa && pb) {
+    const dayM = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const lobNone = { kind: "none" } as const;
+    const both: any = await getShiftAdherence(dayM, 0, undefined, { processId: `${pa.id},${pb.id}`, lob: lobNone as any });
+    const one: any = await getShiftAdherence(dayM, 0, undefined, { processId: pa.id, lob: lobNone as any });
+    const two: any = await getShiftAdherence(dayM, 0, undefined, { processId: pb.id, lob: lobNone as any });
+    const ids = both.processes.map((p: any) => p.processId).sort().join(",");
+    const want = [...one.processes, ...two.processes].map((p: any) => p.processId).sort().join(",");
+    console.log(`multi-process adherence: ${both.processes.length} rows (single ${one.processes.length} + ${two.processes.length}); union matches: ${ids === want}; planned ${both.totals.planned} = ${one.totals.planned} + ${two.totals.planned}`);
+    if (ids !== want || both.totals.planned !== one.totals.planned + two.totals.planned) bad++;
+  }
+  const activeIds = new Set(wide.processes.map((p) => p.id));
+  const inactiveListed = wide.processes.length === 0 ? 0 : (await q(`SELECT COUNT(*) n FROM process_master WHERE id IN (${wide.processes.map(() => "?").join(",")}) AND (active_status <> 1 OR (close_date IS NOT NULL AND close_date < CURDATE()))`, wide.processes.map((p) => p.id)))[0].n;
+  console.log(`dropdown processes: ${activeIds.size}, inactive/closed among them: ${inactiveListed}`);
+  if (Number(inactiveListed) > 0) bad++;
+
   const y = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   const sh = await getShiftAdherence(y, 0, undefined, undefined);
   const lobSum = sh.processes.reduce((s, p) => s + p.lobs.reduce((a, l) => a + l.planned, 0), 0);

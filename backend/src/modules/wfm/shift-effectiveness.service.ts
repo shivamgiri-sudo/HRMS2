@@ -9,6 +9,7 @@
  * break_daily_summary(employee_id, shift_date, branch_id, process_id, total_break_minutes, ...),
  * break_sessions, break_alert_logs, break_settings (see backend/sql/376_break_management_module.sql).
  */
+import { parseIdList, idCondition } from "../../shared/idList.js";
 import { db } from "../../db/mysql.js";
 import { lobAnd, type LobFilter } from "../../shared/lobFilter.js";
 import {
@@ -61,8 +62,10 @@ export interface ScopeFilter { branchId?: string; processId?: string; lob: LobFi
 function scope(f: ScopeFilter): { sql: string; params: string[] } {
   let sql = "";
   const params: string[] = [];
-  if (f.branchId) { sql += " AND e.branch_id = ?"; params.push(f.branchId); }
-  if (f.processId) { sql += " AND e.process_id = ?"; params.push(f.processId); }
+  const bIds = parseIdList(f.branchId);
+  if (bIds.length) { const c = idCondition("e.branch_id", bIds); sql += ` AND ${c.sql}`; params.push(...c.params); }
+  const pIds = parseIdList(f.processId);
+  if (pIds.length) { const c = idCondition("e.process_id", pIds); sql += ` AND ${c.sql}`; params.push(...c.params); }
   const l = lobAnd(f.lob);
   sql += l.sql;
   params.push(...l.params);

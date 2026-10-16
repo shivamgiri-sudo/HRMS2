@@ -158,9 +158,11 @@ export async function getShiftAdherence(
     `SELECT e.process_id, COALESCE(pm.process_name, 'Unassigned') AS process_name, e.lob_id,
             COALESCE(NULLIF(TRIM(lm.lob_name), ''), 'No LOB') AS lob_name, COUNT(*) AS n
        FROM employees e
-       JOIN process_master pm ON pm.id = e.process_id AND pm.active_status = 1
+       JOIN process_master pm ON pm.id = e.process_id AND pm.active_status = 1 AND (pm.close_date IS NULL OR pm.close_date >= CURDATE())
+       LEFT JOIN branch_master pb ON pb.id = pm.branch_id
        LEFT JOIN lob_master lm ON lm.id = e.lob_id
       WHERE e.active_status = 1 AND e.process_id IS NOT NULL
+        AND (pm.branch_id IS NULL OR (pb.active_status = 1 AND (pb.close_date IS NULL OR pb.close_date >= CURDATE())))
         ${conds.map((c) => `AND ${c}`).join("\n        ")}
       GROUP BY e.process_id, pm.process_name, e.lob_id, lm.lob_name`,
     params,
@@ -175,6 +177,9 @@ export async function getShiftAdherence(
     if (!p.lobs.has(String(h.lob_name))) p.lobs.set(String(h.lob_name), { id: h.lob_id ? String(h.lob_id) : null, t: emptyTally() });
     procs.set(key, p);
   }
+
+  // Only ACTIVE processes on ACTIVE branches are listed (ruling 2026-10-16): drop rostered rows of any other process.
+  for (const key of [...procs.keys()]) if (key !== "none" && !headByProc.has(key)) procs.delete(key);
 
   // Worst adherence first, so the processes that need a conversation lead the table. Processes with
   // nothing measurable yet (no planned shifts due) sink to the bottom.

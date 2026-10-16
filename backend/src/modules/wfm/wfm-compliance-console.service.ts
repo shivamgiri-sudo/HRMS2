@@ -7,6 +7,7 @@
  * summaries, branch ranking, violation feed and trend. The result is cached per scope+month
  * so the three endpoints and every drill-down share a single scan of wfm_roster_assignment.
  */
+import { parseIdList, idCondition } from "../../shared/idList.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { TtlCache } from "../../shared/ttlCache.js";
@@ -45,8 +46,10 @@ export const realRoster = (alias: string) =>
 function employeeScope(f: ScopeFilter): { sql: string; params: string[] } {
   const parts: string[] = [];
   const params: string[] = [];
-  if (f.branchId) { parts.push("AND e.branch_id = ?"); params.push(f.branchId); }
-  if (f.processId) { parts.push("AND e.process_id = ?"); params.push(f.processId); }
+  const bIds = parseIdList(f.branchId);
+  if (bIds.length) { const c = idCondition("e.branch_id", bIds); parts.push(`AND ${c.sql}`); params.push(...c.params); }
+  const pIds = parseIdList(f.processId);
+  if (pIds.length) { const c = idCondition("e.process_id", pIds); parts.push(`AND ${c.sql}`); params.push(...c.params); }
   const l = f.lob ? lobWhere(f.lob) : { sql: "", params: [] as string[] };
   if (l.sql) { parts.push(l.sql); params.push(...l.params); }
   return { sql: parts.join(" "), params };

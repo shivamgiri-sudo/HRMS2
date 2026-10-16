@@ -1,3 +1,4 @@
+import { parseIdList, idCondition } from "../../shared/idList.js";
 import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -30,8 +31,10 @@ const router = Router();
 export function buildEmployeeScope(f: { branchId?: string; processId?: string; lob?: LobFilter }): { sql: string; params: string[] } {
   const parts: string[] = [];
   const params: string[] = [];
-  if (f.branchId) { parts.push('AND e.branch_id = ?'); params.push(f.branchId); }
-  if (f.processId) { parts.push('AND e.process_id = ?'); params.push(f.processId); }
+  const bIds = parseIdList(f.branchId);
+  if (bIds.length) { const c = idCondition('e.branch_id', bIds); parts.push(`AND ${c.sql}`); params.push(...c.params); }
+  const pIds = parseIdList(f.processId);
+  if (pIds.length) { const c = idCondition('e.process_id', pIds); parts.push(`AND ${c.sql}`); params.push(...c.params); }
   const lobSql = f.lob ? lobWhere(f.lob) : { sql: '', params: [] as string[] };
   if (lobSql.sql) { parts.push(lobSql.sql); params.push(...lobSql.params); }
   return { sql: parts.join(' '), params };

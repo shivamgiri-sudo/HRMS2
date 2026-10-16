@@ -5,6 +5,7 @@
  * Aliases: ra = wfm_roster_assignment, e = employees, att = attendance_daily_record,
  * bal = biometric_attendance_log.
  */
+import { parseIdList, idCondition } from "../../shared/idList.js";
 import { lobCondition, type LobFilter } from "../../shared/lobFilter.js";
 
 /**
@@ -51,8 +52,10 @@ export interface ScopeFilters {
 export function scopeSql(f: ScopeFilters): { sql: string; params: unknown[] } {
   let sql = "";
   const params: unknown[] = [];
-  if (f.branchId) { sql += " AND e.branch_id = ?"; params.push(f.branchId); }
-  if (f.processId) { sql += " AND e.process_id = ?"; params.push(f.processId); }
+  const bIds = parseIdList(f.branchId);
+  if (bIds.length) { const c = idCondition("e.branch_id", bIds); sql += ` AND ${c.sql}`; params.push(...c.params); }
+  const pIds = parseIdList(f.processId);
+  if (pIds.length) { const c = idCondition("e.process_id", pIds); sql += ` AND ${c.sql}`; params.push(...c.params); }
   const lobC = f.lob ? lobCondition(f.lob) : null;
   if (lobC) { sql += ` AND ${lobC.sql}`; params.push(...lobC.params); }
   return { sql, params };

@@ -112,3 +112,21 @@ describe("canAccessTarget (by-id rows)", () => {
     expect(await canAccessTarget(scope({ roles: ["ceo"] }), { branchId: B2 })).toBe(true);
   });
 });
+
+describe("multi-select (comma-separated ids)", () => {
+  const two = scope({
+    roles: ["branch_head"], branchId: B1,
+    assignments: [{ scopeType: "branch", branchId: B1 }, { scopeType: "branch", branchId: B2 }] as UserBusinessScope["assignments"],
+  });
+  it("every named branch must be in scope", async () => {
+    expect(await decideConsoleScope(two, asked(`${B1},${B2}`), lookup)).toEqual({ ok: true, inject: {} });
+    expect(await decideConsoleScope(two, asked(`${B1},33333333-3333-3333-3333-333333333333`), lookup)).toMatchObject({ ok: false, status: 403 });
+  });
+  it("every named process must be in scope and sit under one of the named branches", async () => {
+    expect(await decideConsoleScope(two, asked(`${B1},${B2}`, `${P1},${P2}`), lookup)).toEqual({ ok: true, inject: {} });
+    expect(await decideConsoleScope(two, asked(B1, `${P1},${P2}`), lookup)).toMatchObject({ ok: false, status: 403 });
+  });
+  it("a single id behaves exactly as before", async () => {
+    expect(await decideConsoleScope(two, asked(B1), lookup)).toEqual({ ok: true, inject: {} });
+  });
+});

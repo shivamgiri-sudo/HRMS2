@@ -13,6 +13,7 @@
  *   outcome, outcome_date
  */
 
+import { parseIdList, idCondition } from '../../shared/idList.js';
 import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
@@ -38,10 +39,10 @@ export function buildInterventionEmployeeFilter(
 ): { sql: string; params: string[] } {
   const parts: string[] = [];
   const params: string[] = [];
-  const branchId = typeof q.branchId === 'string' ? q.branchId.trim() : '';
-  const processId = typeof q.processId === 'string' ? q.processId.trim() : '';
-  if (branchId) { parts.push('AND e.branch_id = ?'); params.push(branchId); }
-  if (processId) { parts.push('AND e.process_id = ?'); params.push(processId); }
+  const bIds = parseIdList(q.branchId);
+  const pIds = parseIdList(q.processId);
+  if (bIds.length) { const c = idCondition('e.branch_id', bIds); parts.push(`AND ${c.sql}`); params.push(...c.params); }
+  if (pIds.length) { const c = idCondition('e.process_id', pIds); parts.push(`AND ${c.sql}`); params.push(...c.params); }
   const l = lobWhere(lob);
   if (l.sql) { parts.push(l.sql); params.push(...l.params); }
   if (scope) { parts.push(`AND ${scope.sql}`); params.push(...(scope.params as string[])); }

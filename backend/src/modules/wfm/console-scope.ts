@@ -17,6 +17,7 @@
  * is limited to several branches and named none gets a 400 asking them to pick one, because silently combining
  * would need every query rewritten; the UI is expected to send a branch (it auto-selects one for scoped users).
  */
+import { parseIdList } from "../../shared/idList.js";
 import type { NextFunction, Request, Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -119,23 +120,26 @@ export async function decideConsoleScope(
   const branches = allowedBranchIds(scope) ?? [];
   const procs = assignedProcessIds(scope);
 
-  if (asked.branchId) {
-    const branchOk = branches.includes(asked.branchId);
+  // Multi-select: each of branchId / processId may be several comma-separated ids. EVERY named id must be in scope.
+  const askedBranches = parseIdList(asked.branchId);
+  const askedProcesses = parseIdList(asked.processId);
+  for (const bid of askedBranches) {
+    const branchOk = branches.includes(bid);
     // A process-level user may name the branch of a process they are assigned to.
     let viaProcess = false;
     if (!branchOk && procs.length) {
-      for (const p of procs) { if ((await lookupProcess(p)).branchId === asked.branchId) { viaProcess = true; break; } }
+      for (const p of procs) { if ((await lookupProcess(p)).branchId === bid) { viaProcess = true; break; } }
     }
     if (!branchOk && !viaProcess) return { ok: false, status: 403, message: OUT_OF_SCOPE_MSG };
   }
-  if (asked.processId) {
-    const p = await lookupProcess(asked.processId);
-    const ok = procs.includes(asked.processId) || (p.branchId !== null && branches.includes(p.branchId));
+  for (const pid of askedProcesses) {
+    const p = await lookupProcess(pid);
+    const ok = procs.includes(pid) || (p.branchId !== null && branches.includes(p.branchId));
     if (!ok) return { ok: false, status: 403, message: OUT_OF_SCOPE_MSG };
-    // The process must belong to the branch the caller named, if they named one.
-    if (asked.branchId && p.branchId && p.branchId !== asked.branchId) return { ok: false, status: 403, message: OUT_OF_SCOPE_MSG };
+    // Each process must belong to one of the branches the caller named, if they named any.
+    if (askedBranches.length && p.branchId && !askedBranches.includes(p.branchId)) return { ok: false, status: 403, message: OUT_OF_SCOPE_MSG };
   }
-  if (asked.branchId || asked.processId) return { ok: true, inject: {} };
+  if (askedBranches.length || askedProcesses.length) return { ok: true, inject: {} };
 
   // Nothing named: inject the one branch / process the caller is limited to.
   if (!requireSelection) return { ok: true, inject: {} };
@@ -217,8 +221,8 @@ const MAS_ACTIVE_BRANCH =
 
 /** Branch and Process dropdown options limited to what the caller may see: active, MAS Callnet only. */
 export async function getConsoleOptions(scope: UserBusinessScope, opts: { from?: string } = {}): Promise<ConsoleOptions> {
-  // A process that closed inside (or after the start of) the selected date range still has data to analyse.
-  const from = opts.from && /^\d{4}-\d{2}-\d{2}$/.test(opts.from) ? opts.from : null;
+  // Owner ruling 2026-10-16: the dropdowns list ACTIVE processes on ACTIVE branches only (no closed or inactive
+  // ones), whatever the date range. `opts` is kept so callers need no change.
   const orgWide = isOrgWide(scope);
   const allowed = allowedBranchIds(scope); // null = org-wide
   const processIds = assignedProcessIds(scope);
@@ -238,11 +242,10 @@ export async function getConsoleOptions(scope: UserBusinessScope, opts: { from?:
     `SELECT pm.id, pm.process_name, pm.branch_id
        FROM process_master pm
        LEFT JOIN branch_master b ON b.id = pm.branch_id
-      WHERE (pm.close_date IS NULL OR pm.close_date >= COALESCE(?, CURDATE()))
-        AND (pm.active_status = 1 OR (? IS NOT NULL AND pm.close_date IS NOT NULL))
+      WHERE pm.active_status = 1 AND (pm.close_date IS NULL OR pm.close_date >= CURDATE())
         AND (pm.branch_id IS NULL OR (${MAS_ACTIVE_BRANCH})) AND ${ps.sql}
       ORDER BY pm.process_name`,
-    [from, from, ...ps.params],
+    ps.params,
   );
 
   // Branches: the caller's own, plus the branch of any process they are assigned to.
