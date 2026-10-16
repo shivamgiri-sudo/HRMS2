@@ -5,10 +5,18 @@ import type { BranchHeadHealthPayload } from "../../../../../backend/src/modules
 import type { HeadBranch } from "../../../../../backend/src/modules/branch-head-health/scope";
 import { AttentionList } from "./AttentionList";
 import { ProcessCoveragePanel } from "./ProcessCoveragePanel";
-import { LeaderboardPanel, SectionPanel } from "./SectionPanels";
+import { LeaderboardPanel } from "./SectionPanels";
 import { CallmasterPanel } from "./CallmasterPanel";
 import { OperationsPanel, QualityPanel } from "./OperationsPanel";
 import { StatusChip } from "./StatusChip";
+import { FinancePanel } from "./FinancePanel";
+import { ProcessPnlPanel } from "./ProcessPnlPanel";
+import { AttendanceDetailPanel } from "./AttendanceDetailPanel";
+import { HeadcountPanel } from "./HeadcountPanel";
+import { HiringPanel } from "./HiringPanel";
+import { AttritionPanel } from "./AttritionPanel";
+import { BacklogPanel } from "./BacklogPanel";
+import { ScoreBand } from "./ScoreBand";
 import { BranchHeadControls } from "./BranchHeadControls";
 
 export interface BranchHeadLayoutProps {
@@ -53,6 +61,7 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
             <div className="text-right">
               <div className="text-[28px] font-extrabold leading-none text-slate-900">{score ? Math.round(score.score) : "—"}<span className="text-[13px] font-semibold text-slate-700">/100</span></div>
               <div className="text-[12px] text-slate-700">{score ? "Health score" : "Score unavailable"}</div>
+              {score ? <ScoreBand score={score.score} /> : null}
             </div>
             {score && (score.pillars.length > 0 || score.excluded.length > 0) ? (
               <div className="w-full border-t border-slate-100 pt-3 text-[13px] text-slate-800">
@@ -71,12 +80,13 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
             ) : null}
           </div>
           <Panel title="Attention and wins"><AttentionList attention={overview.attention} positives={overview.positives} /></Panel>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <SectionPanel title="People" section={overview.people} />
-            <SectionPanel title="Attendance" section={overview.attendance} />
-            <SectionPanel title="Hiring" section={overview.hiring} />
-            <SectionPanel title="Finance" section={overview.finance} />
-          </div>
+          <FinancePanel section={overview.finance} />
+          <ProcessPnlPanel section={overview.processPnl} />
+          <AttendanceDetailPanel section={overview.attendance} />
+          <HeadcountPanel section={overview.people} />
+          <HiringPanel section={overview.hiring} />
+          <AttritionPanel section={overview.attrition} />
+          <BacklogPanel section={overview.backlogs} />
           <LeaderboardPanel section={overview.leaderboard} />
           {overview.operations || overview.quality || overview.callmaster ? (() => {
             const panels = (

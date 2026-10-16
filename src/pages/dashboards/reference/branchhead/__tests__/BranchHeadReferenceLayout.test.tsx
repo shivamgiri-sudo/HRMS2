@@ -6,6 +6,7 @@ import type { BranchHeadHealthPayload, SectionResult } from "../../../../../../b
 import type { BranchProcess } from "../../../../../../backend/src/modules/branch-head-health/processes";
 import { BranchHeadReferenceLayout } from "../BranchHeadReferenceLayout";
 import { DrilldownTable, defaultDrillBranch, drillMetricFor } from "../ProcessCoveragePanel";
+import * as fx from "./fixtures";
 import { branchHeadRoute } from "../../../../../config/routes/branchHeadRoute";
 
 vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn() } }));
@@ -22,8 +23,9 @@ const branch = (id: string, name: string, status: "healthy" | "watch" | "critica
     branch: { branchId: id, branchCode: id, branchName: name }, date: "2026-10-15", status,
     attention: [{ label: "Late arrivals", detail: "12 late today", severity: "warning" }],
     positives: [{ label: "Hiring on track", detail: "3 selected" }],
-    people: ok({ totalActive: 120 }), attendance: ok({ present: 90 }), hiring: ok({ openPositions: 4 }),
-    finance: ok({ opPct: 12 }), leaderboard: ok([{ manager: "Secret Manager", late: 5, shrinkagePct: null }]),
+    people: fx.ok(fx.people), attendance: fx.ok(fx.attendance), hiring: fx.ok(fx.hiring),
+    finance: fx.ok(fx.finance), leaderboard: ok([{ manager: "Secret Manager", late: 5, shrinkagePct: null }]),
+    attrition: fx.ok(fx.attrition), backlogs: fx.ok(fx.backlogs), processPnl: fx.ok(fx.pnl(3)),
   },
   score: status === "no_data" ? null : { score: 82, pillars: [], excluded: [] },
 });
@@ -55,8 +57,9 @@ describe("BranchHeadReferenceLayout", () => {
     const out = html(payload({ branches: [b] }));
     expect(out).toContain("P&amp;L source timed out");
     expect(out).toContain("Finance");
-    expect(out).toContain("Total Active");
-    expect(out).toContain("Open Positions");
+    expect(out).toContain("Headcount");
+    expect(out).toContain("Open positions");
+    expect(out).toContain("Process P&amp;L - P&amp;L pages basis");
   });
   it("coverage badge text for each tier", () => {
     const tiers = ["full", "inbound_quality", "outbound_sale", "baseline", "not_wired"] as const;
@@ -130,10 +133,29 @@ describe("BranchHeadReferenceLayout", () => {
     expect(out).toContain("Asha Roy");
     expect(out).not.toContain("QA quality");
   });
-  it("section with only nested data shows the empty state, not an empty list", () => {
+  it("an empty hiring section shows the hiring empty state, not an empty list", () => {
     const b = branch("b1", "Kolkata");
-    b.overview.hiring = ok({ nested: { a: 1 } });
-    expect(html(payload({ branches: [b] }))).toContain("No data for this date");
+    b.overview.hiring = fx.emptySection();
+    expect(html(payload({ branches: [b] }))).toContain("No hiring data for this date");
+  });
+  it("hero shows the score band next to the score and keeps the status chip", () => {
+    const out = html(payload());
+    expect(out).toContain("Good");
+    expect(out).toContain("Healthy");
+    const poor = branch("b1", "Kolkata", "critical");
+    poor.score = { score: 40, pillars: [], excluded: [] };
+    expect(html(payload({ branches: [poor] }))).toContain("Poor");
+  });
+  it("renders the new panels in the agreed order", () => {
+    const out = html(payload());
+    const order = ["Attention and wins", "Running P&amp;L - month to date", "Process P&amp;L - P&amp;L pages basis", "Attendance detail", ">Headcount<", ">Hiring<", "Attrition and retention", ">Backlogs<", "Data health"];
+    const at = order.map((t) => out.indexOf(t));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+  it("branch-level output has no person names from the fixtures", () => {
+    const out = html(payload());
+    for (const n of ["Secret Manager", "Asha Roy"]) expect(out).not.toContain(n);
   });
   it("route is omitted when the flag is off and present when on", () => {
     expect(branchHeadRoute(false, <div />)).toBeNull();
