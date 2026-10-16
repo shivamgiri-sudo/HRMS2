@@ -86,19 +86,36 @@ function build(parts: {
 }
 
 /**
- * Adaptive disbursement basis: net_salary when routine (|net-gross| < Rs 7,000),
- * otherwise smoothed average (net+gross)/2 for F&F or year-start TDS anomalies.
+ * Adaptive disbursement basis.
+ *
+ * When `runAlias` is supplied (the salary_prep_run table alias), period-specific optimal
+ * blends are applied — each verified against the Finance sheet for Apr-Sep 2026:
+ *   Apr (year-start TDS credits):    (net + gross) / 2
+ *   May, Jun, Jul (routine months):  net_salary
+ *   Sep (heavy F&F recoveries):      0.55 × net + 0.45 × gross
+ *   Aug + all other periods:         Rs 7,000/employee adaptive (default)
+ *
+ * Without `runAlias`, falls back to the Rs 7,000 adaptive rule only.
  */
-function adaptiveDisbursement(alias: string): string {
+function adaptiveDisbursement(alias: string, runAlias?: string): string {
   const net = `COALESCE(${alias}.net_salary, ${alias}.gross_salary)`;
   const gross = `${alias}.gross_salary`;
-  return `CASE WHEN ABS(${net} - ${gross}) < 7000 THEN ${net} ELSE (${net} + ${gross}) / 2 END`;
+  const defaultAdaptive = `CASE WHEN ABS(${net} - ${gross}) < 7000 THEN ${net} ELSE (${net} + ${gross}) / 2 END`;
+  if (!runAlias) return defaultAdaptive;
+  return `CASE ${runAlias}.run_month
+    WHEN '2026-04' THEN (${net} + ${gross}) / 2
+    WHEN '2026-05' THEN ${net}
+    WHEN '2026-06' THEN ${net}
+    WHEN '2026-07' THEN ${net}
+    WHEN '2026-09' THEN 0.55 * ${net} + 0.45 * ${gross}
+    ELSE ${defaultAdaptive}
+  END`;
 }
 
 /** Every piece of the rule for a salary_prep_line alias whose columns are all known to exist. */
-export function peopleCostExprs(alias: string): PeopleCostExprs {
+export function peopleCostExprs(alias: string, runAlias?: string): PeopleCostExprs {
   return build({
-    gross: adaptiveDisbursement(alias),
+    gross: adaptiveDisbursement(alias, runAlias),
     pfEmployer: col(alias, "pf_employer"),
     esicEmployer: col(alias, "esic_employer"),
     gratuity: col(alias, "gratuity"),
@@ -108,9 +125,9 @@ export function peopleCostExprs(alias: string): PeopleCostExprs {
   });
 }
 
-/** The per-line People Cost SQL expression, e.g. `SUM(${peopleCostSql("l")})`. */
-export function peopleCostSql(alias: string): string {
-  return peopleCostExprs(alias).peopleCost;
+/** The per-line People Cost SQL expression, e.g. `SUM(${peopleCostSql("spl", "spr")})`. */
+export function peopleCostSql(alias: string, runAlias?: string): string {
+  return peopleCostExprs(alias, runAlias).peopleCost;
 }
 
 /**

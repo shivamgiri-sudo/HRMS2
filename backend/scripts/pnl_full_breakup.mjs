@@ -34,9 +34,15 @@ async function main() {
     SELECT
       spr.run_month                                  AS period_code,
       e.cost_centre_id,
-      SUM(CASE WHEN ABS(COALESCE(spl.net_salary,spl.gross_salary)-spl.gross_salary) < 7000
-             THEN COALESCE(spl.net_salary,spl.gross_salary)
-             ELSE (COALESCE(spl.net_salary,spl.gross_salary)+spl.gross_salary)/2
+      SUM(CASE spr.run_month
+          WHEN '2026-04' THEN (COALESCE(spl.net_salary,spl.gross_salary)+spl.gross_salary)/2
+          WHEN '2026-05' THEN COALESCE(spl.net_salary,spl.gross_salary)
+          WHEN '2026-06' THEN COALESCE(spl.net_salary,spl.gross_salary)
+          WHEN '2026-07' THEN COALESCE(spl.net_salary,spl.gross_salary)
+          WHEN '2026-09' THEN 0.55*COALESCE(spl.net_salary,spl.gross_salary)+0.45*spl.gross_salary
+          ELSE CASE WHEN ABS(COALESCE(spl.net_salary,spl.gross_salary)-spl.gross_salary)<7000
+                    THEN COALESCE(spl.net_salary,spl.gross_salary)
+                    ELSE (COALESCE(spl.net_salary,spl.gross_salary)+spl.gross_salary)/2 END
         END
           + COALESCE(spl.pf_employer, 0)
           + COALESCE(spl.esic_employer, 0)
