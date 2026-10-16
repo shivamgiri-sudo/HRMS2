@@ -685,7 +685,26 @@ async function payroll(code:string,filters:VerifiedAdapterFilters,scope:BranchSc
   // decision. Left mapped rather than deleted: this is a generic field resolver shared
   // by every report code, and the column stays valid (always 0) for historical rows.
   const mapping:Record<string,string[]>={
-    WORKING_DAYS:["working_days","paid_working_days"],PRESENT_DAYS:["present_days"],PAID_LEAVE_DAYS:["leave_days"],WEEK_OFF_DAYS:["eligible_weekoff_days"],HOLIDAY_DAYS:["eligible_holiday_days"],LWP_DAYS:["lwp_days"],PAYABLE_DAYS:["final_payable_days","paid_working_days","working_days"],OVERTIME_HOURS:["overtime_hours"],BASIC_PAY:["basic"],HRA:["hra"],SPECIAL_ALLOWANCE:["special_allowance"],CONVEYANCE_ALLOWANCE:["conveyance_allowance"],OTHER_ALLOWANCE:["other_allowance"],VARIABLE_PAY:["variable_pay"],INCENTIVE_AMOUNT:["incentive_amount"],OVERTIME_AMOUNT:["overtime_amount","holiday_work_extra_payout"],ARREAR_AMOUNT:["arrear_amount"],REIMBURSEMENT_AMOUNT:["reimbursement_amount"],GROSS_EARNINGS:["gross_salary"],LWP_DEDUCTION:["lwp_deduction"],PF_EMPLOYEE:["pf_employee"],PF_EMPLOYER:["pf_employer"],ESIC_EMPLOYEE:["esic_employee"],ESIC_EMPLOYER:["esic_employer"],PROFESSIONAL_TAX:["professional_tax"],TDS:["tds_amount","tds"],LOAN_DEDUCTION:["loan_deduction"],ADVANCE_DEDUCTION:["advance_recovery"],OTHER_DEDUCTION:["other_deduction"],TOTAL_DEDUCTIONS:["total_deductions"],NET_PAY:["net_salary"],PAYROLL_EXCEPTION_COUNT:["exception_count"],PAYROLL_VARIANCE_AMOUNT:["variance_amount"],PAYROLL_VARIANCE_PERCENTAGE:["variance_percentage"],PAYSLIP_STATUS:["payroll_validation_status","status"],DATA_SOURCE:["attendance_source"]
+    WORKING_DAYS:["working_days","paid_working_days"],PRESENT_DAYS:["present_days"],PAID_LEAVE_DAYS:["leave_days"],WEEK_OFF_DAYS:["eligible_weekoff_days"],HOLIDAY_DAYS:["eligible_holiday_days"],LWP_DAYS:["lwp_days"],PAYABLE_DAYS:["final_payable_days","paid_working_days","working_days"],OVERTIME_HOURS:["overtime_hours"],BASIC_PAY:["basic"],HRA:["hra"],SPECIAL_ALLOWANCE:["special_allowance"],
+    // These earning components are NOT flat spl columns — they live in salary_prep_line_component.
+    // The adapter will resolve to NULL (directField returns null when no candidate matches),
+    // which is correct behaviour: the report engine will surface them as 0/blank and the
+    // consumer can use the bpo-payroll-statutory-master's component breakdown query instead.
+    CONVEYANCE_ALLOWANCE:["conveyance_allowance"],OTHER_ALLOWANCE:["other_allowance"],VARIABLE_PAY:["variable_pay"],
+    // Corrected column names — actual salary_prep_line columns confirmed 2026-10-16:
+    INCENTIVE_AMOUNT:["incentive_total"],         // was: incentive_amount
+    OVERTIME_AMOUNT:["overtime_amount","holiday_work_extra_payout"],
+    ARREAR_AMOUNT:["arrears_amount"],             // was: arrear_amount (note the s)
+    REIMBURSEMENT_AMOUNT:["reimbursement_total"], // was: reimbursement_amount
+    GROSS_EARNINGS:["gross_salary"],LWP_DEDUCTION:["lwp_deduction"],PF_EMPLOYEE:["pf_employee"],PF_EMPLOYER:["pf_employer"],ESIC_EMPLOYEE:["esic_employee"],ESIC_EMPLOYER:["esic_employer"],PROFESSIONAL_TAX:["professional_tax"],TDS:["tds_amount","tds"],
+    LOAN_DEDUCTION:["loan_emi"],                  // was: loan_deduction
+    ADVANCE_DEDUCTION:["advance_recovery"],
+    OTHER_DEDUCTION:["other_deductions"],         // was: other_deduction (note the s)
+    TOTAL_DEDUCTIONS:["total_deductions"],NET_PAY:["net_salary"],
+    // Not present as flat columns — will resolve to NULL; variance/exception tracked separately.
+    PAYROLL_EXCEPTION_COUNT:["exception_count"],PAYROLL_VARIANCE_AMOUNT:["variance_amount"],PAYROLL_VARIANCE_PERCENTAGE:["variance_percentage"],
+    PAYSLIP_STATUS:["payroll_validation_status","status"],
+    DATA_SOURCE:["attendance_data_source","attendance_source"] // was: attendance_source (actual: attendance_data_source)
   };
   for(const [key,candidates] of Object.entries(mapping))addField(fields,key,directField("spl","salary_prep_line",lineColumns,candidates));
   const salarySql=await sourceTableSql("employee_salary_assignment");const salaryColumns=await sourceColumns("employee_salary_assignment");
