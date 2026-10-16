@@ -55,6 +55,9 @@ function notFound(message: string): never {
 
 // ---------------------------------------------------------------------------
 // GET /api/finance/pnl/corrections
+// pnl_monthly_correction was created (migration 2221) without a COLLATE, so on MySQL 8 it is utf8mb4_0900_ai_ci while
+// auth_user / employees are utf8mb4_unicode_ci: every join on created_by must pin the collation or it throws
+// "Illegal mix of collations" (500 on list, and on create/update after the row is already written).
 // ---------------------------------------------------------------------------
 router.get(
   "/pnl/corrections",
@@ -86,8 +89,8 @@ router.get(
               COALESCE(e.full_name, au.email) AS created_by_name,
               pmc.created_at, pmc.updated_at
          FROM pnl_monthly_correction pmc
-         LEFT JOIN auth_user au ON au.id = pmc.created_by
-         LEFT JOIN employees e ON e.user_id = pmc.created_by
+         LEFT JOIN auth_user au ON au.id = pmc.created_by COLLATE utf8mb4_unicode_ci
+         LEFT JOIN employees e ON e.user_id = pmc.created_by COLLATE utf8mb4_unicode_ci
          ${where}
          ORDER BY pmc.created_at DESC`,
       params,
@@ -141,8 +144,8 @@ router.post(
               COALESCE(e.full_name, au.email) AS created_by_name,
               pmc.created_at, pmc.updated_at
          FROM pnl_monthly_correction pmc
-         LEFT JOIN auth_user au ON au.id = pmc.created_by
-         LEFT JOIN employees e ON e.user_id = pmc.created_by
+         LEFT JOIN auth_user au ON au.id = pmc.created_by COLLATE utf8mb4_unicode_ci
+         LEFT JOIN employees e ON e.user_id = pmc.created_by COLLATE utf8mb4_unicode_ci
         WHERE pmc.id = ?`,
       [id],
     );
@@ -184,8 +187,8 @@ router.put(
               COALESCE(e.full_name, au.email) AS created_by_name,
               pmc.created_at, pmc.updated_at
          FROM pnl_monthly_correction pmc
-         LEFT JOIN auth_user au ON au.id = pmc.created_by
-         LEFT JOIN employees e ON e.user_id = pmc.created_by
+         LEFT JOIN auth_user au ON au.id = pmc.created_by COLLATE utf8mb4_unicode_ci
+         LEFT JOIN employees e ON e.user_id = pmc.created_by COLLATE utf8mb4_unicode_ci
         WHERE pmc.id = ?`,
       [id],
     );
