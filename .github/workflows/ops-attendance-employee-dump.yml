@@ -26,6 +26,7 @@ on:
           - attendance-cases-punch-trace
           - roster-tables-compare
           - attendance-attribution-vs-datd
+          - attendance-stored-vs-attributed
       from:
         description: "From date YYYY-MM-DD"
         required: true
