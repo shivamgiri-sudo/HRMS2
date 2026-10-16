@@ -14,7 +14,7 @@ export const TAB_FILTER_SUPPORT: Record<string, FilterKey[]> = {
   trends: ["branch", "process", "lob", "dates"],
   compliance: ["branch", "process", "lob", "dates"],
   shifts: ["branch", "process", "lob", "dates"],
-  interventions: ["branch", "process", "lob"],
+  interventions: ["branch", "process", "lob", "dates"],
   audit: ["branch", "process", "lob", "dates"],
 };
 

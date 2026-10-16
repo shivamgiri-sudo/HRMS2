@@ -3,6 +3,7 @@
  * Analytics panel opens a drawer backed by one of these. They reuse classifyRow so the numbers match the
  * headline exactly. Sections with no data return empty arrays (the UI renders "None").
  */
+import { parseIdList, idCondition } from '../../shared/idList.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { lobAnd, type LobFilter } from '../../shared/lobFilter.js';
@@ -255,7 +256,9 @@ export async function getCostDetail(
 /** History behind one forecast day: the same weekday over the last 8 weeks (unplanned-absence rate). */
 export async function getForecastDayDetail(branchId: string, date: string, lob: LobFilter, processId?: string) {
   const lobSql = lobAnd(lob);
-  const proc = processId ? { sql: ' AND e.process_id = ?', params: [processId] } : { sql: '', params: [] as string[] };
+  const br = idCondition('e.branch_id', parseIdList(branchId).length ? parseIdList(branchId) : [branchId]);
+  const pIds = parseIdList(processId);
+  const proc = pIds.length ? (() => { const c = idCondition('e.process_id', pIds); return { sql: ` AND ${c.sql}`, params: c.params }; })() : { sql: '', params: [] as string[] };
   const yesterday = addDays(localDateStr(), -1);
   const from = addDays(yesterday, -56);
   const dowMysql = new Date(`${date}T00:00:00Z`).getUTCDay() + 1; // MySQL DAYOFWEEK: 1=Sunday
@@ -267,11 +270,11 @@ export async function getForecastDayDetail(branchId: string, date: string, lob: 
        FROM employees e
        JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
        LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
-      WHERE e.branch_id = ? AND e.active_status = 1${lobSql.sql}${proc.sql}
+      WHERE ${br.sql} AND e.active_status = 1${lobSql.sql}${proc.sql}
         AND ra.roster_date BETWEEN ? AND ? AND DAYOFWEEK(ra.roster_date) = ?
         AND ${realRosterSql('ra')}
       GROUP BY ra.roster_date ORDER BY ra.roster_date`,
-    [branchId, ...lobSql.params, ...proc.params, from, yesterday, dowMysql]
+    [...br.params, ...lobSql.params, ...proc.params, from, yesterday, dowMysql]
   );
   const history = rows.map(r => {
     const planned = Number(r.planned) || 0, absent = Number(r.absent) || 0;

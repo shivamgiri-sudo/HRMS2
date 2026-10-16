@@ -6,6 +6,7 @@
  * 3. Cost of Non-Adherence — revenue/productivity impact calculation
  * 4. Shrinkage Forecasting — pattern detection for proactive planning
  */
+import { parseIdList, idCondition } from '../../shared/idList.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { lobAnd, type LobFilter } from '../../shared/lobFilter.js';
@@ -161,7 +162,10 @@ export async function fetchBranchRosterRows(
   processId?: string
 ): Promise<Array<Record<string, any>>> {
   const lobSql = lobAnd(lob);
-  const proc = processId ? { sql: ' AND e.process_id = ?', params: [processId] } : { sql: '', params: [] as string[] };
+  // branchId may be several comma-separated ids: the figures then pool every selected branch.
+  const br = idCondition('e.branch_id', parseIdList(branchId).length ? parseIdList(branchId) : [branchId]);
+  const pIds = parseIdList(processId);
+  const proc = pIds.length ? (() => { const c = idCondition('e.process_id', pIds); return { sql: ` AND ${c.sql}`, params: c.params }; })() : { sql: '', params: [] as string[] };
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        e.id AS employee_id,
@@ -186,11 +190,11 @@ export async function fetchBranchRosterRows(
      LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
      LEFT JOIN process_master pm ON pm.id = e.process_id
-     WHERE e.branch_id = ?
+     WHERE ${br.sql}
        AND e.active_status = 1${lobSql.sql}${proc.sql}
        AND ra.roster_date BETWEEN ? AND ?
        AND ${realRosterSql('ra')}`,
-    [branchId, ...lobSql.params, ...proc.params, from, to]
+    [...br.params, ...lobSql.params, ...proc.params, from, to]
   );
   return rows as Array<Record<string, any>>;
 }
@@ -256,11 +260,14 @@ export async function getWeeklyShrinkageIntelligence(
   const end = dates[6];
   const prevStart = addDays(start, -7);
 
+  const branchIdList = parseIdList(branchId).length ? parseIdList(branchId) : [branchId];
   const [branchRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, branch_name FROM branch_master WHERE id = ?`,
-    [branchId]
+    branchIdList.length > 1
+      ? `SELECT id, branch_name FROM branch_master WHERE id IN (${branchIdList.map(() => '?').join(',')}) ORDER BY branch_name`
+      : `SELECT id, branch_name FROM branch_master WHERE id = ?`,
+    branchIdList
   );
-  const branchName = branchRows[0]?.branch_name ? String(branchRows[0].branch_name) : 'Unknown';
+  const branchName = branchRows.length ? branchRows.map((r) => String(r.branch_name)).join(', ') : 'Unknown';
 
   const [rows, prevRows, budgetPct] = await Promise.all([
     fetchBranchRosterRows(branchId, start, end, lob, processId),
@@ -325,10 +332,13 @@ export async function getWeeklyShrinkageIntelligence(
 
 export async function loadBudgetPct(branchId: string): Promise<number> {
   try {
+    // Several branches: the headcount-weighted budget across all of them.
+    const ids = parseIdList(branchId);
+    const cond = idCondition('branch_id', ids.length ? ids : [branchId]);
     const [mandateRows] = await db.execute<RowDataPacket[]>(
       `SELECT SUM(mandated_hc * shrinkage_pct) / NULLIF(SUM(mandated_hc), 0) AS shrinkage_buffer_pct
-         FROM workforce_mandate WHERE branch_id = ? AND active_status = 1`,
-      [branchId]
+         FROM workforce_mandate WHERE ${cond.sql} AND active_status = 1`,
+      cond.params
     );
     const v = mandateRows[0]?.shrinkage_buffer_pct;
     // A configured 0% budget is valid (was treated as "unset" by a truthiness check).
@@ -345,7 +355,10 @@ export async function getShrinkageForecast(
   processId?: string
 ): Promise<ShrinkageForecast> {
   const lobSql = lobAnd(lob);
-  const proc = processId ? { sql: ' AND e.process_id = ?', params: [processId] } : { sql: '', params: [] as string[] };
+  // branchId may be several comma-separated ids: the figures then pool every selected branch.
+  const br = idCondition('e.branch_id', parseIdList(branchId).length ? parseIdList(branchId) : [branchId]);
+  const pIds = parseIdList(processId);
+  const proc = pIds.length ? (() => { const c = idCondition('e.process_id', pIds); return { sql: ` AND ${c.sql}`, params: c.params }; })() : { sql: '', params: [] as string[] };
   const now = new Date();
   const today = localDateStr(now);
   const weekStart = addDays(mondayOf(now), 7);
@@ -363,12 +376,12 @@ export async function getShrinkageForecast(
      FROM employees e
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
      LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
-     WHERE e.branch_id = ?
+     WHERE ${br.sql}
        AND e.active_status = 1${lobSql.sql}${proc.sql}
        AND ra.roster_date BETWEEN ? AND ?
        AND ${realRosterSql('ra')}
      GROUP BY DAYOFWEEK(ra.roster_date), DAY(ra.roster_date)`,
-    [branchId, ...lobSql.params, ...proc.params, histFrom, histTo]
+    [...br.params, ...lobSql.params, ...proc.params, histFrom, histTo]
   );
 
   const dow = new Map<number, { planned: number; absent: number }>();

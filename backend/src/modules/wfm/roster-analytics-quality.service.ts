@@ -2,6 +2,7 @@
  * Roster Analytics — quality/adherence correlation and cost of non-adherence.
  * Split out of roster-analytics.service.ts (which re-exports both) to keep files small.
  */
+import { parseIdList, idCondition } from '../../shared/idList.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { lobCondition, type LobFilter } from '../../shared/lobFilter.js';
@@ -12,8 +13,10 @@ import { DEFAULT_HOURLY_COST_INR, INDUSTRY_AVG_SHRINKAGE, classifyRow, pearson, 
 export function employeeScope(branchId?: string, processId?: string, lob?: LobFilter) {
   const conditions = ['e.active_status = 1'];
   const params: unknown[] = [];
-  if (branchId) { conditions.push('e.branch_id = ?'); params.push(branchId); }
-  if (processId) { conditions.push('e.process_id = ?'); params.push(processId); }
+  const bIds = parseIdList(branchId);
+  if (bIds.length) { const c = idCondition('e.branch_id', bIds); conditions.push(c.sql); params.push(...c.params); }
+  const pIds = parseIdList(processId);
+  if (pIds.length) { const c = idCondition('e.process_id', pIds); conditions.push(c.sql); params.push(...c.params); }
   const lobCond = lob ? lobCondition(lob) : null;
   if (lobCond) { conditions.push(lobCond.sql); params.push(...lobCond.params); }
   return { conditions, params };

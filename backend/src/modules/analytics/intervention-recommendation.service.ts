@@ -20,7 +20,7 @@ import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { db as pool } from '../../db/mysql.js';
 import { lobWhere, readLobFilter } from '../../shared/lobFilter.js';
 import { writeAuditLog } from '../../shared/auditLog.js';
-import { buildCasesQuery, getSummaryExtras, parseRecommendations } from './intervention-cases.service.js';
+import { buildCasesQuery, generatedRange, getSummaryExtras, parseRecommendations } from './intervention-cases.service.js';
 import {
   NON_WORKING_STATUSES, clampLimit, isValidDateOnly, normalizeOwner, normalizeTier, pctOf, tierFromScore,
 } from './intervention-calc.js';
@@ -675,7 +675,7 @@ export async function getPendingInterventions(req: Request, res: Response) {
     const empFilter = buildInterventionEmployeeFilter(req.query, lob, (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope);
 
     // Open cases only: newest case per employee, employee still active (see bucketWhere).
-    const { sql, params } = buildCasesQuery({ bucket: 'open', tier, owner, limit, emp: empFilter });
+    const { sql, params } = buildCasesQuery({ bucket: 'open', tier, owner, limit, emp: empFilter, range: generatedRange(req.query) });
     const [rows] = await pool.query<PendingInterventionRow[]>(sql, params);
     const data = rows.map((row) => ({ ...row, recommendations: parseRecommendations(row.recommendations) }));
 
@@ -815,10 +815,11 @@ export async function getInterventionOutcomes(req: Request, res: Response) {
     const empFilter = buildInterventionEmployeeFilter(req.query, lob, (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope);
     // The table is employee-keyed but has no branch/process/LOB columns; narrow via a subquery so the
     // unfiltered statement stays exactly as it was and no column names can become ambiguous.
+    const range = generatedRange(req.query, 'generated_at');
     const employeeScope = empFilter.sql
       ? `
-      WHERE employee_id IN (SELECT e.id FROM mas_hrms.employees e WHERE 1=1 ${empFilter.sql})`
-      : '';
+      WHERE employee_id IN (SELECT e.id FROM mas_hrms.employees e WHERE 1=1 ${empFilter.sql})${range.sql}`
+      : (range.sql ? ` WHERE 1=1${range.sql}` : '');
     const sql = `
       SELECT
         COUNT(*)                                               AS total_generated,
@@ -837,8 +838,9 @@ export async function getInterventionOutcomes(req: Request, res: Response) {
       FROM mas_hrms.employee_retention_recommendation${employeeScope}
     `;
 
-    const [rows] = await (empFilter.params.length
-      ? pool.query<OutcomeSummaryRow[]>(sql, empFilter.params)
+    const outParams = [...empFilter.params, ...range.params];
+    const [rows] = await (outParams.length
+      ? pool.query<OutcomeSummaryRow[]>(sql, outParams)
       : pool.query<OutcomeSummaryRow[]>(sql));
     const row = rows[0];
 
@@ -846,7 +848,7 @@ export async function getInterventionOutcomes(req: Request, res: Response) {
     const exited   = row?.exited_count   ?? 0;
     const resolved = retained + exited;
     const retentionSuccessRate = pctOf(retained, resolved);
-    const extras = await getSummaryExtras(empFilter);
+    const extras = await getSummaryExtras(empFilter, generatedRange(req.query));
 
     res.json({
       success: true,

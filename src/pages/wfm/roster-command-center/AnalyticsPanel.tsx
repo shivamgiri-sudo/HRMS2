@@ -59,13 +59,10 @@ function InsightStrip({ items, onPick }: { items: Insight[]; onPick: (i: Insight
 
 export default function AnalyticsPanel() {
   const { filters } = useRosterConsoleFilters();
-  // Shrinkage and Forecast are per-branch views, and Quality / Cost run on one scope: when several branches,
-  // processes or LOBs are ticked in the shared filter bar, this tab shows the FIRST of each (with a notice).
-  const firstOf = (v: string) => v.split(",")[0]?.trim() ?? "";
-  const multiPicked = [filters.branchId, filters.processId, filters.lobId].some((v) => v.includes(","));
-  const branchId = firstOf(filters.branchId) || ALL;
-  const processId = firstOf(filters.processId) || ALL;
-  const lobId = firstOf(filters.lobId);
+  // Multi-select: branchId / processId / lobId may each hold several comma-separated ids; the API pools them.
+  const branchId = filters.branchId || ALL;
+  const processId = filters.processId || ALL;
+  const lobId = filters.lobId;
   const branchSelected = branchId !== ALL;
 
   // Defaults follow the shared range's end date: its week for Shrinkage, its month for Quality / Cost.
@@ -183,7 +180,6 @@ export default function AnalyticsPanel() {
           </TabToolbar>
         )}
 
-        {multiPicked && <p className="flex items-center gap-1.5 text-xs text-slate-700" role="status"><Info className="h-3.5 w-3.5" aria-hidden />Analytics shows one branch, process and LOB at a time: using the first of each selected.</p>}
         {lobId && <FilterNote />}
         {(tab === "quality" || tab === "cost") && !branchSelected && (
           <p className="flex items-center gap-1.5 text-xs text-slate-600"><Info className="h-3.5 w-3.5" aria-hidden />No branch selected: showing all branches{processId !== ALL ? " for the chosen process" : ""}.</p>

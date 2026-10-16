@@ -181,7 +181,11 @@ export function branchParamGuard() {
     try {
       const scope = await getScope(req);
       if (!scope) return res.status(401).json({ success: false, message: "Unauthorized" });
-      if (await canAccessTarget(scope, { branchId: value })) return next();
+      // :branchId may carry several comma-separated ids (console multi-select): every one must be in scope.
+      const ids = parseIdList(value);
+      let allOk = ids.length > 0;
+      for (const id of ids) { if (!(await canAccessTarget(scope, { branchId: id }))) { allOk = false; break; } }
+      if (allOk) return next();
       return res.status(403).json({ success: false, error: OUT_OF_SCOPE_MSG, message: OUT_OF_SCOPE_MSG });
     } catch (err) {
       return next(err);

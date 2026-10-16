@@ -10,6 +10,7 @@
  * fallback tier count for the loaded list when the server summary has not answered.
  */
 import { Suspense, lazy, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Clock, Percent, RefreshCw, Shield, UserCheck, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -75,15 +76,21 @@ export default function InterventionsPanel() {
   const setTier = (v: string) => setTp({ tier: v });
   const setOwner = (v: string) => setTp({ owner: v });
   const [view, setView] = useState<View>(null);
-  const scope = scopeParams({ branchId, processId, lobId }).toString();
+  // The open-case queue shows EVERY pending case until a date range is picked on purpose (a `from` in the URL):
+  // then only cases raised in that window are listed and counted. The shell's default last-14-days is not applied.
+  const [urlParams] = useSearchParams();
+  const rangeOn = urlParams.has("from");
+  const rangeParams = rangeOn ? { from: filters.from, to: filters.to } : {};
+  const scope = scopeParams({ branchId, processId, lobId }, rangeParams).toString();
+  const rangeKey = rangeOn ? `${filters.from}|${filters.to}` : "all";
 
   const summaryQ = useQuery({
-    queryKey: ["interventions", "summary", branchId, processId, lobId],
+    queryKey: ["interventions", "summary", branchId, processId, lobId, rangeKey],
     queryFn: async () => adaptSummary((await hrmsApi.get<{ data?: SummaryApi }>(`${BASE}/outcomes?${scope}`))?.data),
     ...QUERY_OPTS,
   });
   const listQ = useQuery({
-    queryKey: ["interventions", "list", tier, owner, branchId, processId, lobId],
+    queryKey: ["interventions", "list", tier, owner, branchId, processId, lobId, rangeKey],
     queryFn: async () => {
       const p = new URLSearchParams(scope);
       p.set("limit", "200");
@@ -113,7 +120,7 @@ export default function InterventionsPanel() {
       <PanelHeader
         icon={Shield}
         title="Retention interventions"
-        description="Open retention cases for at-risk employees, deadlines and outcomes"
+        description={rangeOn ? `Cases raised ${filters.from} to ${filters.to} (clear with Reset to see every open case)` : "Open retention cases for at-risk employees, deadlines and outcomes"}
         updatedLabel={undefined}
         actions={<>
           <UpdatedStamp updatedAt={summaryQ.dataUpdatedAt} fetching={summaryQ.isFetching || listQ.isFetching} />

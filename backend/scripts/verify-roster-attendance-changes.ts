@@ -12,6 +12,8 @@ import { db } from "../src/db/mysql.js";
 import { attendanceRegisterMonthly } from "../src/modules/reporting/executors/attendance.executor.js";
 import { getConsoleOptions } from "../src/modules/wfm/console-scope.js";
 import { getShiftAdherence } from "../src/modules/wfm/shift-adherence.service.js";
+import { fetchBranchRosterRows } from "../src/modules/wfm/roster-analytics.service.js";
+import { buildCasesQuery, generatedRange } from "../src/modules/analytics/intervention-cases.service.js";
 
 const month = String(process.argv[2] ?? new Date().toISOString().slice(0, 7));
 const first = `${month}-01`;
@@ -103,6 +105,31 @@ const scope: any = { companyId: "ops", isSuperAdmin: true, branchScope: all, pro
   const inactiveListed = wide.processes.length === 0 ? 0 : (await q(`SELECT COUNT(*) n FROM process_master WHERE id IN (${wide.processes.map(() => "?").join(",")}) AND (active_status <> 1 OR (close_date IS NOT NULL AND close_date < CURDATE()))`, wide.processes.map((p) => p.id)))[0].n;
   console.log(`dropdown processes: ${activeIds.size}, inactive/closed among them: ${inactiveListed}`);
   if (Number(inactiveListed) > 0) bad++;
+
+  // Analytics pooled across branches: rows for "a,b" must equal rows for a plus rows for b.
+  const wk = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const wkTo = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const brs = await q(`SELECT e.branch_id, COUNT(*) n FROM employees e WHERE e.active_status = 1 AND e.branch_id IS NOT NULL GROUP BY e.branch_id ORDER BY n DESC LIMIT 2`);
+  if (brs.length === 2) {
+    const lobN = { kind: "none" } as const;
+    const ra = await fetchBranchRosterRows(String(brs[0].branch_id), wk, wkTo, lobN as any);
+    const rb = await fetchBranchRosterRows(String(brs[1].branch_id), wk, wkTo, lobN as any);
+    const rab = await fetchBranchRosterRows(`${brs[0].branch_id},${brs[1].branch_id}`, wk, wkTo, lobN as any);
+    console.log(`analytics pooled rows: ${rab.length} = ${ra.length} + ${rb.length} -> ${rab.length === ra.length + rb.length}`);
+    if (rab.length !== ra.length + rb.length) bad++;
+  }
+  // Interventions date window: a window never returns more cases than no window; an empty window returns none.
+  const [{ n: allOpen }] = await q(`SELECT COUNT(*) n FROM employee_retention_recommendation`);
+  const emp0 = { sql: "", params: [] as string[] };
+  const caseCount = async (range: { sql: string; params: string[] }) => {
+    const { sql, params } = buildCasesQuery({ bucket: "all", tier: null, owner: null, limit: 5000, emp: emp0, range });
+    return ((await db.query(sql, params)) as any)[0].length as number;
+  };
+  const noRange = await caseCount({ sql: "", params: [] });
+  const last7 = await caseCount(generatedRange({ from: new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10), to: new Date().toISOString().slice(0, 10) }));
+  const future = await caseCount(generatedRange({ from: "2099-01-01", to: "2099-01-02" }));
+  console.log(`interventions cases: total rows ${allOpen}, no window ${noRange}, last 7 days ${last7}, future window ${future}`);
+  if (last7 > noRange || future !== 0) bad++;
 
   const y = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   const sh = await getShiftAdherence(y, 0, undefined, undefined);
