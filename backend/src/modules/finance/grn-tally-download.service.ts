@@ -246,6 +246,20 @@ export type GrnImportKind = "vendor" | "imprest";
 const isImprest = (r: GrnTallyDownloadRow) => r.grnType === "imprest";
 
 /**
+ * Per-line Narration quirks of the legacy sheet (MASSEP.xlsx, 124 vouchers, 451 lines), reproduced so the
+ * narration matches cell for cell:
+ *   Input CGST line   "... Bill NoXXX , Bill Date.:dd-mm-yyyy"   (no ".:" after "Bill No")
+ *   Short/Excess line "... GRN NO.: g, Bill NoXXX"               (no ".:" and no bill date)
+ *   every other line (expense, SGST, IGST, party, TDS)            "... Bill No.:XXX , Bill Date.:dd-mm-yyyy"
+ */
+const legacyLineNarration = (ledger: string, narration: string) => {
+  const name = ledger.trim();
+  if (/^Short\/Excess/i.test(name)) return narration.replace(/, Bill No\.:(.*?) , Bill Date\.:\d{2}-\d{2}-\d{4}$/, ", Bill No$1");
+  if (/^Input CGST/i.test(name)) return narration.replace("Bill No.:", "Bill No");
+  return narration;
+};
+
+/**
  * One row per ledger line of every GRN that built cleanly. Dates stay YYYY-MM-DD here.
  * vendor  -> MASSEP.xlsx layout (Debit Amount / Credit Amount columns)
  * imprest -> MASAUGIMP.xlsx layout (Amount + D/C)
@@ -262,7 +276,7 @@ export function grnImportRows(data: GrnTallyDownloadData, kind: GrnImportKind = 
         : [
           h.voucherNumber, h.date, h.effectiveDate, e.ledger,
           e.side === "Dr" ? e.amount : null, e.side === "Cr" ? e.amount : null,
-          h.costCategory, h.costCentre, h.narrationEntry, h.narration, h.voucherType,
+          h.costCategory, h.costCentre, h.narrationEntry, legacyLineNarration(e.ledger, h.narration), h.voucherType,
         ]);
     }
   }

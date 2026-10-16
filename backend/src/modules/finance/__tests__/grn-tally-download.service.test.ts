@@ -52,6 +52,7 @@ vi.mock("../../../db/mysql.js", () => ({
 import {
   buildGrnTallyCheckXlsx,
   buildGrnTallyCsv,
+  grnImportRows,
   buildGrnTallyXlsx,
   buildGrnTallyXml,
   grnTallyDownloadSummary,
@@ -257,6 +258,19 @@ describe("file builders", () => {
     });
     expect(dr).toBe(118000);
     expect(cr).toBe(118000);
+  });
+
+  it("vendor Excel narration follows the legacy sheet: \"Bill No\" without \".:\" on Input CGST and round-off lines only", async () => {
+    h.state.rows = [row("g1", "Mas/9/26/1", { gst_type: "cgst_sgst", round_off_amount: 0.4 })];
+    const data = await loadGrnTallyDownload(all);
+    const rows = grnImportRows(data, "vendor");
+    const ro = rows.find((r) => /^Short\/Excess/.test(String(r[3])));
+    if (ro) expect(String(ro[9])).toMatch(/GRN NO\.: Mas\/9\/26\/1, Bill No[^.]\S*$/);
+    for (const r of rows) {
+      const cgst = /^Input CGST/.test(String(r[3]));
+      if (/^Short\/Excess/.test(String(r[3]))) continue;
+      expect(String(r[9])).toMatch(cgst ? /Bill No[^.].* , Bill Date\.:/ : /Bill No\.:.* , Bill Date\.:/);
+    }
   });
 
   it("imprest Excel is the legacy MASAUGIMP sheet: GRN no, approval day, Amount + D/C, JrnlImp, no bill details", async () => {
