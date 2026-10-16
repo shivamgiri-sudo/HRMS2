@@ -25,6 +25,9 @@ const CANDIDATE_FACING: ReadonlySet<EmailType> = new Set<EmailType>([
   'selection_letter', 'bgv_completion', 'joining_doc_reminder', 'bank_resubmit_request', 'bgv_address_link',
 ]);
 
+/** Sent because a person clicked resend / is waiting on a code: bypass the bulk-mail throttle queue. */
+const URGENT: ReadonlySet<EmailType> = new Set<EmailType>(['token_sent', 'bank_resubmit_request', 'bgv_address_link', 'otp_verification']);
+
 async function logEmail(
   candidateId: string,
   type: EmailType,
@@ -85,7 +88,7 @@ async function send(
         body: html,
       });
   try {
-    await emailService.send({ to, subject: subject.replace(/[^\x20-\x7E]/g, "-"), html: finalHtml, ...(pool ? { pool } : {}) });
+    await emailService.send({ to, subject: subject.replace(/[^\x20-\x7E]/g, "-"), html: finalHtml, ...(pool ? { pool } : {}), ...(URGENT.has(type) ? { urgent: true } : {}) });
     await logEmail(candidateId, type, to, 'sent');
     return { ok: true };
   } catch (err: unknown) {

@@ -46,6 +46,9 @@ function maskBankAccount(value: unknown): string | null {
   return s.length >= 4 ? `XXXXXX${s.slice(-4)}` : 'XXXXXXXXXX';
 }
 
+/** SMTP connect+TLS+AUTH+retry can legitimately take well over the 8 s SMS/WhatsApp default. */
+const EMAIL_DEADLINE_MS = 25_000;
+
 async function withDeliveryTimeout<T>(
   task: Promise<T>,
   label: string,
@@ -176,6 +179,7 @@ export async function sendOnboardingToken(
           onboardingLink,
         }),
         `email delivery for ${candidateId}`,
+        EMAIL_DEADLINE_MS,
       );
       if (result === null) emailError = 'The email server did not respond in time — the email may not have been sent';
       else if (result.skipped) emailError = 'Email is not configured on the server (SMTP) — nothing was sent';
@@ -322,6 +326,7 @@ export async function sendBankResubmitRequest(
           bankName: cand.bank_name ?? null,
         }),
         `bank resubmit email delivery for ${candidateId}`,
+        EMAIL_DEADLINE_MS,
       );
       emailSent = true;
     } catch (emailErr) {
@@ -731,6 +736,7 @@ export async function sendOnboardingProgressReminder(
       await withDeliveryTimeout(
         sendOnboardingTokenEmail({ candidateId, to: row.email, candidateName: row.full_name, onboardingLink }),
         `reminder email for ${candidateId}`,
+        EMAIL_DEADLINE_MS,
       );
       sent.push('email');
     } catch (e) {

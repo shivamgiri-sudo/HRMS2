@@ -37,6 +37,11 @@ export type EmailSendInput = {
    * volume stops sharing - and exhausting - the staff/HRMS account's daily Gmail limit.
    */
   pool?: "careers";
+  /**
+   * A person is waiting on this send (HR clicked "resend"). Goes out on its own unthrottled connections instead of
+   * queueing behind bulk mail in the pooled transport's rate limit, and fails fast on a dead connection.
+   */
+  urgent?: boolean;
 };
 
 /** Thrown without touching SMTP while a mailbox is known to be over its daily sending limit. */
@@ -80,7 +85,7 @@ function smtpPassword(): string {
   return String(env.SMTP_PASS || "").replace(/\s+/g, "");
 }
 
-function createTransporter(account?: { host: string; port: number; user: string; pass: string }) {
+function createTransporter(account?: { host: string; port: number; user: string; pass: string }, urgent = false) {
   const port = account?.port ?? env.SMTP_PORT;
   const isSecurePort = port === 465;
   const options: SMTPPool.Options = {
@@ -98,8 +103,11 @@ function createTransporter(account?: { host: string; port: number; user: string;
     maxConnections: 3,
     maxMessages: 100,
     // Throttle: a burst is queued by the pool instead of tripping Gmail's 421 limiter.
-    rateDelta: 60_000,
-    rateLimit: smtpRateLimitPerMinute(),
+    // Urgent (one-off, user-triggered) sends skip the throttle: behind a bulk drain the queue wait alone
+    // exceeded the 8 s resend deadline, so HR saw "email server did not respond" for mail that was only queued.
+    ...(urgent
+      ? { connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 }
+      : { rateDelta: 60_000, rateLimit: smtpRateLimitPerMinute() }),
   };
 
   const user = account?.user ?? env.SMTP_USER;
@@ -120,11 +128,20 @@ function getTransporter() {
   return cachedTransporter;
 }
 
+let cachedUrgentTransporter: ReturnType<typeof createTransporter> | null = null;
+
+function getUrgentTransporter() {
+  if (!cachedUrgentTransporter) cachedUrgentTransporter = createTransporter(undefined, true);
+  return cachedUrgentTransporter;
+}
+
 /** Drops the pooled connections. For tests and for a deliberate reconnect. */
 export function resetTransporter(): void {
   try { cachedTransporter?.close(); } catch { /* already closed */ }
+  try { cachedUrgentTransporter?.close(); } catch { /* already closed */ }
+  cachedUrgentTransporter = null;
   cachedTransporter = null;
-  for (const a of careersAccounts) { try { a.transporter?.close(); } catch { /* closed */ } a.transporter = null; a.blockedUntil = 0; }
+  for (const a of careersAccounts) { try { a.transporter?.close(); a.urgentTransporter?.close(); } catch { /* closed */ } a.transporter = null; a.urgentTransporter = null; a.blockedUntil = 0; }
   careersAccounts = [];
   careersLoaded = false;
   defaultBlockedUntil = 0;
@@ -132,7 +149,7 @@ export function resetTransporter(): void {
 
 let defaultBlockedUntil = 0;
 
-type CareersAccount = { user: string; pass: string; transporter: ReturnType<typeof createTransporter> | null; blockedUntil: number; authFailed?: boolean };
+type CareersAccount = { user: string; pass: string; transporter: ReturnType<typeof createTransporter> | null; urgentTransporter?: ReturnType<typeof createTransporter> | null; blockedUntil: number; authFailed?: boolean };
 let careersAccounts: CareersAccount[] = [];
 let careersLoaded = false;
 let careersCursor = 0;
@@ -266,7 +283,7 @@ export const emailService = {
     if (!careers) {
       if (defaultBlockedUntil > Date.now()) throw new EmailQuotaError();
       try {
-        const result = await withSmtpRetry(() => getTransporter().sendMail({ from: fromAddress(), ...message }));
+        const result = await withSmtpRetry(() => (input.urgent ? getUrgentTransporter() : getTransporter()).sendMail({ from: fromAddress(), ...message }));
         return { messageId: result.messageId };
       } catch (err) {
         if (isDailyLimitError(err)) {
@@ -287,7 +304,9 @@ export const emailService = {
         if (list.length && list.every((a) => a.authFailed)) break;
         throw new EmailQuotaError("All careers mailboxes are at their daily sending limit");
       }
-      const transporter = (account.transporter ??= createTransporter({ ...careersConfig(), user: account.user, pass: account.pass }));
+      const transporter = input.urgent
+        ? (account.urgentTransporter ??= createTransporter({ ...careersConfig(), user: account.user, pass: account.pass }, true))
+        : (account.transporter ??= createTransporter({ ...careersConfig(), user: account.user, pass: account.pass }));
       try {
         const result = await withSmtpRetry(() => transporter.sendMail({ from: `"${careersConfig().fromName}" <${account.user}>`, ...message }));
         account.authFailed = false;
@@ -301,7 +320,7 @@ export const emailService = {
 
     if (defaultBlockedUntil > Date.now()) throw new EmailQuotaError();
     try {
-      const fallback = await withSmtpRetry(() => getTransporter().sendMail({ from: fromAddress(), ...message }));
+      const fallback = await withSmtpRetry(() => (input.urgent ? getUrgentTransporter() : getTransporter()).sendMail({ from: fromAddress(), ...message }));
       return { messageId: fallback.messageId };
     } catch (err) {
       if (isDailyLimitError(err)) { defaultBlockedUntil = Date.now() + QUOTA_BLOCK_MS; throw new EmailQuotaError(String((err as Error).message)); }
