@@ -149,7 +149,9 @@ describe("BranchHeadReferenceLayout", () => {
   it("renders the new panels in the agreed order", () => {
     const out = html(payload());
     const order = ["Attention and wins", "Running P&amp;L - month to date", "Process P&amp;L - P&amp;L pages basis", "Attendance detail", ">Headcount<", ">Hiring<", "Attrition and retention", ">Backlogs<", "Data health"];
-    const at = order.map((t) => out.indexOf(t));
+    // The section nav above the hero repeats short labels such as "Hiring"; panel order is checked after it.
+    const start = out.indexOf("Attention and wins");
+    const at = order.map((t) => out.indexOf(t, start));
     expect(at.every((i) => i >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
   });
@@ -224,6 +226,27 @@ describe("BranchHeadReferenceLayout", () => {
     expect(out).toContain("90/100");
     expect(out).toContain("weight 25");
     expect(out).toContain("Not scored (no data): finance, hiring - remaining weights renormalised");
+  });
+  it("one branch: section nav plus an anchor wrapper for every section", () => {
+    const out = html(payload());
+    expect(out).toContain('aria-label="Page sections"');
+    for (const id of ["bh-overview", "bh-people", "bh-attendance", "bh-finance", "bh-pnl", "bh-hiring", "bh-ops"]) {
+      expect(out).toContain(`href="#${id}"`);
+      expect(out.split(`id="${id}"`).length - 1).toBe(1);
+    }
+  });
+  it("several branches: no section nav and no duplicate anchor ids", () => {
+    const out = html(payload({ branches: [branch("b1", "Kolkata"), branch("b2", "Delhi")] }));
+    expect(out).not.toContain('aria-label="Page sections"');
+    expect(out).not.toContain('id="bh-people"');
+  });
+  it("new top area: score ring, 8 KPI tiles and the attention board", () => {
+    const out = html(payload());
+    expect(out).toContain("Health score: 82 out of 100, Good");
+    expect(out.split('class="bh-viz bh-tile"').length - 1).toBe(8);
+    expect(out).toContain(">Late arrivals<");
+    expect(out).toMatch(/<details(?![^>]*\bopen\b)[^>]*data-group="wins"/);
+    expect(out).toContain("Hiring on track");
   });
   it("hero omits the not-scored line when nothing is excluded", () => {
     const b = branch("b1", "Kolkata");

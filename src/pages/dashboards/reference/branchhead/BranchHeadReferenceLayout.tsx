@@ -1,14 +1,12 @@
 import { DataHealthPanel } from "./DataHealthPanel";
-import { Building2, Home } from "lucide-react";
+import { Home } from "lucide-react";
 import { Panel, SectionTitle } from "../../kit";
 import type { BranchHeadHealthPayload } from "../../../../../backend/src/modules/branch-head-health/types";
 import type { HeadBranch } from "../../../../../backend/src/modules/branch-head-health/scope";
-import { AttentionList } from "./AttentionList";
 import { ProcessCoveragePanel } from "./ProcessCoveragePanel";
 import { LeaderboardPanel } from "./SectionPanels";
 import { CallmasterPanel } from "./CallmasterPanel";
 import { OperationsPanel, QualityPanel } from "./OperationsPanel";
-import { StatusChip } from "./StatusChip";
 import { FinancePanel } from "./FinancePanel";
 import { ProcessPnlPanel } from "./ProcessPnlPanel";
 import { AttendanceDetailPanel } from "./AttendanceDetailPanel";
@@ -16,8 +14,12 @@ import { HeadcountPanel } from "./HeadcountPanel";
 import { HiringPanel } from "./HiringPanel";
 import { AttritionPanel } from "./AttritionPanel";
 import { BacklogPanel } from "./BacklogPanel";
-import { ScoreBand } from "./ScoreBand";
 import { BranchHeadControls } from "./BranchHeadControls";
+import { BranchOverviewTop } from "./BranchOverviewTop";
+import { ANCHOR_OFFSET_CLASS, BH_SECTIONS, SectionNav } from "./SectionNav";
+
+/** Drill-down hooks are wired to the drawer host in Task 4; until then tiles and chips open nothing extra. */
+const NOOP = () => {};
 
 export interface BranchHeadLayoutProps {
   data: BranchHeadHealthPayload;
@@ -35,6 +37,9 @@ export interface BranchHeadLayoutProps {
 export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchId = "", onBranchChange, date, onDateChange, onRefresh, stale }: BranchHeadLayoutProps) {
   const options = branchOptions ?? data.branches.map((b) => b.branch);
   const branchNames = Object.fromEntries(options.map((o) => [o.branchId, o.branchName]));
+  // Anchor ids must be unique, so the section nav and its targets exist only for a single-branch view.
+  const single = data.branches.length === 1;
+  const anchor = (id: string) => (single ? id : undefined);
 
   return (
     <div className="space-y-4">
@@ -52,57 +57,38 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
         <Panel title="Nothing to show"><p className="text-[14px] text-slate-800">{data.scope.emptyReason}</p></Panel>
       ) : null}
 
+      {single ? <SectionNav sections={BH_SECTIONS} /> : null}
+
       {data.branches.map(({ branch, overview, score }) => (
         <section key={branch.branchId} aria-label={`${branch.branchName} health`} className="space-y-4">
-          <div className="kit-card flex flex-wrap items-center gap-3 p-4">
-            <Building2 className="h-5 w-5 text-slate-700" aria-hidden="true" />
-            <h2 className="min-w-0 flex-1 text-[16px] font-bold text-slate-900">{branch.branchName}</h2>
-            <StatusChip status={overview.status} />
-            <div className="text-right">
-              <div className="text-[28px] font-extrabold leading-none text-slate-900">{score ? Math.round(score.score) : "—"}<span className="text-[13px] font-semibold text-slate-700">/100</span></div>
-              <div className="text-[12px] text-slate-700">{score ? "Health score" : "Score unavailable"}</div>
-              {score ? <ScoreBand score={score.score} /> : null}
-            </div>
-            {score && (score.pillars.length > 0 || score.excluded.length > 0) ? (
-              <div className="w-full border-t border-slate-100 pt-3 text-[13px] text-slate-800">
-                <ul aria-label="Score breakdown" className="flex flex-wrap gap-x-5 gap-y-1">
-                  {score.pillars.map((p) => (
-                    <li key={p.key}>
-                      <span className="font-semibold capitalize">{p.key.replace(/_/g, " ")}</span>{" "}
-                      {p.score == null ? "not scored" : `${Math.round(p.score)}/100`} (weight {p.weight})
-                    </li>
-                  ))}
-                </ul>
-                {score.excluded.length > 0 ? (
-                  <p className="mt-1">Not scored (no data): {score.excluded.join(", ")} - remaining weights renormalised</p>
-                ) : null}
-              </div>
-            ) : null}
+          <div id={anchor("bh-overview")} className={ANCHOR_OFFSET_CLASS}>
+            <BranchOverviewTop branch={branch} overview={overview} score={score} onOpenKpi={NOOP} onOpenAttentionItem={NOOP} />
           </div>
-          <Panel title="Attention and wins"><AttentionList attention={overview.attention} positives={overview.positives} /></Panel>
-          <FinancePanel section={overview.finance} />
-          <ProcessPnlPanel section={overview.processPnl} />
-          <AttendanceDetailPanel section={overview.attendance} />
-          <HeadcountPanel section={overview.people} />
-          <HiringPanel section={overview.hiring} />
+          <div id={anchor("bh-finance")} className={ANCHOR_OFFSET_CLASS}><FinancePanel section={overview.finance} /></div>
+          <div id={anchor("bh-pnl")} className={ANCHOR_OFFSET_CLASS}><ProcessPnlPanel section={overview.processPnl} /></div>
+          <div id={anchor("bh-attendance")} className={ANCHOR_OFFSET_CLASS}><AttendanceDetailPanel section={overview.attendance} /></div>
+          <div id={anchor("bh-people")} className={ANCHOR_OFFSET_CLASS}><HeadcountPanel section={overview.people} /></div>
+          <div id={anchor("bh-hiring")} className={ANCHOR_OFFSET_CLASS}><HiringPanel section={overview.hiring} /></div>
           <AttritionPanel section={overview.attrition} />
           <BacklogPanel section={overview.backlogs} />
-          <LeaderboardPanel section={overview.leaderboard} />
-          {overview.operations || overview.quality || overview.callmaster ? (() => {
-            const panels = (
-              <div className="space-y-4">
-                <OperationsPanel section={overview.operations} />
-                <QualityPanel section={overview.quality} />
-                <CallmasterPanel section={overview.callmaster} />
-              </div>
-            );
-            return data.branches.length > 1 ? (
-              <details data-group={`ops-${branch.branchId}`} className="rounded-lg border border-slate-200">
-                <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-[13px] font-bold text-slate-900">Operations, quality and Callmaster for {branch.branchName}</summary>
-                <div className="p-3">{panels}</div>
-              </details>
-            ) : panels;
-          })() : null}
+          <div id={anchor("bh-ops")} className={`space-y-4 ${ANCHOR_OFFSET_CLASS}`}>
+            <LeaderboardPanel section={overview.leaderboard} />
+            {overview.operations || overview.quality || overview.callmaster ? (() => {
+              const panels = (
+                <div className="space-y-4">
+                  <OperationsPanel section={overview.operations} />
+                  <QualityPanel section={overview.quality} />
+                  <CallmasterPanel section={overview.callmaster} />
+                </div>
+              );
+              return data.branches.length > 1 ? (
+                <details data-group={`ops-${branch.branchId}`} className="rounded-lg border border-slate-200">
+                  <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-[13px] font-bold text-slate-900">Operations, quality and Callmaster for {branch.branchName}</summary>
+                  <div className="p-3">{panels}</div>
+                </details>
+              ) : panels;
+            })() : null}
+          </div>
         </section>
       ))}
 
