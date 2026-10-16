@@ -390,6 +390,7 @@ import mandateSeatTrackingRouter from "./modules/finance/mandate-seat-tracking.r
 import { financeAnalyticsRouter } from "./modules/finance/finance-analytics.routes.js";
 import { moneyFlowRouter } from "./modules/finance/money-flow.routes.js";
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
+import { pnlCorrectionRouter } from "./modules/process-pnl/pnl-correction.routes.js";
 import billabilityRouter from "./modules/process-pnl/billability.routes.js";
 import { annualBudgetSummaryRouter } from "./modules/process-pnl/annual-budget-summary.routes.js";
 import { unlinkedGrnReviewRouter } from "./modules/process-pnl/unlinked-grn-review.routes.js";
@@ -918,6 +919,9 @@ app.use("/api/finance/client-payments", clientPaymentTrackingRouter);
 app.use("/api/finance/mandate-seats", mandateSeatTrackingRouter);
 app.use("/api/finance/money-flow", moneyFlowRouter);
 app.use("/api/finance/analytics", financeAnalyticsRouter);
+// pnlCorrectionRouter owns /api/finance/pnl/corrections and /api/finance/pnl/period-status.
+// Mounted BEFORE processPnlRouter so it is not swallowed by the /pnl requireRole gate.
+app.use("/api/finance", pnlCorrectionRouter);
 app.use("/api/finance", processPnlRouter);
 // Mounted on its own base after processPnlRouter. Owning /api/finance/billability/* outright
 // protects it from a wildcard ROUTE on the shared /api/finance base — but not from a path-less
