@@ -64,8 +64,8 @@ async function main() {
 
   // 4. GRN costs by branch and period (MAS Callnet branches only)
   //    grn_entry_snapshot uses branch_name directly (not cost_centre_id).
-  //    Exclude Dialdesk, Neelakanth and other non-MAS-Callnet source lines.
-  const MAS_GRN_BRANCHES = ['NOIDA','NOIDA-2','HEAD OFFICE','AHMEDABAD-JALDARSHAN'];
+  //    NEELAKANTH branch closed and is now exclusively MAS Callnet (Oct 2026).
+  const MAS_GRN_BRANCHES = ['NOIDA','NOIDA-2','HEAD OFFICE','AHMEDABAD-JALDARSHAN','AHMEDABAD-NEELAKANTH'];
   const [grnData] = await db.query(`
     SELECT
       ges.branch_name    AS branch,
