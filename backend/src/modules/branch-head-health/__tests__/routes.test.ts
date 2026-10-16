@@ -41,7 +41,10 @@ const buildDataHealth = vi.fn();
 vi.mock("../ops.js", () => ({
   buildOpsSections: (...a: unknown[]) => buildOpsSections(...a),
   monthStart: (d: string) => `${d.slice(0, 7)}-01`,
+  SECTION_TIMEOUT_MS: 20_000,
 }));
+const buildProcessPnl = vi.fn();
+vi.mock("../pnl.js", () => ({ buildProcessPnl: (...a: unknown[]) => buildProcessPnl(...a) }));
 vi.mock("../dataHealth.js", () => ({ buildDataHealth: (...a: unknown[]) => buildDataHealth(...a) }));
 const today = "2026-10-15";
 vi.mock("../../../shared/istDate.js", () => ({ getCurrentDateIST: () => "2026-10-15" }));
@@ -71,6 +74,8 @@ beforeEach(() => {
   clearBranchHeadHealthCaches();
   buildOpsSections.mockReset();
   buildDataHealth.mockReset();
+  buildProcessPnl.mockReset();
+  buildProcessPnl.mockResolvedValue(section);
   buildOpsSections.mockResolvedValue({ operations: section, quality: section, callmaster: section });
   buildDataHealth.mockResolvedValue(section);
 });
@@ -221,6 +226,34 @@ describe("branch-head-health routes", () => {
     await request(app()).get("/api/branch-head-health/overview?date=2026-10-14&branchIds=b1");
     await request(app()).get("/api/branch-head-health/overview?date=2026-10-14&branchIds=b1");
     expect(buildOpsSections).toHaveBeenCalledTimes(2);
+  });
+  it("attaches processPnl per branch, caches it, and does not cache or propagate failures", async () => {
+    const r1 = await request(app()).get("/api/branch-head-health/overview");
+    expect(r1.status).toBe(200);
+    expect(r1.body.data.branches.map((b: any) => b.overview.processPnl.status)).toEqual(["ok", "ok"]);
+    expect(buildProcessPnl).toHaveBeenCalledWith(b1, today);
+    await request(app()).get("/api/branch-head-health/overview");
+    expect(buildProcessPnl).toHaveBeenCalledTimes(2);
+
+    clearBranchHeadHealthCaches();
+    buildProcessPnl.mockReset();
+    buildProcessPnl.mockResolvedValue({ status: "error", data: null, asOf: today, message: "P&L could not be loaded" });
+    await request(app()).get("/api/branch-head-health/overview");
+    await request(app()).get("/api/branch-head-health/overview");
+    expect(buildProcessPnl).toHaveBeenCalledTimes(4);
+
+    clearBranchHeadHealthCaches();
+    buildProcessPnl.mockReset();
+    buildProcessPnl.mockRejectedValue(new Error("x"));
+    const r3 = await request(app()).get("/api/branch-head-health/overview");
+    expect(r3.status).toBe(200);
+    expect(r3.body.data.branches[0].overview.processPnl).toMatchObject({ status: "error", message: "P&L could not be loaded" });
+  });
+  it("processPnl is attached even when the process list fails", async () => {
+    listBranchProcesses.mockRejectedValue(new Error("down"));
+    const r = await request(app()).get("/api/branch-head-health/overview");
+    expect(r.body.data.processesError).toBe(true);
+    expect(r.body.data.branches[0].overview.processPnl.status).toBe("ok");
   });
   it("all requested branchIds out of scope gives a clear emptyReason", async () => {
     const r = await request(app()).get("/api/branch-head-health/overview?branchIds=zzz");

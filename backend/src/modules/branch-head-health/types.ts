@@ -18,6 +18,43 @@ export interface LeaderboardRow {
   shrinkagePct: number | null;
 }
 
+export interface AttritionData {
+  critical: number; high: number; medium: number; low: number;
+  expectedExits30: number | null; absentStreak: number; newJoinerRisk: number;
+  exits30: number; exitsPrev30: number; exits90: number; earlyExitSharePct: number | null;
+  monthlyExits: Array<{ month: string; exits: number }>;
+  byProcess: Array<{ process: string; headcount: number; highRisk: number; absentStreak: number }>;
+  topRiskCount: number;
+  calibrationNote: string | null;
+}
+
+export interface BacklogAggregate {
+  pending: number; oldestDays: number; over3Days: number; over7Days: number;
+}
+
+export interface BacklogsData {
+  regularization: BacklogAggregate & { escalated: number };
+  leaveAging: BacklogAggregate & { staleOlderThanWindow: number };
+}
+
+export interface ProcessPnlRow {
+  processId: string; processName: string; clientName: string | null;
+  revenue: number; peopleCost: number; otherCost: number; ebitda: number;
+  operatingProfit: number; opPct: number | null;
+  status: "profitable" | "at-risk" | "loss-making";
+  seatFillPct: number | null; mandatedSeats: number | null; activeHc: number;
+  outstandingReceivable: number; revenueVsBudget: number | null;
+}
+
+export interface ProcessPnlData {
+  period: string;
+  totals: {
+    revenue: number; totalCost: number; operatingProfit: number; opPct: number | null;
+    loss: number; atRisk: number; profitable: number; outstandingReceivable: number;
+  };
+  rows: ProcessPnlRow[];
+}
+
 export interface BranchOverview {
   branch: HeadBranch;
   date: string;
@@ -32,6 +69,9 @@ export interface BranchOverview {
   operations?: SectionResult<unknown>;
   quality?: SectionResult<unknown>;
   callmaster?: SectionResult<unknown>;
+  attrition?: SectionResult<AttritionData>;
+  backlogs?: SectionResult<BacklogsData>;
+  processPnl?: SectionResult<ProcessPnlData>;
 }
 
 export interface BranchHeadHealthPayload {

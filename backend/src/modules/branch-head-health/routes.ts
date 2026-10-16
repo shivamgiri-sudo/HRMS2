@@ -6,12 +6,13 @@ import { getCurrentDateIST } from "../../shared/istDate.js";
 import { resolveHeadBranches, type HeadBranch } from "./scope.js";
 import { buildOverview, loadReport } from "./overview.js";
 import { listBranchProcesses, getProcessDrilldown } from "./processes.js";
-import { buildOpsSections, monthStart } from "./ops.js";
+import { buildOpsSections, monthStart, SECTION_TIMEOUT_MS } from "./ops.js";
 import { buildDataHealth, type DataHealth } from "./dataHealth.js";
-import { TtlCache, cachedOr } from "./cache.js";
+import { TtlCache, cachedOr, withTimeout } from "./cache.js";
+import { buildProcessPnl } from "./pnl.js";
 import { computeScore } from "./score.js";
 import { writeSnapshot, readTrend } from "./snapshot.js";
-import type { BranchHeadHealthPayload, BranchOverview, SectionResult } from "./types.js";
+import type { BranchHeadHealthPayload, BranchOverview, ProcessPnlData, SectionResult } from "./types.js";
 
 export const branchHeadHealthRouter = Router();
 
@@ -58,7 +59,8 @@ const MAX_CONCURRENCY = 3;
 // Branch-level data is the same for every authorised head; scope is always checked before a lookup here.
 const reportCache = new TtlCache<Awaited<ReturnType<typeof loadReport>>>();
 const opsCache = new TtlCache<Awaited<ReturnType<typeof buildOpsSections>>>();
-export function clearBranchHeadHealthCaches(): void { reportCache.clear(); opsCache.clear(); }
+const pnlCache = new TtlCache<SectionResult<ProcessPnlData>>();
+export function clearBranchHeadHealthCaches(): void { reportCache.clear(); opsCache.clear(); pnlCache.clear(); }
 
 /** Order-preserving map with bounded concurrency. */
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -143,6 +145,23 @@ branchHeadHealthRouter.get(
       } catch (err) {
         console.error("[branch-head-health] branch load failed", branch.branchId, err);
         return { branch, overview: errorOverview(branch, date), score: null };
+      }
+    });
+
+    // Process P&L does not depend on the process list, and a failure here never fails the response.
+    await mapLimit(rows, MAX_CONCURRENCY, async (row) => {
+      const pnlError = (): SectionResult<ProcessPnlData> =>
+        ({ status: "error", data: null, asOf: date, message: "P&L could not be loaded" });
+      try {
+        const processPnl = await cachedOr(
+          pnlCache, `${row.branch.branchId}|${date}`,
+          () => withTimeout(buildProcessPnl(row.branch, date), SECTION_TIMEOUT_MS, pnlError),
+          (v) => v.status !== "error",
+        );
+        row.overview = { ...row.overview, processPnl };
+      } catch (err) {
+        console.error("[branch-head-health] process P&L failed", row.branch.branchId, err);
+        row.overview = { ...row.overview, processPnl: pnlError() };
       }
     });
 
