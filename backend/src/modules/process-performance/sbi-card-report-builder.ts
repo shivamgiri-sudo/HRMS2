@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { db } from "../../db/mysql.js";
+import { vicidialQuery } from "../../db/sbiVicidialDb.js";
 import type { RowDataPacket } from "mysql2";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -651,6 +652,153 @@ export async function buildFirstCall(params: {
     ws.getCell(`J${r}`).value = timeFrac(String(x.first_call_time ?? "09:00:00")) ?? 0;
     ws.getCell(`K${r}`).value = null;
   });
+
+  return toBuffer(wb);
+}
+
+// ─── NC/NA Dialing Validation ────────────────────────────────────────────────
+
+/**
+ * Per-call detail for calls agents tagged NC or NAA (No Contact / No Answer)
+ * via predictive dialing. Captures the ViciDial hang-up code (term_reason)
+ * and free-text remarks (comments) so supervisors can validate whether the
+ * disposition was applied correctly and identify systemic dialing failures
+ * (calls stuck in waiting, dropped by the dialer before answer, etc.).
+ */
+export async function buildNcNaDialingValidation(params: {
+  from: string;
+  to: string;
+  campaign?: string;
+  agent?: string;
+}): Promise<Buffer> {
+  type NcNaRow = RowDataPacket & {
+    call_date: string;
+    campaign: string;
+    agent: string;
+    lead_id: string | number;
+    phone_number: string;
+    status: string;
+    term_reason: string;
+    comments: string;
+    length_in_sec: number;
+  };
+
+  const args: unknown[] = [params.from, params.to];
+  let extra = "";
+  if (params.campaign) {
+    extra += " AND vl.campaign_id = ?";
+    args.push(params.campaign);
+  }
+  if (params.agent) {
+    extra += " AND vl.user = ?";
+    args.push(params.agent);
+  }
+
+  const rows = await vicidialQuery<NcNaRow>(`
+    SELECT
+      vl.call_date,
+      vl.campaign_id            AS campaign,
+      vl.user                   AS agent,
+      vl.lead_id,
+      vl.phone_number,
+      vl.status,
+      COALESCE(vl.term_reason, '')  AS term_reason,
+      COALESCE(vl.comments, '')     AS comments,
+      COALESCE(vl.length_in_sec, 0) AS length_in_sec
+    FROM vicidial_log vl
+    WHERE DATE(vl.call_date) BETWEEN ? AND ?
+      AND vl.status IN ('NC', 'NAA')
+      AND vl.user != 'VDAD'
+      ${extra}
+    ORDER BY vl.call_date DESC, vl.campaign_id, vl.user
+    LIMIT 50000
+  `, args);
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("NC-NA Validation");
+
+  const HEADERS = [
+    "Call Date & Time",
+    "Campaign",
+    "Agent",
+    "Lead ID",
+    "Phone Number",
+    "Disposition",
+    "Hang-up Code",
+    "Remarks",
+    "Call Duration (sec)",
+  ];
+
+  // Header row styling
+  const headerRow = ws.addRow(HEADERS);
+  headerRow.eachCell((cell) => {
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F3864" } };
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = {
+      top: { style: "thin" }, left: { style: "thin" },
+      bottom: { style: "thin" }, right: { style: "thin" },
+    };
+  });
+  ws.getRow(1).height = 28;
+
+  // Column widths
+  ws.columns = [
+    { key: "a", width: 20 },
+    { key: "b", width: 28 },
+    { key: "c", width: 22 },
+    { key: "d", width: 12 },
+    { key: "e", width: 16 },
+    { key: "f", width: 12 },
+    { key: "g", width: 18 },
+    { key: "h", width: 40 },
+    { key: "i", width: 16 },
+  ];
+
+  const evenFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0F4FF" } };
+
+  rows.forEach((x, i) => {
+    const dataRow = ws.addRow([
+      x.call_date ? new Date(x.call_date) : null,
+      x.campaign ?? "",
+      x.agent ?? "",
+      x.lead_id ?? "",
+      x.phone_number ?? "",
+      x.status ?? "",
+      x.term_reason ?? "",
+      x.comments ?? "",
+      Number(x.length_in_sec) || 0,
+    ]);
+
+    dataRow.getCell(1).numFmt = "DD/MM/YYYY HH:MM:SS";
+    dataRow.getCell(9).numFmt = "#,##0";
+
+    if (i % 2 === 1) {
+      dataRow.eachCell((cell) => { cell.fill = evenFill; });
+    }
+    dataRow.eachCell((cell) => {
+      cell.border = {
+        top: { style: "hair" }, left: { style: "hair" },
+        bottom: { style: "hair" }, right: { style: "hair" },
+      };
+      cell.font = { size: 9 };
+    });
+    dataRow.height = 16;
+  });
+
+  // Freeze header row + auto-filter
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: HEADERS.length } };
+
+  // Summary row at bottom
+  if (rows.length > 0) {
+    ws.addRow([]);
+    const sumRow = ws.addRow([
+      `Total rows: ${rows.length}`,
+      "", "", "", "", "", "", "", "",
+    ]);
+    sumRow.getCell(1).font = { bold: true, size: 9, color: { argb: "FF1F3864" } };
+  }
 
   return toBuffer(wb);
 }

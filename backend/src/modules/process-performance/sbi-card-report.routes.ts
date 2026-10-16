@@ -7,6 +7,7 @@ import {
   buildPenEstimation,
   buildDowntimeTracker,
   buildFirstCall,
+  buildNcNaDialingValidation,
 } from "./sbi-card-report-builder.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
@@ -113,6 +114,17 @@ const REPORTS: ReportMeta[] = [
       },
     ],
   },
+  {
+    id: "nc-na-dialing-validation",
+    name: "NC/NA Dialing Validation",
+    filename: (p) => `NC_NA_Validation_${p.from}_${p.to}.xlsx`,
+    filters: [
+      { key: "from", label: "From", type: "date" },
+      { key: "to", label: "To", type: "date" },
+      { key: "campaign", label: "Campaign", type: "text" },
+      { key: "agent", label: "Agent (Dialer ID)", type: "text" },
+    ],
+  },
 ];
 
 // GET /api/process-performance/sbi-card-reports
@@ -179,6 +191,14 @@ router.get(
           break;
         case "downtime-tracker":
           buffer = await buildDowntimeTracker(params);
+          break;
+        case "nc-na-dialing-validation":
+          buffer = await buildNcNaDialingValidation({
+            from: params.from,
+            to: params.to,
+            campaign: p.campaign,
+            agent: p.agent,
+          });
           break;
         default:
           res.status(404).json({ success: false, error: "Not implemented" });
