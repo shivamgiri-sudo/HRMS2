@@ -4,7 +4,7 @@ import { registerTimer } from "../../workers/worker-utils.js";
 import { listAllMasBranches } from "./scope.js";
 import { listBranchProcesses } from "./processes.js";
 import { monthStart } from "./ops.js";
-import { getReportCached, getPnlCached, getOpsCached } from "./loaders.js";
+import { getReportCached, getPnlCached, getOpsCached, isOpsFresh } from "./loaders.js";
 
 export const ACTIVE_WINDOW_MS = 30 * 60_000;
 const WARM_EVERY_MS = 4 * 60_000;
@@ -41,12 +41,13 @@ export async function warmOnce(now: Date = new Date()): Promise<{ branches: numb
     const range = { startDate: monthStart(date), endDate: date };
     const branches = await listAllMasBranches();
     for (const branch of branches) {
-      await step("report", branch.branchId, () => getReportCached(branch, date));
-      await step("p&l", branch.branchId, () => getPnlCached(branch, date, { noTimeout: true }));
+      await step("report", branch.branchId, () => getReportCached(branch, date, { warm: true }));
+      await step("p&l", branch.branchId, () => getPnlCached(branch, date, { warm: true }));
       await step("ops", branch.branchId, async () => {
+        if (isOpsFresh(branch, date)) return; // fully warm: no queries at all
         const groups = await listBranchProcesses([branch.branchId]);
         const mine = groups.active.filter((p) => !p.billingMirror && p.branchIds.includes(branch.branchId));
-        await getOpsCached(branch, mine, range, date);
+        await getOpsCached(branch, mine, range, date, { warm: true });
       });
     }
     return { branches: branches.length, ms: Date.now() - started };

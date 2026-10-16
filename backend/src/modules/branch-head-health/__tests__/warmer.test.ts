@@ -6,12 +6,14 @@ const getReportCached = vi.fn();
 const getPnlCached = vi.fn();
 const getOpsCached = vi.fn();
 const registerTimer = vi.fn();
+const isOpsFresh = vi.fn();
 vi.mock("../scope.js", () => ({ listAllMasBranches: (...a: unknown[]) => listAllMasBranches(...a) }));
 vi.mock("../processes.js", () => ({ listBranchProcesses: (...a: unknown[]) => listBranchProcesses(...a) }));
 vi.mock("../loaders.js", () => ({
   getReportCached: (...a: unknown[]) => getReportCached(...a),
   getPnlCached: (...a: unknown[]) => getPnlCached(...a),
   getOpsCached: (...a: unknown[]) => getOpsCached(...a),
+  isOpsFresh: (...a: unknown[]) => isOpsFresh(...a),
 }));
 vi.mock("../ops.js", () => ({ monthStart: (d: string) => `${d.slice(0, 7)}-01` }));
 vi.mock("../../../shared/istDate.js", () => ({ getCurrentDateIST: () => "2026-10-15" }));
@@ -24,12 +26,13 @@ const br = (id: string) => ({ branchId: id, branchCode: id, branchName: id });
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
-  [listAllMasBranches, listBranchProcesses, getReportCached, getPnlCached, getOpsCached, registerTimer].forEach((m) => m.mockReset());
+  [listAllMasBranches, listBranchProcesses, getReportCached, getPnlCached, getOpsCached, registerTimer, isOpsFresh].forEach((m) => m.mockReset());
   listAllMasBranches.mockResolvedValue([br("a"), br("b"), br("c")]);
   listBranchProcesses.mockImplementation(async (ids: string[]) => ({
     active: [{ processId: "p" + ids[0], billingMirror: false, branchIds: ids }, { processId: "m", billingMirror: true, branchIds: ids }],
     unmapped: [],
   }));
+  isOpsFresh.mockReturnValue(false);
   getReportCached.mockResolvedValue({}); getPnlCached.mockResolvedValue({}); getOpsCached.mockResolvedValue({});
 });
 afterEach(() => { vi.useRealTimers(); stopBranchHealthWarmerForTests(); delete process.env.BRANCH_HEAD_HEALTH_ENABLED; });
@@ -48,6 +51,12 @@ describe("warmOnce", () => {
     expect(procs.map((p: any) => p.processId)).toEqual(["pa"]);
     expect(range).toEqual({ startDate: "2026-10-01", endDate: "2026-10-15" });
     expect(date).toBe("2026-10-15");
+  });
+  it("a fully warm branch costs no process-list query", async () => {
+    isOpsFresh.mockImplementation((b: any) => b.branchId === "a");
+    await warmOnce();
+    expect(listBranchProcesses).toHaveBeenCalledTimes(2);
+    expect(getOpsCached).toHaveBeenCalledTimes(2);
   });
   it("an overlapping call returns immediately", async () => {
     getReportCached.mockImplementation(async () => { await tick(); return {}; });

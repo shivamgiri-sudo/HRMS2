@@ -16,6 +16,14 @@ export class TtlCache<T> {
     return e.value;
   }
 
+  /** Age of a live entry in ms (undefined when absent or expired). Does not change `get` behaviour. */
+  ageMs(key: string): number | undefined {
+    const e = this.store.get(key);
+    if (!e) return undefined;
+    const age = Date.now() - e.at;
+    return age >= this.ttlMs ? undefined : age;
+  }
+
   set(key: string, value: T): void {
     if (!this.store.has(key) && this.store.size >= this.maxEntries) {
       const oldest = this.store.keys().next().value;
@@ -39,21 +47,23 @@ function inflightOf<T>(cache: TtlCache<T>): Map<string, Promise<T>> {
  * Concurrent callers for one key share a single loader run. The value is stored when the loader settles,
  * even if a caller stopped waiting (see `cachedOrWithin`), so a late result still fills the cache.
  */
-export async function cachedOr<T>(cache: TtlCache<T>, key: string, fn: () => Promise<T>, cacheable: (v: T) => boolean = () => true): Promise<T> {
+export async function cachedOr<T>(
+  cache: TtlCache<T>, key: string, fn: () => Promise<T>, cacheable: (v: T) => boolean = () => true,
+  opts: { refreshIfOlderThanMs?: number } = {},
+): Promise<T> {
   const hit = cache.get(key);
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) {
+    const stale = opts.refreshIfOlderThanMs !== undefined && (cache.ageMs(key) ?? 0) > opts.refreshIfOlderThanMs;
+    if (!stale) return hit;
+  }
   const inflight = inflightOf(cache);
   const running = inflight.get(key);
   if (running) return running;
-  const p = (async () => {
-    try {
-      const v = await fn();
-      if (cacheable(v)) cache.set(key, v);
-      return v;
-    } finally {
-      inflight.delete(key);
-    }
-  })();
+  // Registered before the loader runs (even a synchronous throw), removed only by the run that owns it.
+  const p: Promise<T> = Promise.resolve().then(fn).then((v) => {
+    if (cacheable(v)) cache.set(key, v);
+    return v;
+  }).finally(() => { if (inflight.get(key) === p) inflight.delete(key); });
   inflight.set(key, p);
   return p;
 }
@@ -61,9 +71,9 @@ export async function cachedOr<T>(cache: TtlCache<T>, key: string, fn: () => Pro
 /** Like `cachedOr`, but the caller gets `fallback()` after `ms`; the loader keeps running and late-fills the cache. */
 export function cachedOrWithin<T>(
   cache: TtlCache<T>, key: string, fn: () => Promise<T>, cacheable: (v: T) => boolean,
-  ms: number, fallback: () => T,
+  ms: number, fallback: () => T, opts: { refreshIfOlderThanMs?: number } = {},
 ): Promise<T> {
-  const p = cachedOr(cache, key, fn, cacheable);
+  const p = cachedOr(cache, key, fn, cacheable, opts);
   p.catch(() => undefined); // a rejection after the caller gave up must not be unhandled
   return withTimeout(p, ms, fallback);
 }

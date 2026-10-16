@@ -16,6 +16,7 @@ vi.mock("../../call-master/call-master.service.js", () => ({
 }));
 
 import { buildOpsSections, clientIdsForProcesses, isStale } from "../ops.js";
+import { TtlCache } from "../cache.js";
 
 const proc = (id: string, tier: any = "full", extra: any = {}) => ({
   processId: id, processCode: id.toUpperCase(), processName: `${id} name`, costCentres: [], viaLink: false,
@@ -162,6 +163,30 @@ describe("buildOpsSections", () => {
       const r = await p;
       expect(r.callmaster).toMatchObject({ status: "error", message: "Still calculating - first load of a month can take up to a minute. Refresh shortly." });
       expect(r.operations.status).toBe("ok");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("with a section cache a callmaster that finishes after 20 s late-fills and the next call hits", async () => {
+    vi.useFakeTimers();
+    try {
+      getInboundProjects.mockResolvedValue([{ key: "a", processId: "p1", clientId: "409" }]);
+      let done!: (v: unknown) => void;
+      getKPIs.mockReturnValue(new Promise((r) => { done = r; }));
+      const cache = new TtlCache<any>(300_000, 16);
+      const sc = { cache, keyBase: "b1|2026-10-15|h" };
+      const p = buildOpsSections([proc("p1")], range, sc);
+      await vi.advanceTimersByTimeAsync(20_001);
+      const first = await p;
+      expect(first.callmaster).toMatchObject({ status: "error", message: "Still calculating - first load of a month can take up to a minute. Refresh shortly." });
+      done({});
+      await vi.advanceTimersByTimeAsync(0);
+      const kpiCalls = getKPIs.mock.calls.length;
+      const second = await buildOpsSections([proc("p1")], range, sc);
+      expect(second.callmaster.status).toBe("ok");
+      expect(getKPIs.mock.calls.length).toBe(kpiCalls);
+      expect(cache.get("b1|2026-10-15|h|callmaster")).toBeDefined();
     } finally {
       vi.useRealTimers();
     }

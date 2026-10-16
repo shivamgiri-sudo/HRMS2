@@ -4,7 +4,7 @@ import { getInboundProjects } from "../call-master/inbound-projects.js";
 import { getKPIs, getQualityTrend, getCXParameters, getFatalAgentSummary } from "../call-master/call-master.service.js";
 import type { BranchProcess } from "./processes.js";
 import type { SectionResult } from "./types.js";
-import { withTimeout, STILL_CALCULATING } from "./cache.js";
+import { withTimeout, cachedOr, cachedOrWithin, STILL_CALCULATING, type TtlCache } from "./cache.js";
 
 export const SECTION_TIMEOUT_MS = 20_000;
 
@@ -142,15 +142,35 @@ async function buildCallmaster(processIds: string[], range: { startDate: string;
   return ok(parts, asOf);
 }
 
+/** Optional late-fill caching of the two slow sub-sections (keys `${keyBase}|metrics` / `|callmaster`). */
+export interface SectionCacheOpts {
+  cache: TtlCache<SectionResult<any>>;
+  keyBase: string;
+  /** Warmer: wait for the sub-sections (no 20 s cut-off) and refresh entries older than this. */
+  noTimeout?: boolean;
+  refreshIfOlderThanMs?: number;
+}
+
 export async function buildOpsSections(
   processes: BranchProcess[],
   range: { startDate: string; endDate: string },
+  sc?: SectionCacheOpts,
 ): Promise<{ operations: SectionResult<unknown>; quality: SectionResult<unknown>; callmaster: SectionResult<unknown> }> {
   const asOf = range.endDate;
   const real = processes.filter((p) => !p.billingMirror);
   const ids = real.map((p) => p.processId);
 
-  const metricsP = safe<OpsProcessRow[]>(asOf, async () => {
+  const timedOut = <T,>(): SectionResult<T> => ({ status: "error", data: null, asOf, message: STILL_CALCULATING });
+  const slow = <T,>(name: string, load: () => Promise<SectionResult<T>>): Promise<SectionResult<T>> => {
+    if (!sc) return withTimeout(load(), SECTION_TIMEOUT_MS, () => timedOut<T>());
+    const key = `${sc.keyBase}|${name}`;
+    const cacheable = (v: SectionResult<any>) => v.status !== "error";
+    const ro = { refreshIfOlderThanMs: sc.refreshIfOlderThanMs };
+    if (sc.noTimeout) return cachedOr(sc.cache, key, load, cacheable, ro) as Promise<SectionResult<T>>;
+    return cachedOrWithin(sc.cache, key, load, cacheable, SECTION_TIMEOUT_MS, () => timedOut<T>(), ro) as Promise<SectionResult<T>>;
+  };
+
+  const metricsLoad = () => safe<OpsProcessRow[]>(asOf, async () => {
     if (real.length === 0) return empty(asOf);
     const latest = await loadLatestMetrics(ids, asOf);
     const rows: OpsProcessRow[] = real.map((p) => {
@@ -164,9 +184,8 @@ export async function buildOpsSections(
     return ok(rows, asOf);
   }, "ops metrics");
 
-  const timedOut = <T,>(): SectionResult<T> => ({ status: "error", data: null, asOf, message: STILL_CALCULATING });
-  const callmasterP = withTimeout(safe(asOf, () => buildCallmaster(ids, range), "callmaster"), SECTION_TIMEOUT_MS, () => timedOut<unknown>());
-  const metrics = await withTimeout(metricsP, SECTION_TIMEOUT_MS, () => timedOut<OpsProcessRow[]>());
+  const callmasterP = slow<unknown>("callmaster", () => safe(asOf, () => buildCallmaster(ids, range), "callmaster"));
+  const metrics = await slow<OpsProcessRow[]>("metrics", metricsLoad);
 
   const operations: SectionResult<unknown> = metrics;
   let quality: SectionResult<unknown>;

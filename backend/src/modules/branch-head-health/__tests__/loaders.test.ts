@@ -7,7 +7,8 @@ vi.mock("../overview.js", () => ({ loadReport: (...a: unknown[]) => loadReport(.
 vi.mock("../ops.js", () => ({ buildOpsSections: (...a: unknown[]) => buildOpsSections(...a), SECTION_TIMEOUT_MS: 20_000 }));
 vi.mock("../pnl.js", () => ({ buildProcessPnl: (...a: unknown[]) => buildProcessPnl(...a) }));
 
-import { getReportCached, getOpsCached, getPnlCached, clearBranchHeadHealthCaches, PNL_TIMEOUT_MS, TTL_MS, STILL_CALCULATING } from "../loaders.js";
+import { cachedOr, TtlCache } from "../cache.js";
+import { getReportCached, getOpsCached, isOpsFresh, getPnlCached, clearBranchHeadHealthCaches, PNL_TIMEOUT_MS, TTL_MS, STILL_CALCULATING } from "../loaders.js";
 
 const b = { branchId: "b1", branchCode: "C1", branchName: "One" };
 const okSec = { status: "ok", data: {}, asOf: "2026-10-15" };
@@ -48,6 +49,7 @@ describe("loaders", () => {
     let resolve!: (v: unknown) => void;
     loadReport.mockImplementation(() => new Promise((r) => { resolve = r; }));
     const p1 = getReportCached(b, "d"); const p2 = getReportCached(b, "d");
+    await vi.advanceTimersByTimeAsync(0);
     resolve({ n: 1 });
     expect(await p1).toEqual(await p2);
     expect(loadReport).toHaveBeenCalledTimes(1);
@@ -79,5 +81,40 @@ describe("loaders", () => {
     await new Promise((r) => setImmediate(r));
     process.off("unhandledRejection", h);
     expect(seen).toEqual([]);
+  });
+
+  it("a synchronously throwing loader does not poison the key", async () => {
+    const c = new TtlCache<number>(300_000, 8);
+    await expect(cachedOr(c, "k", (() => { throw new Error("sync"); }) as any)).rejects.toThrow("sync");
+    expect(await cachedOr(c, "k", async () => 7)).toBe(7);
+  });
+  it("ops cache key includes the process list: different lists do not collide", async () => {
+    buildOpsSections.mockResolvedValue({ operations: okSec, quality: okSec, callmaster: okSec });
+    await getOpsCached(b, [{ processId: "p1" } as any], range, "2026-10-15");
+    await getOpsCached(b, [{ processId: "p2" } as any], range, "2026-10-15");
+    await getOpsCached(b, [{ processId: "p2" } as any], range, "2026-10-15");
+    expect(buildOpsSections).toHaveBeenCalledTimes(2);
+  });
+  it("refresh-ahead: warm pass refreshes at 4 min, not at 1 min; a reader at 4.5 min still hits", async () => {
+    loadReport.mockResolvedValue({ n: 1 });
+    await getReportCached(b, "d");
+    vi.advanceTimersByTime(60_000);
+    await getReportCached(b, "d", { warm: true });
+    expect(loadReport).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(180_000); // 4 min old
+    loadReport.mockResolvedValue({ n: 2 });
+    expect(await getReportCached(b, "d", { warm: true })).toEqual({ n: 2 });
+    expect(loadReport).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(270_000); // 4.5 min after the refresh
+    expect(await getReportCached(b, "d")).toEqual({ n: 2 });
+    expect(loadReport).toHaveBeenCalledTimes(2);
+  });
+  it("isOpsFresh follows the refresh-ahead rule", async () => {
+    buildOpsSections.mockResolvedValue({ operations: okSec, quality: okSec, callmaster: okSec });
+    expect(isOpsFresh(b, "2026-10-15")).toBe(false);
+    await getOpsCached(b, [], range, "2026-10-15");
+    expect(isOpsFresh(b, "2026-10-15")).toBe(true);
+    vi.advanceTimersByTime(220_000);
+    expect(isOpsFresh(b, "2026-10-15")).toBe(false);
   });
 });
