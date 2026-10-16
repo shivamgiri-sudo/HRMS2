@@ -12,6 +12,11 @@ const TIER = {
   not_wired: { label: "Not wired", Icon: CircleDashed, cls: "bg-slate-100 text-slate-800 border-slate-300" },
 } as const;
 
+/** Plain-text tier label (for table twins). */
+export function coverageLabel(tier: CoverageTier): string {
+  return (TIER[tier] ?? TIER.not_wired).label;
+}
+
 export function CoverageBadge({ tier }: { tier: CoverageTier }) {
   const { label, Icon, cls } = TIER[tier] ?? TIER.not_wired;
   return (

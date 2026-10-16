@@ -2,14 +2,16 @@ import { useEffect, useState } from "react";
 
 export interface NavSection { id: string; label: string }
 
-/** Anchor ids the layout puts on its section wrappers (Task 3 fills them with the visual sections). */
+/** Anchor ids on the layout's section wrappers, in the same order the sections appear on the page. */
 export const BH_SECTIONS: NavSection[] = [
   { id: "bh-overview", label: "Overview" },
   { id: "bh-people", label: "People" },
   { id: "bh-attendance", label: "Attendance" },
+  { id: "bh-attrition", label: "Attrition" },
   { id: "bh-finance", label: "Finance" },
   { id: "bh-pnl", label: "P&L" },
   { id: "bh-hiring", label: "Hiring" },
+  { id: "bh-backlog", label: "Backlogs" },
   { id: "bh-ops", label: "Operations" },
 ];
 
@@ -17,8 +19,9 @@ export const BH_SECTIONS: NavSection[] = [
 export const ANCHOR_OFFSET_CLASS = "scroll-mt-[128px]";
 
 /**
- * Active section = the visible one nearest the top of the viewport (smallest top offset);
- * with nothing visible keep the current one so the highlight never flickers to empty.
+ * Active section = the visible one nearest the top of the viewport (smallest top offset); equal
+ * offsets resolve to the earlier id, and `ids` is in document order, so ties follow the page.
+ * With nothing visible keep the current one so the highlight never flickers to empty.
  */
 export function pickActive(ids: string[], visibleTops: Map<string, number>, current: string): string {
   let best: string | null = null;

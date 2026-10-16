@@ -36,4 +36,11 @@ describe("StackedBar", () => {
     const zero = [{ id: "z", label: "Z", segments: [{ key: "present", value: 0 }] }];
     expect(renderToStaticMarkup(<StackedBar rows={zero} series={series} />)).toContain("No data");
   });
+  it("a series colour overrides the slot colour in bars and legend; unset keeps the slot", () => {
+    const colored = [{ key: "present", label: "Present", color: "#d03b3b" }, { key: "leave", label: "Leave" }, { key: "absent", label: "Absent" }];
+    const out = renderToStaticMarkup(<StackedBar rows={rows} series={colored} />);
+    expect(out.split("#d03b3b").length - 1).toBe(3);
+    expect(out).toContain("var(--bh-s2)");
+    expect(stackLayout(rows, colored).rows[0].segments[0].color).toBe("#d03b3b");
+  });
 });

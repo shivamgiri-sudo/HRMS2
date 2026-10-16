@@ -6,6 +6,7 @@ import type { BranchHeadHealthPayload, SectionResult } from "../../../../../../b
 import type { BranchProcess } from "../../../../../../backend/src/modules/branch-head-health/processes";
 import { BranchHeadReferenceLayout } from "../BranchHeadReferenceLayout";
 import { DrilldownTable, defaultDrillBranch, drillMetricFor } from "../ProcessCoveragePanel";
+import { BH_SECTIONS } from "../SectionNav";
 import * as fx from "./fixtures";
 import { branchHeadRoute } from "../../../../../config/routes/branchHeadRoute";
 
@@ -146,14 +147,18 @@ describe("BranchHeadReferenceLayout", () => {
     poor.score = { score: 40, pillars: [], excluded: [] };
     expect(html(payload({ branches: [poor] }))).toContain("Poor");
   });
-  it("renders the new panels in the agreed order", () => {
+  it("renders the visual sections in nav order, then data health and process coverage", () => {
     const out = html(payload());
-    const order = ["Attention and wins", "Running P&amp;L - month to date", "Process P&amp;L - P&amp;L pages basis", "Attendance detail", ">Headcount<", ">Hiring<", "Attrition and retention", ">Backlogs<", "Data health"];
-    // The section nav above the hero repeats short labels such as "Hiring"; panel order is checked after it.
-    const start = out.indexOf("Attention and wins");
-    const at = order.map((t) => out.indexOf(t, start));
+    const ids = ["bh-overview", "bh-people", "bh-attendance", "bh-attrition", "bh-finance", "bh-pnl", "bh-hiring", "bh-backlog", "bh-ops"];
+    expect(BH_SECTIONS.map((s) => s.id)).toEqual(ids);
+    const at = [...ids.map((id) => out.indexOf(`id="${id}"`)), out.indexOf(">Data health<"), out.indexOf(">Process coverage<")];
     expect(at.every((i) => i >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
+    const titles = ["Attention and wins", ">Headcount<", "Attendance today", "Attrition and retention", "Running P&amp;L - month to date", "Process P&amp;L - P&amp;L pages basis", ">Hiring<", ">Backlogs<", "Operations and quality"];
+    const start = out.indexOf("Attention and wins");
+    const t = titles.map((x) => out.indexOf(x, start));
+    expect(t.every((i) => i >= 0)).toBe(true);
+    expect([...t].sort((a, b) => a - b)).toEqual(t);
   });
   it("branch-level output has no person names even if a payload carries them", () => {
     const b = branch("b1", "Kolkata");
@@ -161,14 +166,20 @@ describe("BranchHeadReferenceLayout", () => {
     b.overview.hiring = fx.ok({ ...fx.hiring, candidateName: "Zed Candidate", batches: fx.hiring.batches.map((x) => leak(x, "requester", "Qasim Requester")) }) as any;
     b.overview.people = fx.ok({ ...fx.people, joinedNames: ["Nita Joiner"], byProcess: fx.people.byProcess.map((x) => leak(x, "managerName", "Olga Manager")) }) as any;
     b.overview.attrition = fx.ok({ ...fx.attrition, topRisk: [{ name: "Paul Risky" }], byProcess: fx.attrition.byProcess.map((x) => leak(x, "name", "Rita Risky")) }) as any;
+    b.overview.attendance = fx.ok({ ...fx.attendance, lateNames: ["Lata Late"], bySlot: fx.attendance.bySlot.map((x) => leak(x, "supervisor", "Sam Supervisor")) }) as any;
+    b.overview.finance = fx.ok({ ...fx.finance, approverName: "Fay Approver", grn: { ...fx.finance.grn!, pendingByStage: fx.finance.grn!.pendingByStage.map((x) => leak(x, "approver", "Gus Approver")) } }) as any;
+    b.overview.processPnl = fx.ok({ ...fx.pnl(3), rows: fx.pnl(3).rows.map((x) => leak(x, "ownerName", "Hal Owner")) }) as any;
+    b.overview.backlogs = fx.ok({ ...fx.backlogs, regularization: leak(fx.backlogs.regularization, "oldestBy", "Ivy Oldest") }) as any;
+    b.overview.operations = ok([{ processCode: "P1", processName: "Alpha Ops", tier: "full", metrics: { AHT: 300 }, latestDate: "2026-10-14", stale: false, agentName: "Jon Agent" }]);
     const out = html(payload({ branches: [b] }));
-    for (const n of ["Secret Manager", "Zed Candidate", "Qasim Requester", "Nita Joiner", "Olga Manager", "Paul Risky", "Rita Risky"]) expect(out).not.toContain(n);
+    for (const n of ["Secret Manager", "Zed Candidate", "Qasim Requester", "Nita Joiner", "Olga Manager", "Paul Risky", "Rita Risky", "Lata Late", "Sam Supervisor", "Fay Approver", "Gus Approver", "Hal Owner", "Ivy Oldest", "Jon Agent"]) expect(out).not.toContain(n);
   });
   it("missing optional sections render an honest placeholder", () => {
     const b = branch("b1", "Kolkata");
     delete b.overview.attrition; delete b.overview.backlogs; delete b.overview.processPnl;
     const out = html(payload({ branches: [b] }));
-    expect(out.split("Not available yet").length - 1).toBe(3);
+    // attrition, backlogs, process P&L and (absent in this fixture) operations and quality
+    expect(out.split("Not available yet").length - 1).toBe(4);
   });
   it("route is omitted when the flag is off and present when on", () => {
     expect(branchHeadRoute(false, <div />)).toBeNull();
@@ -230,7 +241,7 @@ describe("BranchHeadReferenceLayout", () => {
   it("one branch: section nav plus an anchor wrapper for every section", () => {
     const out = html(payload());
     expect(out).toContain('aria-label="Page sections"');
-    for (const id of ["bh-overview", "bh-people", "bh-attendance", "bh-finance", "bh-pnl", "bh-hiring", "bh-ops"]) {
+    for (const id of ["bh-overview", "bh-people", "bh-attendance", "bh-attrition", "bh-finance", "bh-pnl", "bh-hiring", "bh-backlog", "bh-ops"]) {
       expect(out).toContain(`href="#${id}"`);
       expect(out.split(`id="${id}"`).length - 1).toBe(1);
     }
@@ -243,7 +254,8 @@ describe("BranchHeadReferenceLayout", () => {
   it("new top area: score ring, 8 KPI tiles and the attention board", () => {
     const out = html(payload());
     expect(out).toContain("Health score: 82 out of 100, Good");
-    expect(out.split('class="bh-viz bh-tile"').length - 1).toBe(8);
+    const strip = out.slice(out.indexOf('aria-label="Key numbers"'), out.indexOf("</ul>", out.indexOf('aria-label="Key numbers"')));
+    expect(strip.split('class="bh-viz bh-tile"').length - 1).toBe(8);
     expect(out).toContain(">Late arrivals<");
     expect(out).toMatch(/<details(?![^>]*\bopen\b)[^>]*data-group="wins"/);
     expect(out).toContain("Hiring on track");

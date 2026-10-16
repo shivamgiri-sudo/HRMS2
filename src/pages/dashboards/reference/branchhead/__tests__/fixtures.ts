@@ -1,3 +1,5 @@
+import type { BranchHeadHealthPayload, BranchOverview } from "../../../../../../backend/src/modules/branch-head-health/types";
+import type { BranchProcess } from "../../../../../../backend/src/modules/branch-head-health/processes";
 import type { SectionResult, ProcessPnlData, ProcessPnlRow, AttritionData, BacklogsData } from "../../../../../../backend/src/modules/branch-head-health/types";
 import type { AttendanceData, FinanceData, HiringData, PeopleData } from "../panelTypes";
 
@@ -80,3 +82,25 @@ export const backlogs: BacklogsData = {
   regularization: { pending: 14, oldestDays: 9, over3Days: 6, over7Days: 2, escalated: 1 },
   leaveAging: { pending: 5, oldestDays: 4, over3Days: 2, over7Days: 0, staleOlderThanWindow: 1 },
 };
+
+/* Visual-section helpers: a full overview + payload around the fixtures above. */
+
+export const procRow = (o: Partial<BranchProcess>): BranchProcess => ({
+  processId: "p-alpha", processCode: "ALPHA", processName: "Alpha Voice", costCentres: ["CC1"], viaLink: false,
+  mandatedSeats: 50, headcount: 60, tier: "full", latestMetricDate: "2026-10-14", billingMirror: false, branchIds: ["b1"], ...o,
+});
+
+export const overviewOf = (o: Partial<BranchOverview> = {}): BranchOverview => ({
+  branch: { branchId: "b1", branchCode: "B1", branchName: "Kolkata" }, date: "2026-10-15", status: "healthy",
+  attention: [], positives: [],
+  people: ok(people), attendance: ok(attendance), hiring: ok(hiring), finance: ok(finance),
+  leaderboard: ok([{ manager: "Secret Manager", late: 5, shrinkagePct: null }]),
+  attrition: ok(attrition), backlogs: ok(backlogs), processPnl: ok(pnl(3)), ...o,
+});
+
+export const payloadOf = (ov: BranchOverview = overviewOf(), o: Partial<BranchHeadHealthPayload> = {}): BranchHeadHealthPayload => ({
+  scope: { viaHomeFallback: false, orgWide: false, emptyReason: null },
+  branches: [{ branch: ov.branch, overview: ov, score: { score: 80, pillars: [], excluded: [] } }],
+  processes: { active: [procRow({}), procRow({ processId: "p-beta", processCode: "BETA", processName: "Beta  Chat " }), procRow({ processId: "p1", processCode: "P1", processName: "process 1" })], unmapped: [] },
+  generatedAt: "2026-10-15T05:00:00Z", ...o,
+});

@@ -1,25 +1,36 @@
-import { DataHealthPanel } from "./DataHealthPanel";
 import { Home } from "lucide-react";
 import { Panel, SectionTitle } from "../../kit";
 import type { BranchHeadHealthPayload } from "../../../../../backend/src/modules/branch-head-health/types";
 import type { HeadBranch } from "../../../../../backend/src/modules/branch-head-health/scope";
 import { ProcessCoveragePanel } from "./ProcessCoveragePanel";
-import { LeaderboardPanel } from "./SectionPanels";
-import { CallmasterPanel } from "./CallmasterPanel";
-import { OperationsPanel, QualityPanel } from "./OperationsPanel";
-import { FinancePanel } from "./FinancePanel";
-import { ProcessPnlPanel } from "./ProcessPnlPanel";
-import { AttendanceDetailPanel } from "./AttendanceDetailPanel";
-import { HeadcountPanel } from "./HeadcountPanel";
-import { HiringPanel } from "./HiringPanel";
-import { AttritionPanel } from "./AttritionPanel";
-import { BacklogPanel } from "./BacklogPanel";
+import { PeopleVisual } from "./sections/PeopleVisual";
+import { AttendanceVisual } from "./sections/AttendanceVisual";
+import { AttritionVisual } from "./sections/AttritionVisual";
+import { FinanceVisual } from "./sections/FinanceVisual";
+import { ProcessPnlVisual } from "./sections/ProcessPnlVisual";
+import { HiringVisual } from "./sections/HiringVisual";
+import { BacklogVisual } from "./sections/BacklogVisual";
+import { DataHealthChips, OpsQualityVisual } from "./sections/OpsQualityVisual";
+import type { VisualProps } from "./sections/shared";
+import type { DrillTarget } from "./drill";
 import { BranchHeadControls } from "./BranchHeadControls";
 import { BranchOverviewTop } from "./BranchOverviewTop";
 import { ANCHOR_OFFSET_CLASS, BH_SECTIONS, SectionNav } from "./SectionNav";
 
-/** Drill-down hooks are wired to the drawer host in Task 4; until then tiles and chips open nothing extra. */
+/** Drill-down hooks are wired to the drawer host in Task 4; until then tiles, chips and chart marks open nothing extra. */
 const NOOP = () => {};
+const NOOP_SELECT: (target: DrillTarget) => void = () => {};
+
+/** Visual sections below the overview, in page (and SectionNav) order. */
+const SECTIONS: Array<{ id: string; Visual: (p: VisualProps) => JSX.Element | null }> = [
+  { id: "bh-people", Visual: PeopleVisual },
+  { id: "bh-attendance", Visual: AttendanceVisual },
+  { id: "bh-attrition", Visual: AttritionVisual },
+  { id: "bh-finance", Visual: FinanceVisual },
+  { id: "bh-pnl", Visual: ProcessPnlVisual },
+  { id: "bh-hiring", Visual: HiringVisual },
+  { id: "bh-backlog", Visual: BacklogVisual },
+];
 
 export interface BranchHeadLayoutProps {
   data: BranchHeadHealthPayload;
@@ -64,30 +75,18 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
           <div id={anchor("bh-overview")} className={ANCHOR_OFFSET_CLASS}>
             <BranchOverviewTop branch={branch} overview={overview} score={score} onOpenKpi={NOOP} onOpenAttentionItem={NOOP} />
           </div>
-          <div id={anchor("bh-finance")} className={ANCHOR_OFFSET_CLASS}><FinancePanel section={overview.finance} /></div>
-          <div id={anchor("bh-pnl")} className={ANCHOR_OFFSET_CLASS}><ProcessPnlPanel section={overview.processPnl} /></div>
-          <div id={anchor("bh-attendance")} className={ANCHOR_OFFSET_CLASS}><AttendanceDetailPanel section={overview.attendance} /></div>
-          <div id={anchor("bh-people")} className={ANCHOR_OFFSET_CLASS}><HeadcountPanel section={overview.people} /></div>
-          <div id={anchor("bh-hiring")} className={ANCHOR_OFFSET_CLASS}><HiringPanel section={overview.hiring} /></div>
-          <AttritionPanel section={overview.attrition} />
-          <BacklogPanel section={overview.backlogs} />
-          <div id={anchor("bh-ops")} className={`space-y-4 ${ANCHOR_OFFSET_CLASS}`}>
-            <LeaderboardPanel section={overview.leaderboard} />
-            {overview.operations || overview.quality || overview.callmaster ? (() => {
-              const panels = (
-                <div className="space-y-4">
-                  <OperationsPanel section={overview.operations} />
-                  <QualityPanel section={overview.quality} />
-                  <CallmasterPanel section={overview.callmaster} />
-                </div>
-              );
-              return data.branches.length > 1 ? (
-                <details data-group={`ops-${branch.branchId}`} className="rounded-lg border border-slate-200">
-                  <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-[13px] font-bold text-slate-900">Operations, quality and Callmaster for {branch.branchName}</summary>
-                  <div className="p-3">{panels}</div>
-                </details>
-              ) : panels;
-            })() : null}
+          {SECTIONS.map(({ id, Visual }) => (
+            <div key={id} id={anchor(id)} className={ANCHOR_OFFSET_CLASS}>
+              <Visual overview={overview} payload={data} onSelect={NOOP_SELECT} />
+            </div>
+          ))}
+          <div id={anchor("bh-ops")} className={ANCHOR_OFFSET_CLASS}>
+            {single ? <OpsQualityVisual overview={overview} payload={data} onSelect={NOOP_SELECT} /> : (
+              <details data-group={`ops-${branch.branchId}`} className="rounded-lg border border-slate-200">
+                <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-[13px] font-bold text-slate-900">Operations, quality and Callmaster for {branch.branchName}</summary>
+                <div className="p-3"><OpsQualityVisual overview={overview} payload={data} onSelect={NOOP_SELECT} /></div>
+              </details>
+            )}
           </div>
         </section>
       ))}
@@ -95,7 +94,7 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
       {data.branches.length > 0 || data.processesError ? (
         <>
           <SectionTitle>Processes</SectionTitle>
-          <DataHealthPanel section={data.dataHealth} />
+          <DataHealthChips section={data.dataHealth} />
           <ProcessCoveragePanel active={data.processes.active} unmapped={data.processes.unmapped} selectedBranchId={selectedBranchId} branchNames={branchNames} error={data.processesError} />
         </>
       ) : null}
