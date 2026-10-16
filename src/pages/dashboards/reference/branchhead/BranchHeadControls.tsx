@@ -12,24 +12,24 @@ export function BranchHeadControls({ options, selectedBranchId = "", onBranchCha
   stale?: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-end gap-3">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       {options.length >= 2 ? (
-        <label className="text-[12px] font-semibold text-slate-800">
+        <label className="flex items-center gap-2 text-[12px] font-semibold text-slate-700">
           Branch
           <select value={selectedBranchId} onChange={(e) => onBranchChange?.(e.target.value)}
-            className="mt-1 block min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-[14px] text-slate-900">
+            className="block min-h-[44px] rounded-lg border border-slate-200 bg-white px-3 text-[13px] text-slate-900 shadow-sm">
             <option value="">All my branches</option>
             {options.map((b) => <option key={b.branchId} value={b.branchId}>{b.branchName}</option>)}
           </select>
         </label>
       ) : null}
-      <label className="text-[12px] font-semibold text-slate-800">
+      <label className="flex items-center gap-2 text-[12px] font-semibold text-slate-700">
         Date
         <input type="date" value={date ?? ""} onChange={(e) => onDateChange?.(e.target.value)}
-          className="mt-1 block min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-[14px] text-slate-900" />
+          className="block min-h-[44px] rounded-lg border border-slate-200 bg-white px-3 text-[13px] text-slate-900 shadow-sm" />
       </label>
       {onRefresh ? (
-        <button type="button" onClick={onRefresh} className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-[13px] font-semibold text-slate-900">
+        <button type="button" onClick={onRefresh} className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg bg-slate-100 px-3 text-[13px] font-semibold text-slate-700 hover:bg-slate-200">
           <RefreshCw className="h-4 w-4" aria-hidden="true" />Refresh
         </button>
       ) : null}

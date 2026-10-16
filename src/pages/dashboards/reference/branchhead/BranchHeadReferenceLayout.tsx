@@ -1,6 +1,5 @@
-import { useEffect } from "react";
-import { Home } from "lucide-react";
-import { Panel, SectionTitle } from "../../kit";
+import { useEffect, useState } from "react";
+import { Inbox } from "lucide-react";
 import type { BranchHeadHealthPayload } from "../../../../../backend/src/modules/branch-head-health/types";
 import type { HeadBranch } from "../../../../../backend/src/modules/branch-head-health/scope";
 import { ProcessCoveragePanel } from "./ProcessCoveragePanel";
@@ -11,14 +10,17 @@ import { FinanceVisual } from "./sections/FinanceVisual";
 import { ProcessPnlVisual } from "./sections/ProcessPnlVisual";
 import { HiringVisual } from "./sections/HiringVisual";
 import { BacklogVisual } from "./sections/BacklogVisual";
-import { DataHealthChips, OpsQualityVisual } from "./sections/OpsQualityVisual";
+import { OpsQualityVisual } from "./sections/OpsQualityVisual";
+import { DataHealthChips } from "./sections/DataHealthChips";
 import type { VisualProps } from "./sections/shared";
 import type { DrillTarget, KpiId } from "./drill";
 import { DrillHost, useDrillHost, type DrillHostApi } from "./drill/DrillHost";
 import { drillResetKey } from "./drill/history";
 import { BranchHeadControls } from "./BranchHeadControls";
 import { BranchOverviewTop } from "./BranchOverviewTop";
-import { ANCHOR_OFFSET_CLASS, BH_SECTIONS, SectionNav } from "./SectionNav";
+import { BH_SECTIONS, BranchHero, panelDomId, tabDomId } from "./BranchHero";
+import { StatusChip } from "./StatusChip";
+import { BhCard } from "./ui";
 
 /** Section clicks and KPI tiles of one branch overview open the drill host for that branch. */
 export function drillHandlers(open: DrillHostApi["open"], branchId: string) {
@@ -28,16 +30,13 @@ export function drillHandlers(open: DrillHostApi["open"], branchId: string) {
   };
 }
 
-/** Visual sections below the overview, in page (and SectionNav) order. */
-const SECTIONS: Array<{ id: string; Visual: (p: VisualProps) => JSX.Element | null }> = [
-  { id: "bh-people", Visual: PeopleVisual },
-  { id: "bh-attendance", Visual: AttendanceVisual },
-  { id: "bh-attrition", Visual: AttritionVisual },
-  { id: "bh-finance", Visual: FinanceVisual },
-  { id: "bh-pnl", Visual: ProcessPnlVisual },
-  { id: "bh-hiring", Visual: HiringVisual },
-  { id: "bh-backlog", Visual: BacklogVisual },
-];
+type Visual = (p: VisualProps) => JSX.Element | null;
+
+/** Tab id -> the visual that fills it (Overview and Processes are built inline). */
+const VISUALS: Record<string, Visual> = {
+  people: PeopleVisual, attendance: AttendanceVisual, attrition: AttritionVisual, finance: FinanceVisual,
+  pnl: ProcessPnlVisual, hiring: HiringVisual, backlog: BacklogVisual, ops: OpsQualityVisual,
+};
 
 export interface BranchHeadLayoutProps {
   data: BranchHeadHealthPayload;
@@ -50,71 +49,62 @@ export interface BranchHeadLayoutProps {
   onRefresh?: () => void;
   /** True while newer data is loading and the page still shows the previous result. */
   stale?: boolean;
+  /** Tab shown first; defaults to the overview. */
+  initialTab?: string;
 }
 
-export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchId = "", onBranchChange, date, onDateChange, onRefresh, stale }: BranchHeadLayoutProps) {
+export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchId = "", onBranchChange, date, onDateChange, onRefresh, stale, initialTab = "overview" }: BranchHeadLayoutProps) {
   const options = branchOptions ?? data.branches.map((b) => b.branch);
   const branchNames = Object.fromEntries(options.map((o) => [o.branchId, o.branchName]));
-  // Anchor ids must be unique, so the section nav and its targets exist only for a single-branch view.
   const single = data.branches.length === 1;
-  const anchor = (id: string) => (single ? id : undefined);
+  const [tab, setTab] = useState(BH_SECTIONS.some((t) => t.id === initialTab) ? initialTab : "overview");
   const host = useDrillHost();
   const { close } = host;
   // Another branch, date or branch list closes the drawer (its view would belong to the old data).
   const resetKey = drillResetKey(selectedBranchId, date, data.branches.map((b) => b.branch.branchId));
   useEffect(() => { close(); }, [resetKey, close]);
 
+  const first = data.branches[0];
+  const heroName = single ? first.branch.branchName : data.branches.length === 0 ? "No branch" : `${data.branches.length} branches`;
+  const showProcesses = data.branches.length > 0 || Boolean(data.processesError);
+
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-[20px] font-extrabold text-slate-900">Branch health</h1>
-          {data.scope.viaHomeFallback ? (
-            <p className="mt-0.5 flex items-center gap-1.5 text-[13px] text-slate-700"><Home className="h-4 w-4" aria-hidden="true" />Showing your home branch</p>
-          ) : null}
-        </div>
+      <BranchHero branchName={heroName} status={single ? first.overview.status : undefined} date={first?.overview.date ?? date}
+        homeFallback={data.scope.viaHomeFallback} activeTab={tab} onTabChange={setTab} />
+      <div className="flex flex-wrap items-end justify-end gap-3">
         <BranchHeadControls options={options} selectedBranchId={selectedBranchId} onBranchChange={onBranchChange} date={date} onDateChange={onDateChange} onRefresh={onRefresh} stale={stale} />
-      </header>
+      </div>
 
       {data.scope.emptyReason ? (
-        <Panel title="Nothing to show"><p className="text-[14px] text-slate-800">{data.scope.emptyReason}</p></Panel>
+        <BhCard title="Nothing to show" icon={Inbox}><p className="text-[14px] text-slate-800">{data.scope.emptyReason}</p></BhCard>
       ) : null}
 
-      {single ? <SectionNav sections={BH_SECTIONS} /> : null}
-
-      {data.branches.map(({ branch, overview, score }) => {
-        const { onSelect, onOpenKpi } = drillHandlers(host.open, branch.branchId);
-        return (
-        <section key={branch.branchId} aria-label={`${branch.branchName} health`} className="space-y-4">
-          <div id={anchor("bh-overview")} className={ANCHOR_OFFSET_CLASS}>
-            <BranchOverviewTop branch={branch} overview={overview} score={score} onOpenKpi={onOpenKpi} />
-          </div>
-          {SECTIONS.map(({ id, Visual }) => (
-            <div key={id} id={anchor(id)} className={ANCHOR_OFFSET_CLASS}>
-              <Visual overview={overview} payload={data} onSelect={onSelect} />
+      <div role="tabpanel" id={panelDomId(tab)} aria-labelledby={tabDomId(tab)} tabIndex={-1} className="space-y-4 focus:outline-none">
+        {tab === "processes" ? (
+          showProcesses ? (
+            <div className="space-y-4">
+              <DataHealthChips section={data.dataHealth} />
+              <ProcessCoveragePanel active={data.processes.active} unmapped={data.processes.unmapped} selectedBranchId={selectedBranchId} branchNames={branchNames} error={data.processesError} />
             </div>
-          ))}
-          <div id={anchor("bh-ops")} className={ANCHOR_OFFSET_CLASS}>
-            {single ? <OpsQualityVisual overview={overview} payload={data} onSelect={onSelect} /> : (
-              <details data-group={`ops-${branch.branchId}`} className="rounded-lg border border-slate-200">
-                <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-[13px] font-bold text-slate-900">Operations, quality and Callmaster for {branch.branchName}</summary>
-                <div className="p-3"><OpsQualityVisual overview={overview} payload={data} onSelect={onSelect} /></div>
-              </details>
-            )}
-          </div>
-        </section>
-        );
-      })}
+          ) : null
+        ) : data.branches.map(({ branch, overview, score }) => {
+          const { onSelect, onOpenKpi } = drillHandlers(host.open, branch.branchId);
+          const Visual = VISUALS[tab];
+          return (
+            <section key={branch.branchId} aria-label={`${branch.branchName} health`} className="space-y-4">
+              {!single && tab !== "overview" ? (
+                <h2 className="flex items-center gap-2 text-[15px] font-bold text-slate-900">{branch.branchName}<StatusChip status={overview.status} /></h2>
+              ) : null}
+              {tab === "overview" ? (
+                <BranchOverviewTop branch={branch} overview={overview} score={score} onOpenKpi={onOpenKpi} />
+              ) : Visual ? <Visual overview={overview} payload={data} onSelect={onSelect} /> : null}
+            </section>
+          );
+        })}
+      </div>
 
       <DrillHost host={host} data={data} branchNames={branchNames} />
-
-      {data.branches.length > 0 || data.processesError ? (
-        <>
-          <SectionTitle>Processes</SectionTitle>
-          <DataHealthChips section={data.dataHealth} />
-          <ProcessCoveragePanel active={data.processes.active} unmapped={data.processes.unmapped} selectedBranchId={selectedBranchId} branchNames={branchNames} error={data.processesError} />
-        </>
-      ) : null}
     </div>
   );
 }

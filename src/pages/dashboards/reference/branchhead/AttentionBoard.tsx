@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertOctagon, AlertTriangle, ThumbsUp } from "lucide-react";
+import { AlertOctagon, AlertTriangle, CheckCircle2 } from "lucide-react";
 import type { BranchOverview } from "../../../../../backend/src/modules/branch-head-health/types";
 import { DrillDrawer } from "./viz";
 
@@ -9,8 +9,8 @@ type Win = BranchOverview["positives"][number];
 export const MAX_CHIPS = 5;
 const RANK = { critical: 0, warning: 1 } as const;
 const SEVERITY = {
-  critical: { word: "Critical", Icon: AlertOctagon, cls: "border-rose-300 bg-rose-50 text-rose-950", icon: "text-rose-700" },
-  warning: { word: "Warning", Icon: AlertTriangle, cls: "border-amber-300 bg-amber-50 text-amber-950", icon: "text-amber-700" },
+  critical: { word: "Critical", Icon: AlertOctagon, edge: "border-l-rose-500", icon: "text-rose-700" },
+  warning: { word: "Warning", Icon: AlertTriangle, edge: "border-l-amber-500", icon: "text-amber-700" },
 } as const;
 
 const isDigit = (ch: string | undefined) => ch != null && ch >= "0" && ch <= "9";
@@ -75,8 +75,8 @@ export interface AttentionBoardProps {
 }
 
 /**
- * Up to five severity chips (icon + severity word + short label + count), critical first; the full
- * list with details lives in a drawer behind "+N more" (or any chip). Wins are collapsed by default.
+ * Two lists: up to five attention rows (severity icon, label, detail; rose or amber edge), critical first,
+ * the full list in a drawer behind "+N more"; and the wins with an emerald check.
  */
 export function AttentionBoard({ items, positives, onOpenItem, drawerOpen, onDrawerChange, inlineDrawer = false }: AttentionBoardProps) {
   const [ownOpen, setOwnOpen] = useState(false);
@@ -87,49 +87,56 @@ export function AttentionBoard({ items, positives, onOpenItem, drawerOpen, onDra
   const more = sorted.length - chips.length;
 
   if (items.length === 0 && positives.length === 0) {
-    return <p className="text-[13px] text-slate-700">Nothing needs attention right now.</p>;
+    return <p className="flex items-center gap-2 text-[13px] text-slate-700"><CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden="true" />Nothing needs attention right now.</p>;
   }
+  const shownWins = positives.slice(0, MAX_CHIPS);
   return (
-    <div className="space-y-3">
-      {items.length === 0 ? <p className="text-[13px] text-slate-700">Nothing needs attention.</p> : (
-        <ul className="flex list-none flex-wrap gap-2 p-0" aria-label="Needs attention, most severe first">
-          {chips.map(({ id, item }) => {
-            const s = SEVERITY[item.severity] ?? SEVERITY.warning;
-            const count = chipCount(item.detail, item.label);
-            return (
-              <li key={id} className="min-w-0 max-w-full">
-                <button type="button" data-chip={item.severity} onClick={() => { onOpenItem?.(id); setOpen(true); }}
-                  className={`inline-flex min-h-[44px] max-w-full items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${s.cls}`}>
-                  <SeverityIcon severity={item.severity} />
-                  <span className="sr-only">{s.word}: </span>
-                  <span className="truncate">{item.label}</span>
-                  {count ? <span className="rounded-full bg-white/80 px-1.5 text-[12px] font-bold tabular-nums">{count}</span> : null}
+    <div>
+    <div className="grid items-stretch gap-4 lg:grid-cols-2">
+      <div className="min-w-0">
+        <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide text-slate-600">Needs attention ({items.length})</h3>
+        {items.length === 0 ? <p className="flex items-center gap-2 text-[13px] text-slate-700"><CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden="true" />Nothing needs attention.</p> : (
+          <ul className="list-none space-y-2 p-0" aria-label="Needs attention, most severe first">
+            {chips.map(({ id, item }) => {
+              const s = SEVERITY[item.severity] ?? SEVERITY.warning;
+              return (
+                <li key={id} className="min-w-0">
+                  <button type="button" data-chip={item.severity} onClick={() => { onOpenItem?.(id); setOpen(true); }}
+                    className={`flex min-h-[44px] w-full items-start gap-2 rounded-xl border border-slate-100 border-l-4 bg-white px-3 py-2 text-left shadow-sm hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${s.edge}`}>
+                    <span className="mt-0.5"><SeverityIcon severity={item.severity} /></span>
+                    <span className="min-w-0 text-[13px]">
+                      <span className="block font-semibold text-slate-900"><span className="sr-only">{s.word}: </span>{item.label}</span>
+                      <span className="block text-slate-600">{item.detail}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+            {more > 0 ? (
+              <li>
+                <button type="button" onClick={() => setOpen(true)}
+                  className="inline-flex min-h-[44px] items-center rounded-xl bg-slate-100 px-3 text-[13px] font-semibold text-slate-800 hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                  +{more} more
                 </button>
               </li>
-            );
-          })}
-          {more > 0 ? (
-            <li>
-              <button type="button" onClick={() => setOpen(true)}
-                className="inline-flex min-h-[44px] items-center rounded-full border border-slate-300 px-3 text-[13px] font-semibold text-slate-800 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-                +{more} more
-              </button>
-            </li>
-          ) : null}
-        </ul>
-      )}
-      {positives.length > 0 ? (
-        <details data-group="wins" className="rounded-lg border border-slate-200">
-          <summary className="flex min-h-[44px] cursor-pointer items-center gap-2 px-3 text-[13px] font-bold text-slate-900">
-            <ThumbsUp className="h-4 w-4 text-emerald-700" aria-hidden="true" />Going well ({positives.length})
-          </summary>
-          <ul className="space-y-1 px-3 pb-3" aria-label="Going well">
-            {positives.map((p, i) => (
-              <li key={`${p.label}-${i}`} className="text-[13px] text-slate-900"><strong>{p.label}</strong> <span className="text-slate-700">{p.detail}</span></li>
+            ) : null}
+          </ul>
+        )}
+      </div>
+      <div className="min-w-0">
+        <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide text-slate-600">Going well ({positives.length})</h3>
+        {positives.length === 0 ? <p className="text-[13px] text-slate-600">No highlights yet today.</p> : (
+          <ul className="list-none space-y-2 p-0" aria-label="Going well">
+            {shownWins.map((p, i) => (
+              <li key={`${p.label}-${i}`} className="flex min-h-[44px] items-start gap-2 rounded-xl border border-slate-100 border-l-4 border-l-emerald-500 bg-white px-3 py-2 shadow-sm">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+                <span className="min-w-0 text-[13px]"><span className="block font-semibold text-slate-900">{p.label}</span><span className="block text-slate-600">{p.detail}</span></span>
+              </li>
             ))}
           </ul>
-        </details>
-      ) : null}
+        )}
+      </div>
+    </div>
       <DrillDrawer open={open} onClose={() => setOpen(false)} title={`Needs attention (${items.length})`}
         subtitle="Most severe first" inline={inlineDrawer}>
         <AttentionItems items={sorted} />

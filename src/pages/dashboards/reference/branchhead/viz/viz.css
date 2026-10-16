@@ -1,7 +1,8 @@
 /* Branch Head Health chart tokens and chrome. Scoped to .bh-viz so nothing leaks globally.
    Values are the dataviz reference palette (validated; see the task-1 report). Light by default,
    dark under the repo's class strategy (.dark on an ancestor). */
-.bh-viz {
+.bh-viz,
+.dark .bh-card-body .bh-viz {
   color-scheme: light;
   --bh-surface: #fcfcfb;
   --bh-plane: #f9f9f7;
@@ -85,10 +86,10 @@
 .bh-axis-text { fill: var(--bh-ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
 .bh-label-text { fill: var(--bh-ink-2); font-size: 11px; }
 
-/* Frame */
-.bh-frame { background: var(--bh-surface); border: 1px solid var(--bh-border); border-radius: 14px; padding: 14px 16px; min-width: 0; }
-.bh-frame-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-.bh-frame-title { font-size: 14px; font-weight: 600; line-height: 1.3; margin: 0; color: var(--bh-ink-1); }
+/* Frame: a light tinted panel inside a section card (never card-in-card). Section cards (kit SectionCard) stay white in dark mode, so everything inside keeps the light tokens via .bh-card-body. */
+.bh-frame { background: #f8fafc; border: 1px solid #eef2f6; border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.bh-frame-head { display: flex; flex-wrap: nowrap; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.bh-frame-title { font-size: 12px; font-weight: 600; letter-spacing: 0.01em; line-height: 1.3; margin: 0; color: var(--bh-ink-1); }
 .bh-frame-sub { font-size: 12px; color: var(--bh-ink-2); margin: 2px 0 0; }
 .bh-frame-actions { display: flex; align-items: center; gap: 6px; }
 .bh-btn { min-height: 36px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--bh-border); background: transparent; color: var(--bh-ink-2); font-size: 12px; font-weight: 500; cursor: pointer; }
@@ -146,7 +147,7 @@
 .bh-funnel-bar { height: 22px; border-radius: 4px; margin: 0 auto; min-width: 2px; }
 
 /* Figures */
-.bh-tile { position: relative; display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; background: var(--bh-surface); border: 1px solid var(--bh-border); border-radius: 12px; padding: 10px 12px; color: var(--bh-ink-1); font: inherit; }
+.bh-tile { flex: 1; position: relative; display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; background: var(--bh-surface); border: 1px solid var(--bh-border); border-radius: 12px; padding: 10px 12px; color: var(--bh-ink-1); font: inherit; }
 button.bh-tile { cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
 button.bh-tile:hover { border-color: var(--bh-axis); box-shadow: 0 6px 18px -12px rgba(0, 0, 0, 0.35); }
 .bh-tile-accent { position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; }
@@ -196,3 +197,18 @@ button.bh-tile:hover { border-color: var(--bh-axis); box-shadow: 0 6px 18px -12p
 @media (forced-colors: active) {
   .bh-bar, .bh-stack > span, .bh-funnel-bar, .bh-meter-fill { forced-color-adjust: none; border: 1px solid CanvasText; }
 }
+
+/* Soft disclosure rows (Fold) */
+.bh-fold { border-radius: 12px; background: #f8fafc; border: 1px solid #f1f5f9; }
+.bh-fold-sum { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 0 12px; cursor: pointer; list-style: none; font-size: 13px; font-weight: 600; color: #334155; border-radius: 12px; }
+.bh-fold-sum::-webkit-details-marker { display: none; }
+.bh-fold-sum:hover { background: rgba(148, 163, 184, 0.12); }
+.bh-fold-sum:focus-visible { outline: 2px solid #3b82f6; outline-offset: -2px; }
+.bh-fold-chev { flex: none; transition: transform 0.15s ease; color: #64748b; }
+.bh-fold[open] > .bh-fold-sum > .bh-fold-chev { transform: rotate(180deg); }
+.bh-fold-body { padding: 4px 12px 12px; }
+@media (prefers-reduced-motion: reduce) { .bh-fold-chev { transition: none; } }
+.bh-frame .bh-fold { background: #fff; }
+.bh-chart svg.bh-wf { max-height: 280px; }
+.bh-frame-head > div:first-child { min-width: 0; flex: 1; }
+.bh-frame-actions { flex: none; }

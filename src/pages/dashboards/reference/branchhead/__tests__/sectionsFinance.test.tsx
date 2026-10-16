@@ -41,9 +41,9 @@ describe("FinanceVisual", () => {
     expect(o).toContain("No P&amp;L data yet for this month");
     expect(o).not.toContain("linear on days elapsed");
   });
-  it("components, GRN types, tie-out and payroll readiness stay reachable in collapsed details", () => {
+  it("components, GRN types, tie-out and payroll readiness stay reachable in soft disclosure rows", () => {
     for (const t of ["Invoice", "Accrual", "Credit notes", "Salary (110 staff paid)", "Vendor GRN", "Unbudgeted", "Reconciliation and payroll readiness", "Imprest reserved with no cost centre", "Pending regularization", "Oldest 3 days"]) expect(out).toContain(t);
-    expect(out).toMatch(/<details(?![^>]*\bopen\b)[^>]*>\s*<summary[^>]*>Reconciliation and payroll readiness/);
+    expect(out).toMatch(/<details[^>]*\bopen\b[^>]*>\s*<summary[^>]*><span>Reconciliation and payroll readiness/);
   });
   it("mode labels, missing budget note and error", () => {
     const o = (m: string) => render(FinanceVisual, { finance: fx.ok({ ...fx.finance, pnl: { ...fx.finance.pnl, mode: m } }) });
@@ -104,7 +104,7 @@ describe("ProcessPnlVisual", () => {
     expect(b.bars.items.map((i) => i.label)).not.toContain("BSS_IDLE_ONE");
     const out = render(ProcessPnlVisual as never, { processPnl: fx.ok(d) });
     expect(out).toContain("1 process has no P&amp;L activity this month");
-    expect(out).toMatch(/<details(?![^>]*\bopen\b)[^>]*>\s*<summary[^>]*>\s*1 process has no/);
+    expect(out).toMatch(/<details(?![^>]*\bopen\b)[^>]*>\s*<summary[^>]*><span>1 process has no/);
   });
   it("click joins by process name, else opens the P&L row itself as a process", () => {
     const seen: DrillTarget[] = [];

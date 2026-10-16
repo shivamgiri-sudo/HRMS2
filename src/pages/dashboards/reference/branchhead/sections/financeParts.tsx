@@ -1,7 +1,7 @@
 import { BarList, ChartFrame, DataTable, StatTile, barListTable, type BarListProps, type TableSpec } from "../viz";
 import type { FinanceData } from "../panelTypes";
 import { formatCount, formatInr } from "../format";
-import { Fold, nn, TileItem, Tiles } from "./shared";
+import { Fold, nn, SMALL_TABLE_ROWS, TileItem, Tiles } from "./shared";
 
 /** Open GRNs by approval stage (count, with age and amount as the note); null without GRN data. */
 export function grnStages(d: FinanceData): BarListProps | null {
@@ -37,7 +37,7 @@ export function FinanceGrn({ d, stages }: { d: FinanceData; stages: BarListProps
       </Tiles>
       <ChartFrame title="Open GRNs by approval stage" subtitle="Count waiting at each stage" table={barListTable(stages)} height={96}>
         <BarList {...stages} />
-        {g.byType.length ? <div className="mt-3"><Fold title="GRNs by type"><DataTable table={byTypeTable(g)} /></Fold></div> : null}
+        {g.byType.length ? <div className="mt-3"><Fold title="GRNs by type" open={g.byType.length <= SMALL_TABLE_ROWS}><DataTable table={byTypeTable(g)} /></Fold></div> : null}
       </ChartFrame>
     </div>
   );
@@ -49,7 +49,7 @@ export function Reconciliation({ d }: { d: FinanceData }) {
   const p = d.payrollReadiness;
   if (!t && !p) return null;
   return (
-    <Fold title="Reconciliation and payroll readiness" group="reconciliation">
+    <Fold title="Reconciliation and payroll readiness" group="reconciliation" open>
       {t ? (
         <>
           <h4 className="text-[13px] font-bold text-slate-900">Tie-out between budget and P&amp;L</h4>

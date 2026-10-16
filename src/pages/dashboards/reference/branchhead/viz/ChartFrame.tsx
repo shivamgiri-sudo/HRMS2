@@ -2,6 +2,9 @@ import { useId, useState, type ReactNode } from "react";
 import { DEFAULT_HEIGHT } from "./parts";
 import type { TableSpec } from "./scale";
 
+/** A chart reserves at most this much height so a small chart never leaves a large empty block. */
+const MAX_RESERVED = 320;
+
 export interface ChartFrameProps {
   title: string;
   subtitle?: string;
@@ -43,7 +46,7 @@ export function DataTable({ table }: { table: TableSpec }) {
 
 /**
  * Shared chart wrapper: title, optional subtitle and actions, a "View as table" toggle (aria-pressed)
- * and a body with a reserved min-height so swapping chart and table never shifts the layout.
+ * and a chart body with a capped min-height (not applied to the table view).
  */
 export function ChartFrame({ title, subtitle, table, height = DEFAULT_HEIGHT, actions, defaultShowTable = false, children }: ChartFrameProps) {
   const [showTable, setShowTable] = useState(defaultShowTable);
@@ -64,7 +67,7 @@ export function ChartFrame({ title, subtitle, table, height = DEFAULT_HEIGHT, ac
           </button>
         </div>
       </div>
-      <div id={bodyId} className="bh-frame-body" style={{ minHeight: height }}>
+      <div id={bodyId} className="bh-frame-body" style={showTable ? undefined : { minHeight: Math.min(height, MAX_RESERVED) }}>
         {showTable ? <DataTable table={table} /> : children}
       </div>
     </section>

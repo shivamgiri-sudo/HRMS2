@@ -76,7 +76,7 @@ export function HeroScore({ branch, overview, score, trend, onOpenAttention }: H
   const yesterday = vsYesterday(overview);
   const n = overview.attention.length;
   return (
-    <div className="kit-card grid gap-4 p-4 lg:grid-cols-[minmax(220px,auto)_minmax(0,1fr)]">
+    <div className="bh-card-body grid items-stretch gap-4 rounded-2xl border border-slate-100 bg-gradient-to-br from-sky-50 via-white to-white p-4 shadow-sm sm:p-5 lg:grid-cols-[minmax(220px,auto)_minmax(0,1fr)]">
       {/* Left column: centred stack (name and status, ring with band, trend, attention, date, vs yesterday). */}
       <div className="bh-hero-left flex min-w-0 flex-col items-center justify-center gap-2 text-center">
         <div className="flex flex-wrap items-center justify-center gap-2">
@@ -85,7 +85,7 @@ export function HeroScore({ branch, overview, score, trend, onOpenAttention }: H
         </div>
         {score ? (
           <>
-            <ScoreRing value={score.score} label="Health score" band={scoreBand(score.score).label} size={172} />
+            <ScoreRing value={score.score} label="Health score" band={scoreBand(score.score).label} size={150} />
             {trend ? <Sparkline points={trend} label="Health score trend" width={120} height={32} /> : null}
           </>
         ) : (

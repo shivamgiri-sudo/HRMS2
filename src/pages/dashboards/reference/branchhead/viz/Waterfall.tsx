@@ -67,7 +67,7 @@ export function Waterfall({ steps, format, height = 200, label = "Waterfall" }: 
   const kinds = new Set(l.bars.map((b) => b.kind));
   return (
     <div className={active != null ? "bh-viz bh-chart bh-dim" : "bh-viz bh-chart"}>
-      <svg viewBox={`0 0 ${W} ${height}`} role="group" className="bh-focus" aria-label={summary} {...surfaceProps}>
+      <svg viewBox={`0 0 ${W} ${height}`} role="group" className="bh-focus bh-wf" aria-label={summary} {...surfaceProps}>
         <line x1={PAD.l} x2={W - PAD.r} y1={zeroY} y2={zeroY} stroke="var(--bh-baseline)" strokeWidth="1" />
         {l.bars.map((b, i) => {
           const top = r1(Math.min(y(b.from), y(b.to)));

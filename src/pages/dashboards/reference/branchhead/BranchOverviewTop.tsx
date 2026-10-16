@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Panel } from "../../kit";
+import { ShieldAlert } from "lucide-react";
+import { BhCard } from "./ui";
 import type { BranchHeadHealthPayload } from "../../../../../backend/src/modules/branch-head-health/types";
 import { useBranchTrends } from "@/hooks/useBranchTrends";
 import { HeroScore } from "./HeroScore";
@@ -24,11 +25,11 @@ export function BranchOverviewTop({ branch, overview, score, onOpenKpi }: Branch
     <div className="space-y-4">
       <HeroScore branch={branch} overview={overview} score={score} trend={trends.score} onOpenAttention={() => setAttentionOpen(true)} />
       <KpiStrip overview={overview} trends={trends} onOpen={onOpenKpi} />
-      <Panel title="Attention and wins">
+      <BhCard title="Attention and wins" icon={ShieldAlert} tone="rose">
         {/* Attention chips open this board's own drawer (full list with details), not the drill host. */}
         <AttentionBoard items={overview.attention} positives={overview.positives}
           drawerOpen={attentionOpen} onDrawerChange={setAttentionOpen} />
-      </Panel>
+      </BhCard>
     </div>
   );
 }

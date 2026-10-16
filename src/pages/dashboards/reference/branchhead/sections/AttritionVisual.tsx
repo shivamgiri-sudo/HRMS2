@@ -1,3 +1,4 @@
+import { UserMinus } from "lucide-react";
 import type { AttritionData } from "../../../../../../backend/src/modules/branch-head-health/types";
 import { BarList, ChartFrame, LineArea, StackedBar, StatTile, barListTable, lineAreaTable, stackedBarTable, type BarListProps, type LineAreaProps, type LineSeries, type StackedBarProps } from "../viz";
 import { formatCount, formatPct } from "../format";
@@ -44,7 +45,7 @@ export function buildAttrition(d: AttritionData, date: string) {
 export function AttritionVisual(props: VisualProps) {
   const { overview } = props;
   return (
-    <SectionShell<AttritionData> title="Attrition and retention" section={overview.attrition} emptyText="Attrition analysis is not available for this branch right now">
+    <SectionShell<AttritionData> icon={UserMinus} tone="violet" title="Attrition and retention" section={overview.attrition} emptyText="Attrition analysis is not available for this branch right now">
       {(d) => {
         const b = buildAttrition(d, overview.date);
         return (

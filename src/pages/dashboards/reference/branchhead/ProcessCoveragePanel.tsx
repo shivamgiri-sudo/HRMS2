@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { CheckCircle2, ChevronDown, CircleDashed, Info, ShieldAlert, TrendingUp, PhoneIncoming, PhoneOutgoing } from "lucide-react";
-import { Panel } from "../../kit";
+import { CheckCircle2, ChevronDown, CircleDashed, Info, ShieldAlert, TrendingUp, Layers, PhoneIncoming, PhoneOutgoing } from "lucide-react";
+import { BhCard } from "./ui";
 import { useProcessDrilldown } from "@/hooks/useBranchHeadHealth";
 import type { BranchProcess, CoverageTier, DrillRow } from "../../../../../backend/src/modules/branch-head-health/processes";
 
@@ -123,9 +123,9 @@ function ProcessRow({ p, selectedBranchId, branchNames }: { p: BranchProcess; se
 function Group({ id, title, note, rows, selectedBranchId, branchNames }: { id: string; title: string; note?: string; rows: BranchProcess[]; selectedBranchId: string; branchNames: Record<string, string> }) {
   if (rows.length === 0) return null;
   return (
-    <details data-group={id} className="mt-3 rounded-lg border border-slate-200">
-      <summary className="flex min-h-[44px] cursor-pointer items-center gap-2 px-3 text-[13px] font-bold text-slate-900">
-        {title} ({rows.length})
+    <details data-group={id} className="bh-fold mt-3">
+      <summary className="bh-fold-sum">
+        <span>{title} ({rows.length})</span><ChevronDown className="bh-fold-chev h-4 w-4" aria-hidden="true" />
       </summary>
       <div className="px-3 pb-2">
         {note ? <p className="flex items-start gap-1.5 pb-2 text-[12px] text-slate-700"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{note}</p> : null}
@@ -141,12 +141,12 @@ export function ProcessCoveragePanel({ active, unmapped, selectedBranchId = "", 
   const normal = active.filter((p) => !p.billingMirror);
   const mirrors = active.filter((p) => p.billingMirror);
   return (
-    <Panel title="Process coverage" subtitle="Which processes report quality and sales data. Agent names appear only when you open a process.">
+    <BhCard icon={Layers} tone="indigo" title="Process coverage" subtitle="Which processes report quality and sales data. Agent names appear only when you open a process.">
       {error ? <p role="alert" className="mb-2 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-[13px] text-amber-900"><Info className="h-4 w-4" aria-hidden="true" />Process coverage could not be loaded. Other sections are unaffected.</p> : null}
       {normal.length === 0 && !error ? <p className="text-[13px] text-slate-700">No active processes for this branch.</p> : null}
       <ul>{normal.map((p) => <ProcessRow key={p.processId} p={p} selectedBranchId={selectedBranchId} branchNames={branchNames} />)}</ul>
       <Group id="mirrors" title="Billing mirrors (BSS_*)" rows={mirrors} selectedBranchId={selectedBranchId} branchNames={branchNames} />
       <Group id="unmapped" title="Not mapped to a cost centre" note="Most of these are idle billing mirrors with no cost centre; they are listed for completeness." rows={unmapped} selectedBranchId={selectedBranchId} branchNames={branchNames} />
-    </Panel>
+    </BhCard>
   );
 }

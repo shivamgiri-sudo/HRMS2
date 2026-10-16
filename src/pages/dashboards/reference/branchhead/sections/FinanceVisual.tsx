@@ -1,3 +1,4 @@
+import { Wallet } from "lucide-react";
 import { BarList, ChartFrame, DataTable, Meter, StatTile, Waterfall, barListTable, meterTable, waterfallTable, type BarListProps, type MeterProps, type TableSpec, type WaterfallProps } from "../viz";
 import type { FinanceData, HeadRow } from "../panelTypes";
 import { formatInr, formatPct } from "../format";
@@ -72,7 +73,7 @@ function componentsTable(p: FinanceData["pnl"]): TableSpec {
 
 export function FinanceVisual({ overview }: VisualProps) {
   return (
-    <SectionShell<FinanceData> title="Running P&L - month to date (as in the emailed report)" section={overview.finance} emptyText="No finance data for this date" errorName="Finance">
+    <SectionShell<FinanceData> icon={Wallet} tone="emerald" title="Running P&L - month to date (as in the emailed report)" section={overview.finance} emptyText="No finance data for this date" errorName="Finance">
       {(d) => {
         const p = d.pnl;
         const b = buildFinance(d);

@@ -1,4 +1,4 @@
-import { ClipboardList } from "lucide-react";
+import { ClipboardList, UserPlus } from "lucide-react";
 import { BarList, ChartFrame, Funnel, Meter, StackedBar, StatTile, barListTable, funnelTable, meterTable, stackedBarTable, type BarListProps, type FunnelProps, type MeterProps, type StackedBarProps, type TableSpec } from "../viz";
 import type { HiringData } from "../panelTypes";
 import { formatCount, formatPct } from "../format";
@@ -66,7 +66,7 @@ export function buildHiring(d: HiringData) {
 export function HiringVisual(props: VisualProps) {
   const { overview } = props;
   return (
-    <SectionShell<HiringData> title="Hiring" section={overview.hiring} emptyText="No hiring data for this date">
+    <SectionShell<HiringData> icon={UserPlus} tone="cyan" title="Hiring" section={overview.hiring} emptyText="No hiring data for this date">
       {(d) => {
         const b = buildHiring(d);
         const a = d.ats;

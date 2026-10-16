@@ -54,7 +54,7 @@ describe("BacklogVisual", () => {
     expect(flat(b.table)).toContain("Leave|3|2|0|5|4|Stale 1");
     const out = render(BacklogVisual, {});
     for (const t of ["Backlogs", "Within 3 days", "3 to 7 days", "Over 7 days", "Pending GRN stages"]) expect(out).toContain(t);
-    expect(out).toContain('href="#bh-finance"');
+    expect(out).toContain("on the Finance tab");
   });
   it("empty and missing", () => {
     expect(render(BacklogVisual, { backlogs: fx.emptySection() })).toContain("No backlog data");

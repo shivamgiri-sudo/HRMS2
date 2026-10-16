@@ -37,7 +37,7 @@ export function StatTile({ label, value, delta, spark, tone, hint, onClick }: St
         {status ? <span className="bh-sr">, status {TONE_LABEL[status]}</span> : null}
       </span>
       <span className="bh-tile-value">{value}</span>
-      <span className="bh-tile-foot">
+      {delta || spark ? <span className="bh-tile-foot">
         {delta ? (
           <span className={deltaClass(delta.good)}>
             <Glyph name={delta.direction} size={13} />
@@ -46,7 +46,7 @@ export function StatTile({ label, value, delta, spark, tone, hint, onClick }: St
           </span>
         ) : <span />}
         {spark ? <Sparkline points={spark} tone={tone} label={`${label} trend`} width={72} height={22} /> : null}
-      </span>
+      </span> : null}
       {hint ? <span className="bh-tile-hint">{hint}</span> : null}
     </>
   );

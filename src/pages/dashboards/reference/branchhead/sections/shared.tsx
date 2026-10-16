@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
 import type { BranchHeadHealthPayload, BranchOverview } from "../../../../../../backend/src/modules/branch-head-health/types";
 import type { DrillTarget, MetricDrillId } from "../drill";
 import { processTarget } from "../drill";
@@ -43,15 +44,18 @@ export const Tiles = ({ label, children }: { label: string; children: ReactNode 
 
 export const Foot = ({ children }: { children: ReactNode }) => <p className="mt-2 text-[12px] text-slate-700">{children}</p>;
 
-/** Collapsed-by-default disclosure with a 44px summary. */
-export function Fold({ title, children, group }: { title: ReactNode; children: ReactNode; group?: string }) {
+/** Soft full-width disclosure row with a 44px summary and a chevron; `open` starts it expanded (small tables). */
+export function Fold({ title, children, group, open }: { title: ReactNode; children: ReactNode; group?: string; open?: boolean }) {
   return (
-    <details data-group={group} className="rounded-lg border border-slate-200">
-      <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-[13px] font-semibold text-slate-900">{title}</summary>
-      <div className="p-3">{children}</div>
+    <details data-group={group} className="bh-fold" open={open}>
+      <summary className="bh-fold-sum"><span>{title}</span><ChevronDown className="bh-fold-chev h-4 w-4" aria-hidden="true" /></summary>
+      <div className="bh-fold-body">{children}</div>
     </details>
   );
 }
+
+/** Tables up to this many rows open by default. */
+export const SMALL_TABLE_ROWS = 8;
 
 /** Two or more frames side by side from 1024px, stacked below. */
 export const Grid = ({ children }: { children: ReactNode }) => <div className="grid min-w-0 gap-3 lg:grid-cols-2">{children}</div>;
@@ -61,4 +65,4 @@ const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinit
 export const nn = (v: unknown): number => (fin(v) && v > 0 ? v : 0);
 
 /** One grid cell of a `Tiles` list. */
-export const TileItem = ({ children }: { children: ReactNode }) => <li className="min-w-0">{children}</li>;
+export const TileItem = ({ children }: { children: ReactNode }) => <li className="flex min-w-0">{children}</li>;

@@ -1,3 +1,4 @@
+import { Users } from "lucide-react";
 import { BarList, ChartFrame, DataTable, StackedBar, StatTile, barListTable, stackedBarTable, type BarListProps, type StackedBarProps } from "../viz";
 import type { PeopleData } from "../panelTypes";
 import { formatCount } from "../format";
@@ -43,7 +44,7 @@ export function buildPeople(d: PeopleData) {
 export function PeopleVisual(props: VisualProps) {
   const { overview } = props;
   return (
-    <SectionShell<PeopleData> title="Headcount" section={overview.people} emptyText="No headcount data for this date">
+    <SectionShell<PeopleData> icon={Users} tone="blue" title="Headcount" section={overview.people} emptyText="No headcount data for this date">
       {(d) => {
         const b = buildPeople(d);
         const seats = d.mandateSeatsTotal;

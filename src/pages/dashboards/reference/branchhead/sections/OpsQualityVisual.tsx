@@ -1,11 +1,10 @@
 import type { ReactNode } from "react";
-import { Inbox } from "lucide-react";
-import { Panel } from "../../../kit";
+import { Activity, Inbox } from "lucide-react";
 import type { OpsProcessRow, QualityRow } from "../../../../../../backend/src/modules/branch-head-health/ops";
 import type { SectionResult } from "../../../../../../backend/src/modules/branch-head-health/types";
 import { BarList, ChartFrame, barListTable, type BarListProps } from "../viz";
 import { formatPct } from "../format";
-import { SectionShell } from "../ui";
+import { BhCard, SectionShell } from "../ui";
 import { SectionError } from "../SectionPanels";
 import { CallmasterBlock } from "./CallmasterBlock";
 import { OpsHeatGrid, opsTable } from "./OpsHeatGrid";
@@ -41,10 +40,10 @@ export function qualityBars(rows: QualityRow[]): BarListProps {
 
 export function OpsQualityVisual(props: VisualProps) {
   const { operations, quality, callmaster } = props.overview;
-  if (!operations && !quality && !callmaster) return <SectionShell title={TITLE} section={undefined} emptyText="">{() => null}</SectionShell>;
+  if (!operations && !quality && !callmaster) return <SectionShell icon={Activity} tone="teal" title={TITLE} section={undefined} emptyText="">{() => null}</SectionShell>;
   const pick = selectByName(props, "ops");
   return (
-    <Panel title={TITLE} subtitle={operations?.status === "ok" ? `As of ${operations.asOf}` : undefined}>
+    <BhCard icon={Activity} tone="teal" title={TITLE} subtitle={operations?.status === "ok" ? `As of ${operations.asOf}` : undefined}>
       <div className="space-y-4">
         <Part<OpsProcessRow> name="Operations" section={operations} emptyText="No operational metrics for this branch">
           {(rows) => (
@@ -71,6 +70,6 @@ export function OpsQualityVisual(props: VisualProps) {
           </div>
         ) : null}
       </div>
-    </Panel>
+    </BhCard>
   );
 }

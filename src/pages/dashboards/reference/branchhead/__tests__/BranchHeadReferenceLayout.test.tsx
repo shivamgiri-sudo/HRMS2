@@ -6,7 +6,7 @@ import type { BranchHeadHealthPayload, SectionResult } from "../../../../../../b
 import type { BranchProcess } from "../../../../../../backend/src/modules/branch-head-health/processes";
 import { BranchHeadReferenceLayout } from "../BranchHeadReferenceLayout";
 import { DrilldownTable, defaultDrillBranch, drillMetricFor } from "../ProcessCoveragePanel";
-import { BH_SECTIONS } from "../SectionNav";
+import { BH_SECTIONS } from "../BranchHero";
 import * as fx from "./fixtures";
 import { branchHeadRoute } from "../../../../../config/routes/branchHeadRoute";
 
@@ -36,9 +36,11 @@ const payload = (o: Partial<BranchHeadHealthPayload> = {}): BranchHeadHealthPayl
   processes: { active: [proc({})], unmapped: [] },
   generatedAt: "2026-10-15T05:00:00Z", ...o,
 });
-const html = (data: BranchHeadHealthPayload) => renderToStaticMarkup(
-  <QueryClientProvider client={new QueryClient()}><MemoryRouter><BranchHeadReferenceLayout data={data} /></MemoryRouter></QueryClientProvider>,
+const htmlTab = (data: BranchHeadHealthPayload, initialTab: string) => renderToStaticMarkup(
+  <QueryClientProvider client={new QueryClient()}><MemoryRouter><BranchHeadReferenceLayout data={data} initialTab={initialTab} /></MemoryRouter></QueryClientProvider>,
 );
+/** Every tab's content joined: for assertions that do not care which tab a section sits on. */
+const html = (data: BranchHeadHealthPayload) => BH_SECTIONS.map((t) => htmlTab(data, t.id)).join("\n");
 
 describe("BranchHeadReferenceLayout", () => {
   it("renders hero status and score", () => {
@@ -147,18 +149,27 @@ describe("BranchHeadReferenceLayout", () => {
     poor.score = { score: 40, pillars: [], excluded: [] };
     expect(html(payload({ branches: [poor] }))).toContain("Poor");
   });
-  it("renders the visual sections in nav order, then data health and process coverage", () => {
-    const out = html(payload());
-    const ids = ["bh-overview", "bh-people", "bh-attendance", "bh-attrition", "bh-finance", "bh-pnl", "bh-hiring", "bh-backlog", "bh-ops"];
+  it("tabs are in the agreed order and each tab renders only its own section", () => {
+    const ids = ["overview", "people", "attendance", "attrition", "finance", "pnl", "hiring", "backlog", "ops", "processes"];
     expect(BH_SECTIONS.map((s) => s.id)).toEqual(ids);
-    const at = [...ids.map((id) => out.indexOf(`id="${id}"`)), out.indexOf(">Data health<"), out.indexOf(">Process coverage<")];
-    expect(at.every((i) => i >= 0)).toBe(true);
-    expect([...at].sort((a, b) => a - b)).toEqual(at);
-    const titles = ["Attention and wins", ">Headcount<", "Attendance today", "Attrition and retention", "Running P&amp;L - month to date", "Process P&amp;L - P&amp;L pages basis", ">Hiring<", ">Backlogs<", "Operations and quality"];
-    const start = out.indexOf("Attention and wins");
-    const t = titles.map((x) => out.indexOf(x, start));
-    expect(t.every((i) => i >= 0)).toBe(true);
-    expect([...t].sort((a, b) => a - b)).toEqual(t);
+    const key: Record<string, string> = {
+      overview: "Attention and wins", people: ">Headcount<", attendance: "Attendance today", attrition: "Attrition and retention",
+      finance: "Running P&amp;L - month to date", pnl: "Process P&amp;L - P&amp;L pages basis", hiring: "slate-700\">Hiring<", backlog: "slate-700\">Backlogs<",
+      ops: "Operations and quality", processes: ">Process coverage<",
+    };
+    for (const id of ids) {
+      const out = htmlTab(payload(), id);
+      expect(out).toContain(key[id]);
+      for (const other of ids.filter((o) => o !== id)) expect(out).not.toContain(key[other]);
+    }
+  });
+  it("processes tab holds data health and process coverage", () => {
+    const out = htmlTab(payload(), "processes");
+    expect(out.indexOf(">Data health<")).toBeGreaterThan(-1);
+    expect(out.indexOf(">Process coverage<")).toBeGreaterThan(out.indexOf(">Data health<"));
+  });
+  it("an unknown initialTab falls back to the overview", () => {
+    expect(htmlTab(payload(), "nope")).toContain("Attention and wins");
   });
   it("branch-level output has no person names even if a payload carries them", () => {
     const b = branch("b1", "Kolkata");
@@ -238,26 +249,29 @@ describe("BranchHeadReferenceLayout", () => {
     expect(out).toContain("weight 25");
     expect(out).toContain("Not scored (no data): finance, hiring - remaining weights renormalised");
   });
-  it("one branch: section nav plus an anchor wrapper for every section", () => {
-    const out = html(payload());
-    expect(out).toContain('aria-label="Page sections"');
-    for (const id of ["bh-overview", "bh-people", "bh-attendance", "bh-attrition", "bh-finance", "bh-pnl", "bh-hiring", "bh-backlog", "bh-ops"]) {
-      expect(out).toContain(`href="#${id}"`);
-      expect(out.split(`id="${id}"`).length - 1).toBe(1);
-    }
-  });
-  it("several branches: no section nav and no duplicate anchor ids", () => {
-    const out = html(payload({ branches: [branch("b1", "Kolkata"), branch("b2", "Delhi")] }));
+  it("hero banner has a tablist with ten tabs, the active one selected, and no anchor nav", () => {
+    const out = htmlTab(payload(), "finance");
     expect(out).not.toContain('aria-label="Page sections"');
-    expect(out).not.toContain('id="bh-people"');
+    expect(out).toContain('role="tablist"');
+    expect(out.split('role="tab"').length - 1).toBe(10);
+    expect(out.split('aria-selected="true"').length - 1).toBe(1);
+    expect(out).toMatch(/id="bh-tab-finance"[^>]*aria-selected="true"|aria-selected="true"[^>]*id="bh-tab-finance"/);
+    expect(out).toContain('role="tabpanel"');
   });
-  it("new top area: score ring, 8 KPI tiles and the attention board", () => {
-    const out = html(payload());
+  it("several branches: the tab content repeats per branch", () => {
+    const out = htmlTab(payload({ branches: [branch("b1", "Kolkata"), branch("b2", "Delhi")] }), "people");
+    expect(out.split("Headcount vs mandate").length - 1).toBeGreaterThanOrEqual(2);
+    expect(out).toContain("2 branches");
+  });
+  it("overview: score ring, 8 KPI cards with status text and the attention and wins lists", () => {
+    const out = htmlTab(payload(), "overview");
     expect(out).toContain("Health score: 82 out of 100, Good");
-    const strip = out.slice(out.indexOf('aria-label="Key numbers"'), out.indexOf("</ul>", out.indexOf('aria-label="Key numbers"')));
-    expect(strip.split('class="bh-viz bh-tile"').length - 1).toBe(8);
+    const start = out.indexOf('aria-label="Key numbers"');
+    const strip = out.slice(start, out.indexOf("</ul>", start));
+    expect(strip.split("<button").length - 1).toBe(8);
+    expect(strip).toMatch(/Warning/);
     expect(out).toContain(">Late arrivals<");
-    expect(out).toMatch(/<details(?![^>]*\bopen\b)[^>]*data-group="wins"/);
+    expect(out).toContain('aria-label="Going well"');
     expect(out).toContain("Hiring on track");
   });
   it("hero omits the not-scored line when nothing is excluded", () => {

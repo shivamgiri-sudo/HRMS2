@@ -1,3 +1,4 @@
+import { ListChecks } from "lucide-react";
 import type { BacklogAggregate, BacklogsData } from "../../../../../../backend/src/modules/branch-head-health/types";
 import { ChartFrame, StackedBar, stackedBarTable, type StackedBarProps } from "../viz";
 import { formatCount } from "../format";
@@ -36,7 +37,7 @@ export function buildBacklog(d: BacklogsData) {
 
 export function BacklogVisual({ overview, onSelect }: VisualProps) {
   return (
-    <SectionShell<BacklogsData> title="Backlogs" section={overview.backlogs} emptyText="No backlog data for this branch">
+    <SectionShell<BacklogsData> icon={ListChecks} tone="amber" title="Backlogs" section={overview.backlogs} emptyText="No backlog data for this branch">
       {(d) => {
         const b = buildBacklog(d);
         return (
@@ -45,7 +46,7 @@ export function BacklogVisual({ overview, onSelect }: VisualProps) {
               <StackedBar {...b.bars} onSelect={() => onSelect({ kind: "metric", id: "backlog" })} />
             </ChartFrame>
             <Foot>
-              Pending GRN stages: see <a href="#bh-finance" className="font-semibold text-blue-800 underline underline-offset-2">Open GRNs by approval stage in Finance</a>.
+              Pending GRN stages: see <strong>Open GRNs by approval stage</strong> on the Finance tab.
             </Foot>
           </div>
         );

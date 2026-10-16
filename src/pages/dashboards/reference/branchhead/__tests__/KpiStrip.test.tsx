@@ -56,7 +56,6 @@ describe("KpiStrip", () => {
   it("renders exactly 8 tiles, each a button, in the agreed order", () => {
     const out = html(overview());
     expect(KPI_IDS).toEqual(["shrinkage", "late", "headcount", "attrition", "profit", "budget", "grn", "openings"]);
-    expect(out.split('class="bh-viz bh-tile"').length - 1).toBe(8);
     expect(out.split("<button").length - 1).toBe(8);
     const labels = ["Shrinkage", "Late today", "Headcount vs mandate", "Attrition risk", "Operating profit", "Budget used", "GRN pending", "Open positions"];
     const at = labels.map((l) => out.indexOf(l));
@@ -76,10 +75,18 @@ describe("KpiStrip", () => {
     const noPrev = overview({ attendance: fx.ok({ ...fx.attendance, previousDay: null }) });
     expect(html(noPrev)).not.toContain("vs yesterday");
   });
-  it("draws no sparkline with fewer than 3 points and one with 3 or more", () => {
-    expect(html(overview(), { shrinkagePct: [10, 12] })).not.toContain("Shrinkage trend");
-    expect(html(overview(), { shrinkagePct: [10, null, 12] })).not.toContain("Shrinkage trend");
-    expect(html(overview(), { shrinkagePct: [10, 11, 12] })).toContain("Shrinkage trend");
+  it("status stays text: warning tiles lead their sub line with the status word, quiet tiles do not", () => {
+    const out = html(overview());
+    expect(out.split("Warning · ").length - 1).toBeGreaterThanOrEqual(3);
+    expect(out).toContain("Warning · +2.0 pts vs yesterday");
+    const calm = html(overview({ attendance: fx.ok({ ...fx.attendance, absent: 0, scheduled: 100, shrinkagePct: 1, totalLate: 0, previousDay: null }) }));
+    expect(calm).not.toContain("Warning · 0 absent");
+  });
+  it("tiles are equal-height flex cells and use the kit's accent stripe and tinted badge", () => {
+    const out = html(overview());
+    expect(out.split('class="flex min-w-0').length - 1).toBe(8);
+    expect(out).toContain("bg-blue-100");
+    expect(out).toContain("bg-emerald-100");
   });
   it("degrades cleanly when sections are missing or errored", () => {
     const err = fx.err<never>("down");

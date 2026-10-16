@@ -1,4 +1,4 @@
-import { AlertOctagon, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertOctagon, AlertTriangle, BarChart3, CheckCircle2 } from "lucide-react";
 import type { BranchProcess } from "../../../../../../backend/src/modules/branch-head-health/processes";
 import type { ProcessPnlData, ProcessPnlRow } from "../../../../../../backend/src/modules/branch-head-health/types";
 import { ChartFrame, DivergingBars, StatTile, divergingBarsTable, divergingDomain, type DivergingBarsProps, type TableSpec } from "../viz";
@@ -73,7 +73,7 @@ export function ProcessPnlVisual({ overview, payload, onSelect }: VisualProps) {
   const section = overview.processPnl;
   const period = section?.status === "ok" && section.data ? section.data.period : "";
   return (
-    <SectionShell<ProcessPnlData> title={`Process P&L - P&L pages basis, ${period || "current month"}`} section={section}
+    <SectionShell<ProcessPnlData> icon={BarChart3} tone="indigo" title={`Process P&L - P&L pages basis, ${period || "current month"}`} section={section}
       emptyText="No process P&L for this branch" errorName="Process P&L">
       {(d) => {
         const b = buildPnl(d);

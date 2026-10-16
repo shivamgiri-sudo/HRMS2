@@ -1,11 +1,11 @@
-import { ArrowDown, ArrowUp, Minus } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarCheck, Clock3, Minus } from "lucide-react";
 import type { LeaderboardRow, SectionResult } from "../../../../../../backend/src/modules/branch-head-health/types";
 import { BarList, ChartFrame, DataTable, Donut, StackedBar, StatTile, barListTable, donutTable, stackedBarTable, type BarListProps, type DonutProps, type StackedBarProps } from "../viz";
 import type { AttendanceData } from "../panelTypes";
 import { formatCount, formatPct } from "../format";
 import { SectionShell } from "../ui";
 import { SectionError } from "../SectionPanels";
-import { byLabel, Fold, Grid, nn, selectByName, TileItem, Tiles, type VisualProps } from "./shared";
+import { byLabel, Fold, Grid, nn, selectByName, SMALL_TABLE_ROWS, TileItem, Tiles, type VisualProps } from "./shared";
 
 /** Signed change in shrinkage vs the previous day, in words; zero scheduled yesterday counts as no data. */
 export function shrinkageChange(now: number, prev: AttendanceData["previousDay"]): string {
@@ -95,7 +95,7 @@ export function AttendanceVisual(props: VisualProps) {
   const attendanceOk = att?.status === "ok" && att.data != null;
   return (
     <div className="space-y-3">
-      <SectionShell<AttendanceData> title="Attendance today" section={att} emptyText="No attendance data for this date" errorName="Attendance">
+      <SectionShell<AttendanceData> icon={CalendarCheck} tone="sky" title="Attendance today" section={att} emptyText="No attendance data for this date" errorName="Attendance">
         {(d) => {
           const b = buildAttendance(d, []);
           const slots = d.bySlot ?? [];
@@ -116,7 +116,7 @@ export function AttendanceVisual(props: VisualProps) {
                   <StackedBar {...b.byProcess} onSelect={byLabel(b.byProcess.rows, selectByName(props, "attendance"))} />
                   <div className="mt-3">
                     {slots.length === 0 ? <p className="text-[12px] text-slate-700">No shift slots for this date.</p> : (
-                      <Fold title="Shift-slot detail">
+                      <Fold title="Shift-slot detail" open={slots.length <= SMALL_TABLE_ROWS}>
                         <DataTable table={{ caption: "Attendance by process and shift slot", columns: SLOT_COLUMNS,
                           rows: slots.map((r) => [r.process, r.shift, formatCount(r.planned), formatCount(r.present), formatCount(r.absent), formatCount(r.late)]) }} />
                       </Fold>
@@ -133,7 +133,7 @@ export function AttendanceVisual(props: VisualProps) {
         }}
       </SectionShell>
       {!attendanceOk && lb && lb.status !== "empty" ? (
-        <SectionShell<LeaderboardRow[]> title="Late arrivals by team" section={lb} emptyText="No late arrivals by team">
+        <SectionShell<LeaderboardRow[]> icon={Clock3} tone="amber" title="Late arrivals by team" section={lb} emptyText="No late arrivals by team">
           {() => <TeamLate lb={lb} />}
         </SectionShell>
       ) : null}

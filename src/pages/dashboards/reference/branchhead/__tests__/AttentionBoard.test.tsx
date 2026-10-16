@@ -48,16 +48,15 @@ describe("AttentionBoard", () => {
     const order = ["C1", "C2", "C3", "W1", "W2"].map((l) => out.indexOf(`>${l}<`));
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
-  it("chips carry icon, severity text and count, but not the detail text", () => {
+  it("rows carry severity text, label and detail", () => {
     const out = html({ items: [c("Budget", "95% of monthly budget consumed")] });
     expect(out).toContain("Critical");
-    expect(out).toContain(">95%<");
-    expect(out).not.toContain("95% of monthly budget consumed");
+    expect(out).toContain(">Budget<");
+    expect(out).toContain("95% of monthly budget consumed");
+    expect(out).toContain("border-l-rose-500");
   });
-  it("a GRN-style chip never shows a number from later in the detail", () => {
-    const out = html({ items: [w("29 GRNs pending more than 3 days", "Oldest open GRN is 60 days old")] });
-    expect(out).toContain(">29 GRNs pending more than 3 days<");
-    expect(out).not.toContain(">60<");
+  it("warning rows use the amber edge", () => {
+    expect(html({ items: [w("W1")] })).toContain("border-l-amber-500");
   });
   it("a chip click opens the board's own drawer without any extra wiring", () => {
     const opened: boolean[] = [];
@@ -87,11 +86,13 @@ describe("AttentionBoard", () => {
     for (const it of items) { expect(out).toContain(`>${it.label}<`); expect(out).toContain(it.detail); }
     expect(out).toContain("Needs attention (7)");
   });
-  it("wins sit in a collapsed details toggle", () => {
+  it("wins are an always-visible list with an emerald check", () => {
     const out = html();
-    expect(out).toMatch(/<details(?![^>]*\bopen\b)[^>]*data-group="wins"/);
+    expect(out).not.toContain("<details");
+    expect(out).toContain('aria-label="Going well"');
     expect(out).toContain("Hiring on track");
     expect(out).toContain("3 selected");
+    expect(out).toContain("border-l-emerald-500");
   });
   it("empty state when nothing to show", () => {
     expect(html({ items: [], positives: [] })).toContain("Nothing needs attention right now.");
