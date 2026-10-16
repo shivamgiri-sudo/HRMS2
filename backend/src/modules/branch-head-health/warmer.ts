@@ -6,11 +6,21 @@ import { listBranchProcesses } from "./processes.js";
 import { monthStart } from "./ops.js";
 import { getReportCached, getPnlCached, getOpsCached } from "./loaders.js";
 
-const FIRST_WARM_MS = 45_000;
+export const ACTIVE_WINDOW_MS = 30 * 60_000;
 const WARM_EVERY_MS = 4 * 60_000;
 const enabled = () => process.env.BRANCH_HEAD_HEALTH_ENABLED === "true";
 
 let running = false;
+let lastActivityAt = 0;
+
+/** Record that a real user is being served; the periodic warm only runs while this is recent. */
+export function noteActivity(now: number = Date.now()): void { lastActivityAt = now; }
+
+/** Fire-and-forget warm for the moment a user lands on the dashboard. No-op when the flag is off. */
+export function warmInBackground(): void {
+  if (!enabled()) return;
+  warmOnce().catch((err) => logger.error({ err }, "[branch-head-health] background warm failed"));
+}
 let timers: NodeJS.Timeout[] = [];
 
 async function step(label: string, branchId: string, fn: () => Promise<unknown>): Promise<void> {
@@ -46,7 +56,7 @@ export async function warmOnce(now: Date = new Date()): Promise<{ branches: numb
 }
 
 async function tick(): Promise<void> {
-  if (!enabled()) return;
+  if (!enabled() || Date.now() - lastActivityAt >= ACTIVE_WINDOW_MS) return;
   try {
     const r = await warmOnce();
     if (r.branches > 0) logger.info(`[branch-head-health] warmed ${r.branches} branches in ${r.ms}ms`);
@@ -58,17 +68,15 @@ async function tick(): Promise<void> {
 /** Runs inside the API process because the caches are in-process. No-op unless the flag is "true" at start. */
 export function startBranchHealthWarmer(): void {
   if (!enabled() || timers.length > 0) return;
-  const first = setTimeout(() => { void tick(); }, FIRST_WARM_MS);
   const every = setInterval(() => { void tick(); }, WARM_EVERY_MS);
-  first.unref();
   every.unref();
-  registerTimer("branch-head-health-warmer-startup", first);
   registerTimer("branch-head-health-warmer-interval", every);
-  timers = [first, every];
+  timers = [every];
 }
 
 export function stopBranchHealthWarmerForTests(): void {
   for (const t of timers) { clearTimeout(t); clearInterval(t); }
   timers = [];
   running = false;
+  lastActivityAt = 0;
 }

@@ -9,6 +9,7 @@ import { listBranchProcesses, getProcessDrilldown } from "./processes.js";
 import { monthStart } from "./ops.js";
 import { buildDataHealth, type DataHealth } from "./dataHealth.js";
 import { getReportCached, getOpsCached, getPnlCached, clearBranchHeadHealthCaches } from "./loaders.js";
+import { noteActivity, warmInBackground } from "./warmer.js";
 import { computeScore } from "./score.js";
 import { writeSnapshot, readTrend } from "./snapshot.js";
 import type { BranchHeadHealthPayload, BranchOverview, ProcessPnlData, SectionResult } from "./types.js";
@@ -33,6 +34,8 @@ branchHeadHealthRouter.use((req: any, res, next) => {
   }, next);
 });
 branchHeadHealthRouter.use(requireRole("branch_head", "ceo", "coo", "super_admin"));
+// A real, authorised user is being served: keep the cache warmer active.
+branchHeadHealthRouter.use((_req, _res, next) => { noteActivity(); next(); });
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -103,7 +106,11 @@ function snapshotMetrics(report: any): Record<string, number> {
   return out;
 }
 
-branchHeadHealthRouter.get("/enabled", (_req, res) => res.json({ success: true, data: { enabled: true } }));
+branchHeadHealthRouter.get("/enabled", (_req, res) => {
+  // Start filling the caches as soon as a pilot user lands, before they open the tab.
+  warmInBackground();
+  return res.json({ success: true, data: { enabled: true } });
+});
 
 branchHeadHealthRouter.get(
   "/overview",

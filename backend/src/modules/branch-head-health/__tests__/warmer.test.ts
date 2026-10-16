@@ -18,7 +18,7 @@ vi.mock("../../../shared/istDate.js", () => ({ getCurrentDateIST: () => "2026-10
 vi.mock("../../../logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock("../../../workers/worker-utils.js", () => ({ registerTimer: (...a: unknown[]) => registerTimer(...a) }));
 
-import { warmOnce, startBranchHealthWarmer, stopBranchHealthWarmerForTests } from "../warmer.js";
+import { warmOnce, startBranchHealthWarmer, stopBranchHealthWarmerForTests, noteActivity, warmInBackground, ACTIVE_WINDOW_MS } from "../warmer.js";
 
 const br = (id: string) => ({ branchId: id, branchCode: id, branchName: id });
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -75,20 +75,41 @@ describe("startBranchHealthWarmer", () => {
     expect(registerTimer).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
-  it("first warm at 45s then every 4 minutes; flag re-read each tick", async () => {
+  it("no startup warm; tick skipped when idle, runs when activity is recent, flag re-read each tick", async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-15T00:00:00Z"));
     process.env.BRANCH_HEAD_HEALTH_ENABLED = "true";
     startBranchHealthWarmer();
-    expect(registerTimer).toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(44_000);
+    expect(registerTimer).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(listAllMasBranches).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1_500);
+    await vi.advanceTimersByTimeAsync(4 * 60_000); // tick, never any activity
+    expect(listAllMasBranches).not.toHaveBeenCalled();
+    noteActivity();
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
     expect(listAllMasBranches).toHaveBeenCalledTimes(1);
     process.env.BRANCH_HEAD_HEALTH_ENABLED = "false";
     await vi.advanceTimersByTimeAsync(4 * 60_000);
     expect(listAllMasBranches).toHaveBeenCalledTimes(1);
     process.env.BRANCH_HEAD_HEALTH_ENABLED = "true";
-    await vi.advanceTimersByTimeAsync(4 * 60_000);
-    expect(listAllMasBranches).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(ACTIVE_WINDOW_MS + 4 * 60_000); // activity ages out
+    const settled = listAllMasBranches.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(8 * 60_000);
+    expect(listAllMasBranches.mock.calls.length).toBe(settled);
+  });
+});
+
+describe("warmInBackground", () => {
+  it("warms once; a concurrent second hit does not start another", async () => {
+    process.env.BRANCH_HEAD_HEALTH_ENABLED = "true";
+    getReportCached.mockImplementation(async () => { await tick(); return {}; });
+    warmInBackground(); warmInBackground();
+    await tick(); await tick(); await tick();
+    expect(listAllMasBranches).toHaveBeenCalledTimes(1);
+  });
+  it("does nothing when the flag is not true", async () => {
+    warmInBackground();
+    await tick();
+    expect(listAllMasBranches).not.toHaveBeenCalled();
   });
 });

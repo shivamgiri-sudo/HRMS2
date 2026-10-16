@@ -43,6 +43,9 @@ vi.mock("../ops.js", () => ({
   monthStart: (d: string) => `${d.slice(0, 7)}-01`,
   SECTION_TIMEOUT_MS: 20_000,
 }));
+const noteActivity = vi.fn();
+const warmInBackground = vi.fn();
+vi.mock("../warmer.js", () => ({ noteActivity: (...a: unknown[]) => noteActivity(...a), warmInBackground: () => warmInBackground() }));
 const buildProcessPnl = vi.fn();
 vi.mock("../pnl.js", () => ({ buildProcessPnl: (...a: unknown[]) => buildProcessPnl(...a) }));
 vi.mock("../dataHealth.js", () => ({ buildDataHealth: (...a: unknown[]) => buildDataHealth(...a) }));
@@ -75,6 +78,7 @@ beforeEach(() => {
   buildOpsSections.mockReset();
   buildDataHealth.mockReset();
   buildProcessPnl.mockReset();
+  noteActivity.mockReset(); warmInBackground.mockReset();
   buildProcessPnl.mockResolvedValue(section);
   buildOpsSections.mockResolvedValue({ operations: section, quality: section, callmaster: section });
   buildDataHealth.mockResolvedValue(section);
@@ -280,6 +284,19 @@ describe("branch-head-health routes", () => {
     const r = await request(app()).get("/api/branch-head-health/enabled");
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true, data: { enabled: true } });
+  });
+  it("authorised requests note activity; /enabled triggers a background warm; gated requests do neither", async () => {
+    await request(app()).get("/api/branch-head-health/overview");
+    expect(noteActivity).toHaveBeenCalledTimes(1);
+    expect(warmInBackground).not.toHaveBeenCalled();
+    await request(app()).get("/api/branch-head-health/enabled");
+    expect(warmInBackground).toHaveBeenCalledTimes(1);
+    noteActivity.mockReset(); warmInBackground.mockReset();
+    await request(app()).get("/api/branch-head-health/enabled").set("x-role", "employee");
+    process.env.BRANCH_HEAD_HEALTH_ENABLED = "false";
+    await request(app()).get("/api/branch-head-health/enabled");
+    expect(noteActivity).not.toHaveBeenCalled();
+    expect(warmInBackground).not.toHaveBeenCalled();
   });
   it("GET /enabled: 404 when flag off", async () => {
     delete process.env.BRANCH_HEAD_HEALTH_ENABLED;
