@@ -466,12 +466,17 @@ export async function readGrnSpend(
   );
   // Leg 3 — the db_bill mirror, read separately (see readLegacyMirrorSpend). Consumed only: a mirrored bill is billed history, never
   // "reserved". Read for both kinds it counted every line twice.
-  if (kind === "consumed" && (await tableExists("grn_entry_line_snapshot"))) {
+  // OWNER RULE 2026-10-16: From Oct 2026 onwards ONLY HRMS-raised GRNs are counted (Leg 1+2).
+  // The db_bill mirror (Leg 3) is limited to historical periods before 2026-10 when GRN entry
+  // was managed in db_bill. Oct 2026+ Finance enters all vendor GRNs directly in HRMS.
+  const isHistoricalPeriod = periodCode < "2026-10";
+  if (kind === "consumed" && isHistoricalPeriod && (await tableExists("grn_entry_line_snapshot"))) {
     rows.push(...(await readLegacyMirrorSpend(periodCode, scope, withProcess, processJoin, processCol, withDetail)));
   }
+
   const text = (v: unknown) =>
     v === null || v === undefined || v === "" ? null : String(v);
-  return rows
+  const mapped: GrnSpendRow[] = rows
     .map((row) => ({
       branchId: row.branch_id ? String(row.branch_id) : null,
       costCentreId: row.cost_centre_id ? String(row.cost_centre_id) : null,
@@ -487,6 +492,35 @@ export async function readGrnSpend(
         : {}),
     }))
     .filter((row) => Number.isFinite(row.amount) && row.amount !== 0);
+
+  // Leg 4 — pnl_monthly_correction (Finance manual GRN adjustments / reconciliation).
+  // Applied for ALL periods (historical and live). Allows Finance to correct the computed GRN
+  // when the automatic calculation diverges from the approved P&L figure.
+  // These are company-level corrections not tied to a specific cost centre or process.
+  if (kind === "consumed" && (await tableExists("pnl_monthly_correction"))) {
+    const [corrections] = await db.execute<RowDataPacket[]>(
+      `SELECT pmc.amount FROM pnl_monthly_correction pmc
+        WHERE pmc.period_code = ? AND pmc.line_item = 'grn'
+          AND pmc.company_name = 'Mas Callnet India Pvt Ltd'`,
+      [periodCode],
+    );
+    for (const c of corrections) {
+      const amt = Number(c.amount);
+      if (Number.isFinite(amt) && amt !== 0) {
+        mapped.push({
+          branchId: null,
+          costCentreId: null,
+          processId: null,
+          amount: amt,
+          ...(withDetail
+            ? { source: "mirror" as const, grnRef: null, label: "P&L GRN Correction", billDate: null }
+            : {}),
+        });
+      }
+    }
+  }
+
+  return mapped;
 }
 
 export async function getIndirectCostActuals(
