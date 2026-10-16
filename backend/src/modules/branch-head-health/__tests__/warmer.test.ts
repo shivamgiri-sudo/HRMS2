@@ -20,7 +20,7 @@ vi.mock("../../../shared/istDate.js", () => ({ getCurrentDateIST: () => "2026-10
 vi.mock("../../../logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock("../../../workers/worker-utils.js", () => ({ registerTimer: (...a: unknown[]) => registerTimer(...a) }));
 
-import { warmOnce, startBranchHealthWarmer, stopBranchHealthWarmerForTests, noteActivity, warmInBackground, ACTIVE_WINDOW_MS } from "../warmer.js";
+import { warmOnce, startBranchHealthWarmer, stopBranchHealthWarmerForTests, noteActivity, warmInBackground, ACTIVE_WINDOW_MS, STARTUP_WARM_DELAY_MS } from "../warmer.js";
 
 const br = (id: string) => ({ branchId: id, branchCode: id, branchName: id });
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -84,27 +84,46 @@ describe("startBranchHealthWarmer", () => {
     expect(registerTimer).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
-  it("no startup warm; tick skipped when idle, runs when activity is recent, flag re-read each tick", async () => {
+  it("one startup warm after 60 s, then ticks only with recent activity; flag re-read each tick", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-15T00:00:00Z"));
     process.env.BRANCH_HEAD_HEALTH_ENABLED = "true";
     startBranchHealthWarmer();
-    expect(registerTimer).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(60_000);
+    expect(STARTUP_WARM_DELAY_MS).toBe(60_000);
+    expect(registerTimer).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(59_000);
     expect(listAllMasBranches).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(4 * 60_000); // tick, never any activity
-    expect(listAllMasBranches).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(listAllMasBranches).toHaveBeenCalledTimes(1); // the single startup warm
+    await vi.advanceTimersByTimeAsync(3 * 4 * 60_000); // ticks, never any activity: no repeat
+    expect(listAllMasBranches).toHaveBeenCalledTimes(1);
     noteActivity();
     await vi.advanceTimersByTimeAsync(4 * 60_000);
-    expect(listAllMasBranches).toHaveBeenCalledTimes(1);
+    expect(listAllMasBranches).toHaveBeenCalledTimes(2);
     process.env.BRANCH_HEAD_HEALTH_ENABLED = "false";
     await vi.advanceTimersByTimeAsync(4 * 60_000);
-    expect(listAllMasBranches).toHaveBeenCalledTimes(1);
+    expect(listAllMasBranches).toHaveBeenCalledTimes(2);
     process.env.BRANCH_HEAD_HEALTH_ENABLED = "true";
     await vi.advanceTimersByTimeAsync(ACTIVE_WINDOW_MS + 4 * 60_000); // activity ages out
     const settled = listAllMasBranches.mock.calls.length;
     await vi.advanceTimersByTimeAsync(8 * 60_000);
     expect(listAllMasBranches.mock.calls.length).toBe(settled);
+  });
+  it("the startup warm re-checks the flag when it fires and swallows errors", async () => {
+    vi.useFakeTimers();
+    process.env.BRANCH_HEAD_HEALTH_ENABLED = "true";
+    startBranchHealthWarmer();
+    process.env.BRANCH_HEAD_HEALTH_ENABLED = "false";
+    await vi.advanceTimersByTimeAsync(STARTUP_WARM_DELAY_MS);
+    expect(listAllMasBranches).not.toHaveBeenCalled();
+    stopBranchHealthWarmerForTests();
+    process.env.BRANCH_HEAD_HEALTH_ENABLED = "true";
+    listAllMasBranches.mockRejectedValue(new Error("db down"));
+    startBranchHealthWarmer();
+    await vi.advanceTimersByTimeAsync(STARTUP_WARM_DELAY_MS);
+    expect(listAllMasBranches).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(listAllMasBranches).toHaveBeenCalledTimes(1);
   });
 });
 

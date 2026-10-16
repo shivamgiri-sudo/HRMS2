@@ -8,6 +8,8 @@ import { getReportCached, getPnlCached, getOpsCached, isOpsFresh } from "./loade
 
 export const ACTIVE_WINDOW_MS = 30 * 60_000;
 const WARM_EVERY_MS = 4 * 60_000;
+/** One warm this long after start, so the first visitor after a deploy does not pay for cold caches. */
+export const STARTUP_WARM_DELAY_MS = 60_000;
 const enabled = () => process.env.BRANCH_HEAD_HEALTH_ENABLED === "true";
 
 let running = false;
@@ -66,13 +68,31 @@ async function tick(): Promise<void> {
   }
 }
 
-/** Runs inside the API process because the caches are in-process. No-op unless the flag is "true" at start. */
+/** The single post-start warm: flag re-read when it fires, never repeats, errors swallowed, `running` guards overlap. */
+async function startupWarm(): Promise<void> {
+  if (!enabled()) return;
+  try {
+    const r = await warmOnce();
+    if (r.branches > 0) logger.info(`[branch-head-health] startup warm: ${r.branches} branches in ${r.ms}ms`);
+  } catch (err) {
+    logger.error({ err }, "[branch-head-health] startup warm failed");
+  }
+}
+
+/**
+ * Runs inside the API process because the caches are in-process. No-op unless the flag is "true" at
+ * start. Schedules exactly one warm 60 s after start (cold caches after a deploy), then the periodic
+ * tick, which only warms while users are active.
+ */
 export function startBranchHealthWarmer(): void {
   if (!enabled() || timers.length > 0) return;
+  const once = setTimeout(() => { void startupWarm(); }, STARTUP_WARM_DELAY_MS);
+  once.unref();
+  registerTimer("branch-head-health-warmer-startup", once);
   const every = setInterval(() => { void tick(); }, WARM_EVERY_MS);
   every.unref();
   registerTimer("branch-head-health-warmer-interval", every);
-  timers = [every];
+  timers = [once, every];
 }
 
 export function stopBranchHealthWarmerForTests(): void {
