@@ -15,9 +15,10 @@ const EXTRA_COLS = ["Client", "Status", "Revenue", "People cost", "Other cost", 
  * Bar click: the row's own processId when this branch knows it, else a name join within the branch,
  * else the P&L metric drawer. `rows` must already be limited to the overview's branch.
  */
-export function pnlSelect(row: Pick<ProcessPnlRow, "processId" | "processName">, rows: readonly BranchProcess[], onSelect: (t: DrillTarget) => void) {
+export function pnlSelect(row: Pick<ProcessPnlRow, "processId" | "processName">, rows: readonly BranchProcess[], onSelect: (t: DrillTarget) => void, branchId?: string) {
   const own = rows.find((r) => r.processId === row.processId);
-  onSelect(own ? { kind: "process", id: own.processId, name: own.processName } : processTarget(row.processName, rows, "pnl"));
+  if (!own) { onSelect(processTarget(row.processName, rows, "pnl", branchId)); return; }
+  onSelect(branchId ? { kind: "process", id: own.processId, name: own.processName, branchId } : { kind: "process", id: own.processId, name: own.processName });
 }
 
 const idle = (r: ProcessPnlRow) => r.revenue === 0 && r.peopleCost === 0 && r.otherCost === 0;
@@ -75,7 +76,7 @@ export function ProcessPnlVisual({ overview, payload, onSelect }: VisualProps) {
         const b = buildPnl(d);
         const select = (id: string) => {
           const row = b.active.find((r) => r.processId === id);
-          if (row) pnlSelect(row, scoped, onSelect);
+          if (row) pnlSelect(row, scoped, onSelect, overview.branch.branchId);
           else onSelect({ kind: "metric", id: "pnl" });
         };
         const first = { ...b.bars, domain: b.domain, items: b.bars.items.slice(0, VISIBLE) };

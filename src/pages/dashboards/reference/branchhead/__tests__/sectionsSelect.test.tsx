@@ -58,18 +58,18 @@ describe("branch-aware selection", () => {
     const ov = fx.overviewOf();
     const seen: DrillTarget[] = [];
     selectByName({ overview: ov, payload: twoBranches(), onSelect: (t) => seen.push(t) }, "headcount")("Alpha Voice");
-    expect(seen).toEqual([{ kind: "process", id: "this-branch", name: "alpha voice" }]);
+    expect(seen).toEqual([{ kind: "process", id: "this-branch", name: "alpha voice", branchId: "b1" }]);
     const other = { ...ov, branch: { ...ov.branch, branchId: "b9" } };
     selectByName({ overview: other, payload: twoBranches(), onSelect: (t) => seen.push(t) }, "headcount")("Alpha Voice");
     expect(seen[1]).toEqual({ kind: "metric", id: "headcount" });
   });
   it("people: clicking the first bar opens this branch's process", () => {
     const ov = fx.overviewOf();
-    expect(clickFirstRow(PeopleVisual as Visual, BarList, ov, twoBranches())).toEqual([{ kind: "process", id: "this-branch", name: "alpha voice" }]);
+    expect(clickFirstRow(PeopleVisual as Visual, BarList, ov, twoBranches())).toEqual([{ kind: "process", id: "this-branch", name: "alpha voice", branchId: "b1" }]);
   });
   it("attendance: clicking the first by-process row opens this branch's process", () => {
     const ov = fx.overviewOf();
-    expect(clickFirstRow(AttendanceVisual as Visual, StackedBar, ov, twoBranches())).toEqual([{ kind: "process", id: "this-branch", name: "alpha voice" }]);
+    expect(clickFirstRow(AttendanceVisual as Visual, StackedBar, ov, twoBranches())).toEqual([{ kind: "process", id: "this-branch", name: "alpha voice", branchId: "b1" }]);
   });
   it("rows are keyed by index, so duplicate names cannot collide", () => {
     const d = { ...fx.people, byProcess: [fx.people.byProcess[0], fx.people.byProcess[0]] };

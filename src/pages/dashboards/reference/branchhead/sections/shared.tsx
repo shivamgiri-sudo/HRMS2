@@ -18,8 +18,9 @@ export function branchProcesses(payload: BranchHeadHealthPayload, branchId: stri
 
 /** Click handler for a process name: this branch's process drawer when it joins, else the section metric. */
 export function selectByName({ overview, payload, onSelect }: VisualProps, fallback: MetricDrillId) {
-  const rows = branchProcesses(payload, overview.branch.branchId);
-  return (name: string) => onSelect(processTarget(name, rows, fallback));
+  const branchId = overview.branch.branchId;
+  const rows = branchProcesses(payload, branchId);
+  return (name: string) => onSelect(processTarget(name, rows, fallback, branchId));
 }
 
 /** Rows keyed by index (names can repeat); maps a clicked row id back to its label for the join. */

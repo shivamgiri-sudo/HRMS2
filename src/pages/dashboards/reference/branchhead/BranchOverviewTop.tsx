@@ -12,14 +12,12 @@ type BranchRow = BranchHeadHealthPayload["branches"][number];
 const TREND_METRICS = ["score", ...KPI_TREND_METRICS];
 
 export interface BranchOverviewTopProps extends BranchRow {
-  /** KPI tile click; Task 4 connects it to the drill-down host. */
+  /** KPI tile click: opens that metric in the drill-down host. */
   onOpenKpi: (kpi: KpiId) => void;
-  /** Attention chip click (item id); Task 4 may route it to a metric drawer. */
-  onOpenAttentionItem: (id: string) => void;
 }
 
 /** Per-branch top area: hero, KPI strip and attention board, sharing one trends fetch and the attention drawer. */
-export function BranchOverviewTop({ branch, overview, score, onOpenKpi, onOpenAttentionItem }: BranchOverviewTopProps) {
+export function BranchOverviewTop({ branch, overview, score, onOpenKpi }: BranchOverviewTopProps) {
   const { data: trends } = useBranchTrends(branch.branchId || null, TREND_METRICS);
   const [attentionOpen, setAttentionOpen] = useState(false);
   return (
@@ -27,7 +25,8 @@ export function BranchOverviewTop({ branch, overview, score, onOpenKpi, onOpenAt
       <HeroScore branch={branch} overview={overview} score={score} trend={trends.score} onOpenAttention={() => setAttentionOpen(true)} />
       <KpiStrip overview={overview} trends={trends} onOpen={onOpenKpi} />
       <Panel title="Attention and wins">
-        <AttentionBoard items={overview.attention} positives={overview.positives} onOpenItem={onOpenAttentionItem}
+        {/* Attention chips open this board's own drawer (full list with details), not the drill host. */}
+        <AttentionBoard items={overview.attention} positives={overview.positives} onOpenItem={() => setAttentionOpen(true)}
           drawerOpen={attentionOpen} onDrawerChange={setAttentionOpen} />
       </Panel>
     </div>

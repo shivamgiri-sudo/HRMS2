@@ -7,7 +7,8 @@ export type MetricDrillId = KpiId | "attendance" | "headcount" | "attrition" | "
 
 /** What a chart mark, tile or row asks the drill-down host (Task 4) to open. */
 export type DrillTarget =
-  | { kind: "process"; id: string; name: string }
+  /** `branchId`: the overview the click came from, so a multi-branch view opens that branch's process. */
+  | { kind: "process"; id: string; name: string; branchId?: string }
   | { kind: "metric"; id: MetricDrillId };
 
 const SPACE_CHARS = new Set([" ", "\t", "\n", "\r", "\f", "\v", " "]);
@@ -32,7 +33,8 @@ export function joinByProcessName<T extends { processName: string }>(name: strin
 }
 
 /** A process target when the name joins to a known process, else the section's metric target. */
-export function processTarget<T extends { processId: string; processName: string }>(name: string, rows: readonly T[], fallback: MetricDrillId): DrillTarget {
+export function processTarget<T extends { processId: string; processName: string }>(name: string, rows: readonly T[], fallback: MetricDrillId, branchId?: string): DrillTarget {
   const hit = joinByProcessName(name, rows);
-  return hit ? { kind: "process", id: hit.processId, name: hit.processName } : { kind: "metric", id: fallback };
+  if (!hit) return { kind: "metric", id: fallback };
+  return branchId ? { kind: "process", id: hit.processId, name: hit.processName, branchId } : { kind: "process", id: hit.processId, name: hit.processName };
 }

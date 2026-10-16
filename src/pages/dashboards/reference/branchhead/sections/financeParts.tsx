@@ -15,7 +15,7 @@ export function grnStages(d: FinanceData): BarListProps | null {
   };
 }
 
-function byTypeTable(g: NonNullable<FinanceData["grn"]>): TableSpec {
+export function byTypeTable(g: NonNullable<FinanceData["grn"]>): TableSpec {
   return {
     caption: "GRNs by type",
     columns: ["Type", "Raised", "Raised ex-GST", "Approved", "Pending", "Pending incl. GST"],

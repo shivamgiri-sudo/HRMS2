@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Home } from "lucide-react";
 import { Panel, SectionTitle } from "../../kit";
 import type { BranchHeadHealthPayload } from "../../../../../backend/src/modules/branch-head-health/types";
@@ -12,14 +13,20 @@ import { HiringVisual } from "./sections/HiringVisual";
 import { BacklogVisual } from "./sections/BacklogVisual";
 import { DataHealthChips, OpsQualityVisual } from "./sections/OpsQualityVisual";
 import type { VisualProps } from "./sections/shared";
-import type { DrillTarget } from "./drill";
+import type { DrillTarget, KpiId } from "./drill";
+import { DrillHost, useDrillHost, type DrillHostApi } from "./drill/DrillHost";
+import { drillResetKey } from "./drill/history";
 import { BranchHeadControls } from "./BranchHeadControls";
 import { BranchOverviewTop } from "./BranchOverviewTop";
 import { ANCHOR_OFFSET_CLASS, BH_SECTIONS, SectionNav } from "./SectionNav";
 
-/** Drill-down hooks are wired to the drawer host in Task 4; until then tiles, chips and chart marks open nothing extra. */
-const NOOP = () => {};
-const NOOP_SELECT: (target: DrillTarget) => void = () => {};
+/** Section clicks and KPI tiles of one branch overview open the drill host for that branch. */
+export function drillHandlers(open: DrillHostApi["open"], branchId: string) {
+  return {
+    onSelect: (target: DrillTarget) => open(target, branchId),
+    onOpenKpi: (kpi: KpiId) => open({ kind: "metric", id: kpi }, branchId),
+  };
+}
 
 /** Visual sections below the overview, in page (and SectionNav) order. */
 const SECTIONS: Array<{ id: string; Visual: (p: VisualProps) => JSX.Element | null }> = [
@@ -51,6 +58,11 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
   // Anchor ids must be unique, so the section nav and its targets exist only for a single-branch view.
   const single = data.branches.length === 1;
   const anchor = (id: string) => (single ? id : undefined);
+  const host = useDrillHost();
+  const { close } = host;
+  // Another branch, date or branch list closes the drawer (its view would belong to the old data).
+  const resetKey = drillResetKey(selectedBranchId, date, data.branches.map((b) => b.branch.branchId));
+  useEffect(() => { close(); }, [resetKey, close]);
 
   return (
     <div className="space-y-4">
@@ -70,26 +82,31 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
 
       {single ? <SectionNav sections={BH_SECTIONS} /> : null}
 
-      {data.branches.map(({ branch, overview, score }) => (
+      {data.branches.map(({ branch, overview, score }) => {
+        const { onSelect, onOpenKpi } = drillHandlers(host.open, branch.branchId);
+        return (
         <section key={branch.branchId} aria-label={`${branch.branchName} health`} className="space-y-4">
           <div id={anchor("bh-overview")} className={ANCHOR_OFFSET_CLASS}>
-            <BranchOverviewTop branch={branch} overview={overview} score={score} onOpenKpi={NOOP} onOpenAttentionItem={NOOP} />
+            <BranchOverviewTop branch={branch} overview={overview} score={score} onOpenKpi={onOpenKpi} />
           </div>
           {SECTIONS.map(({ id, Visual }) => (
             <div key={id} id={anchor(id)} className={ANCHOR_OFFSET_CLASS}>
-              <Visual overview={overview} payload={data} onSelect={NOOP_SELECT} />
+              <Visual overview={overview} payload={data} onSelect={onSelect} />
             </div>
           ))}
           <div id={anchor("bh-ops")} className={ANCHOR_OFFSET_CLASS}>
-            {single ? <OpsQualityVisual overview={overview} payload={data} onSelect={NOOP_SELECT} /> : (
+            {single ? <OpsQualityVisual overview={overview} payload={data} onSelect={onSelect} /> : (
               <details data-group={`ops-${branch.branchId}`} className="rounded-lg border border-slate-200">
                 <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-[13px] font-bold text-slate-900">Operations, quality and Callmaster for {branch.branchName}</summary>
-                <div className="p-3"><OpsQualityVisual overview={overview} payload={data} onSelect={NOOP_SELECT} /></div>
+                <div className="p-3"><OpsQualityVisual overview={overview} payload={data} onSelect={onSelect} /></div>
               </details>
             )}
           </div>
         </section>
-      ))}
+        );
+      })}
+
+      <DrillHost host={host} data={data} branchNames={branchNames} />
 
       {data.branches.length > 0 || data.processesError ? (
         <>

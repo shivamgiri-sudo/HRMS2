@@ -70,10 +70,34 @@ export function defaultDrillBranch(p: BranchProcess, selectedBranchId: string): 
   return p.branchIds.includes(selectedBranchId) ? selectedBranchId : p.branchIds[0] ?? "";
 }
 
-function ProcessRow({ p, selectedBranchId, branchNames }: { p: BranchProcess; selectedBranchId: string; branchNames: Record<string, string> }) {
-  const [open, setOpen] = useState(false);
+/**
+ * The agent list for one process (the only place person names appear): branch picker when the process
+ * spans several branches, then the lazy drill-down. Mount it only on demand; it fetches when mounted.
+ */
+export function ProcessAgents({ p, selectedBranchId, branchNames }: { p: BranchProcess; selectedBranchId: string; branchNames: Record<string, string> }) {
   const [picked, setPicked] = useState("");
   const drillBranch = p.branchIds.includes(picked) ? picked : defaultDrillBranch(p, selectedBranchId);
+  if (p.branchIds.length === 0) {
+    return <p className="text-[13px] text-slate-700">Agent names are not available: this process has no cost centre or headcount in your selected branches.</p>;
+  }
+  return (
+    <>
+      {p.branchIds.length > 1 ? (
+        <label className="mb-2 block text-[12px] font-semibold text-slate-800">
+          Branch for agent values
+          <select value={drillBranch} onChange={(e) => setPicked(e.target.value)}
+            className="mt-1 block min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-[14px] text-slate-900">
+            {p.branchIds.map((b) => <option key={b} value={b}>{branchNames[b] ?? b}</option>)}
+          </select>
+        </label>
+      ) : null}
+      <Drill branchId={drillBranch} processId={p.processId} tier={p.tier} />
+    </>
+  );
+}
+
+function ProcessRow({ p, selectedBranchId, branchNames }: { p: BranchProcess; selectedBranchId: string; branchNames: Record<string, string> }) {
+  const [open, setOpen] = useState(false);
   // Zero (or no) mandated seats means the process is not mandated, so headcount cannot be "over" it.
   const mandated = p.mandatedSeats != null && p.mandatedSeats > 0;
   const over = mandated && p.headcount > (p.mandatedSeats as number);
@@ -90,24 +114,7 @@ function ProcessRow({ p, selectedBranchId, branchNames }: { p: BranchProcess; se
         </span>
       </button>
       {open ? (
-        <div className="px-2 pb-3">
-          {p.branchIds.length === 0 ? (
-            <p className="text-[13px] text-slate-700">Agent names are not available: this process has no cost centre or headcount in your selected branches.</p>
-          ) : (
-            <>
-              {p.branchIds.length > 1 ? (
-                <label className="mb-2 block text-[12px] font-semibold text-slate-800">
-                  Branch for agent values
-                  <select value={drillBranch} onChange={(e) => setPicked(e.target.value)}
-                    className="mt-1 block min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-[14px] text-slate-900">
-                    {p.branchIds.map((b) => <option key={b} value={b}>{branchNames[b] ?? b}</option>)}
-                  </select>
-                </label>
-              ) : null}
-              <Drill branchId={drillBranch} processId={p.processId} tier={p.tier} />
-            </>
-          )}
-        </div>
+        <div className="px-2 pb-3"><ProcessAgents p={p} selectedBranchId={selectedBranchId} branchNames={branchNames} /></div>
       ) : null}
     </li>
   );

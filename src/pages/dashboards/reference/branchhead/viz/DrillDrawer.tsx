@@ -1,4 +1,4 @@
-import { useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 
@@ -10,6 +10,8 @@ export interface DrillDrawerProps {
   children: ReactNode;
   /** Render in place instead of portalling to <body>. For static-markup tests; leave off in the app. */
   inline?: boolean;
+  /** Identity of the view shown; when it changes while open (content swap), focus moves to the title. */
+  focusKey?: string;
 }
 
 interface Focusable { focus?: (opts?: { preventScroll?: boolean }) => void; isConnected?: boolean }
@@ -33,8 +35,17 @@ export function restoreFocus<T extends Focusable>(saved: T | null | undefined, f
  * explicit ids; content mounts only while open. CSS in viz.css makes it a bottom sheet below 768 px
  * and a right-side sheet from 768 px.
  */
-export function DrillDrawer({ open, onClose, title, subtitle, children, inline = false }: DrillDrawerProps) {
+export function DrillDrawer({ open, onClose, title, subtitle, children, inline = false, focusKey }: DrillDrawerProps) {
   const titleId = useId();
+  const titleRef = useRef<HTMLHeadingElement | null>(null);
+  const shownKey = useRef<string | undefined>(undefined);
+  // A swap keeps the drawer open (so the saved opener survives for the final close); only the title takes focus.
+  useEffect(() => {
+    if (open && shownKey.current !== undefined && focusKey !== undefined && shownKey.current !== focusKey) {
+      titleRef.current?.focus({ preventScroll: true });
+    }
+    shownKey.current = open ? focusKey : undefined;
+  }, [open, focusKey]);
   const subId = useId();
   const saved = useRef<HTMLElement | null>(null);
   const wasOpen = useRef(false);
@@ -56,7 +67,7 @@ export function DrillDrawer({ open, onClose, title, subtitle, children, inline =
         }}>
         <div className="bh-drawer-head">
           <div style={{ minWidth: 0 }}>
-            <DialogPrimitive.Title id={titleId} className="bh-drawer-title">{title}</DialogPrimitive.Title>
+            <DialogPrimitive.Title id={titleId} ref={titleRef} tabIndex={-1} className="bh-drawer-title">{title}</DialogPrimitive.Title>
             {subtitle ? <DialogPrimitive.Description id={subId} className="bh-drawer-sub">{subtitle}</DialogPrimitive.Description> : null}
           </div>
           <DialogPrimitive.Close className="bh-drawer-close" aria-label={`Close ${title}`}>
