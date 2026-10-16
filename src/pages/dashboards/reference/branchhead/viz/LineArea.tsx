@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { EmptyState, Legend, TipBody } from "./parts";
-import { isNum, r1, scale, seriesColor } from "./scale";
+import { isNum, r1, safeFormat, scale, seriesColor, type TableSpec } from "./scale";
 import { useChartTooltip } from "./useChartTooltip";
 
 export interface LineSeries {
@@ -10,7 +10,16 @@ export interface LineSeries {
   dashed?: boolean;
 }
 
+export interface LineAreaProps {
+  series: LineSeries[];
+  format: (n: number) => string;
+  height?: number;
+  /** Names the data for assistive tech and the table caption. */
+  label?: string;
+}
+
 const W = 600;
+const MAX_LINES = 4;
 const PAD = { l: 44, r: 16, t: 12, b: 24 };
 
 /**
@@ -60,10 +69,21 @@ export function lineLayout(series: LineSeries[], width: number, height: number) 
   };
 }
 
+/** Table twin from the same props: one row per x label, one column per drawn series ("—" for gaps). */
+export function lineAreaTable(p: LineAreaProps, caption = p.label ?? "Trend"): TableSpec {
+  const shown = p.series.slice(0, MAX_LINES);
+  const l = lineLayout(shown, W, p.height ?? 180);
+  return {
+    caption,
+    columns: ["Period", ...shown.map((s) => s.label)],
+    rows: l.labels.map((lab, i) => [lab, ...shown.map((s) => safeFormat(p.format, s.points[i]?.y))]),
+  };
+}
+
 /** Trend over time. First series gets a 10% area wash; dashed series read as target / projection. */
-export function LineArea({ series, format, height = 180 }: { series: LineSeries[]; format: (n: number) => string; height?: number }) {
+export function LineArea({ series, format, height = 180, label = "Trend" }: LineAreaProps) {
   const clipId = useId();
-  const shown = series.slice(0, 4);
+  const shown = series.slice(0, MAX_LINES);
   const l = lineLayout(shown, W, height);
   const hasData = l.series.some((s) => s.dots.length > 0);
   const { surfaceProps, markProps, tooltip, active } = useChartTooltip(l.labels.map((lab, i) => ({
@@ -89,12 +109,12 @@ export function LineArea({ series, format, height = 180 }: { series: LineSeries[
   const bandW = l.labels.length > 1 ? (l.xs[1] - l.xs[0]) : W - PAD.l - PAD.r;
   return (
     <div className="bh-viz bh-chart">
-      <svg viewBox={`0 0 ${W} ${height}`} role="img" aria-label={`${l.labels.length} periods: ${summary}`} {...surfaceProps}
-        onPointerLeave={() => surfaceProps.onBlur()}>
+      <svg viewBox={`0 0 ${W} ${height}`} role="group" className="bh-focus"
+        aria-label={`${label}, ${l.labels.length} periods: ${summary}`} {...surfaceProps}>
         <defs><clipPath id={clipId}><rect x={PAD.l} y={0} width={W - PAD.l - PAD.r} height={height} /></clipPath></defs>
         {l.ticks.map((t) => (
           <g key={t.v}>
-            <line x1={PAD.l} x2={W - PAD.r} y1={t.y} y2={t.y} stroke={t.v === 0 ? "var(--bh-axis)" : "var(--bh-grid)"} strokeWidth="1" />
+            <line x1={PAD.l} x2={W - PAD.r} y1={t.y} y2={t.y} stroke={t.v === 0 ? "var(--bh-baseline)" : "var(--bh-grid)"} strokeWidth="1" />
             <text x={PAD.l - 6} y={t.y + 4} textAnchor="end" className="bh-axis-text">{format(t.v)}</text>
           </g>
         ))}
@@ -115,10 +135,11 @@ export function LineArea({ series, format, height = 180 }: { series: LineSeries[
           </g>
         ))}
         {last && shown.length <= 2 ? (
-          <text x={Math.min(W - PAD.r, last.x)} y={last.y - 8} textAnchor="end" className="bh-label-text">{format(last.v)}</text>
+          <text x={Math.min(W - PAD.r, last.x)} y={r1(last.y - 8)} textAnchor="end" className="bh-label-text">{format(last.v)}</text>
         ) : null}
         {l.xs.map((x, i) => (
-          <rect key={i} x={x - bandW / 2} y={PAD.t} width={Math.max(1, bandW)} height={height - PAD.t - PAD.b} fill="transparent" {...markProps(i)} />
+          <rect key={i} x={r1(Math.max(PAD.l, x - bandW / 2))} y={PAD.t} height={height - PAD.t - PAD.b} fill="transparent"
+            width={r1(Math.max(1, Math.min(W - PAD.r, x + bandW / 2) - Math.max(PAD.l, x - bandW / 2)))} {...markProps(i)} />
         ))}
       </svg>
       {shown.length >= 2 ? (

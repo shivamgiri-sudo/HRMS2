@@ -10,6 +10,7 @@
   --bh-ink-3: #52514e; /* axis/label text: secondary ink, 7.7:1 (palette muted #898781 is 3.5:1, too low for 11px text) */
   --bh-grid: #e1e0d9;
   --bh-axis: #c3c2b7;
+  --bh-baseline: #898781; /* zero / base lines: 3.5:1 on the light surface */
   --bh-border: rgba(11, 11, 11, 0.1);
   /* categorical slots 1-4 */
   --bh-s1: #2a78d6;
@@ -46,6 +47,7 @@
   --bh-ink-3: #c3c2b7;
   --bh-grid: #2c2c2a;
   --bh-axis: #383835;
+  --bh-baseline: #898781; /* zero / base lines: 4.85:1 on #1a1a19 (palette #383835 is ~1.4:1) */
   --bh-border: rgba(255, 255, 255, 0.1);
   --bh-s1: #3987e5;
   --bh-s2: #d95926;
@@ -80,7 +82,8 @@
 .bh-frame-title { font-size: 14px; font-weight: 600; line-height: 1.3; margin: 0; color: var(--bh-ink-1); }
 .bh-frame-sub { font-size: 12px; color: var(--bh-ink-2); margin: 2px 0 0; }
 .bh-frame-actions { display: flex; align-items: center; gap: 6px; }
-.bh-btn { min-height: 32px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--bh-border); background: transparent; color: var(--bh-ink-2); font-size: 12px; font-weight: 500; cursor: pointer; }
+.bh-btn { min-height: 36px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--bh-border); background: transparent; color: var(--bh-ink-2); font-size: 12px; font-weight: 500; cursor: pointer; }
+@media (pointer: coarse) { .bh-btn { min-height: 44px; } }
 .bh-btn[aria-pressed="true"] { background: var(--bh-plane); color: var(--bh-ink-1); }
 .bh-btn:focus-visible, .bh-focus:focus-visible, .bh-row-btn:focus-visible, .bh-tile:focus-visible { outline: 2px solid var(--bh-s1); outline-offset: 2px; }
 .bh-frame-body { position: relative; min-width: 0; }
@@ -100,7 +103,12 @@
 .bh-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .bh-linekey { display: inline-block; width: 14px; height: 0; border-top: 2px solid; flex: none; }
 .bh-linekey-dashed { border-top-style: dashed; }
-.bh-tip { position: absolute; z-index: 5; pointer-events: none; transform: translate(-50%, calc(-100% - 8px)); background: var(--bh-ink-1); color: var(--bh-surface); border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.35; white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); }
+.bh-tip { position: absolute; z-index: 5; pointer-events: none; transform: translate(-50%, calc(-100% - 8px)); max-width: min(280px, 100%); background: var(--bh-ink-1); color: var(--bh-surface); border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.35; white-space: normal; width: max-content; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); }
+.bh-tip-start { transform: translate(0, calc(-100% - 8px)); }
+.bh-tip-end { transform: translate(-100%, calc(-100% - 8px)); }
+.bh-tip-below.bh-tip-center { transform: translate(-50%, 12px); }
+.bh-tip-below.bh-tip-start { transform: translate(0, 12px); }
+.bh-tip-below.bh-tip-end { transform: translate(-100%, 12px); }
 .bh-tip strong { font-weight: 600; font-variant-numeric: tabular-nums; }
 .bh-tip-row { display: flex; align-items: center; gap: 6px; }
 .bh-tip-sub { opacity: 0.78; }
@@ -120,7 +128,7 @@
 .bh-track { position: relative; flex: 1; height: 12px; min-width: 0; }
 .bh-bar { position: absolute; top: 0; height: 12px; border-radius: 0 4px 4px 0; }
 .bh-bar-neg { border-radius: 4px 0 0 4px; }
-.bh-zero { position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--bh-axis); }
+.bh-zero { position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--bh-baseline); }
 .bh-marker { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--bh-ink-1); border-radius: 1px; }
 .bh-stack { display: flex; height: 12px; min-width: 0; }
 .bh-stack > span { display: block; height: 100%; min-width: 2px; }

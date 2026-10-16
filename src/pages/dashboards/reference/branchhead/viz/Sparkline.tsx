@@ -34,7 +34,7 @@ export function Sparkline({ points, tone, width = 96, height = 28, label }: {
   const finite = points.filter(isNum);
   return (
     <svg className="bh-viz" width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img"
-      aria-label={`${label}: ${finite.length} points, from ${finite[0]} to ${finite[finite.length - 1]}`}
+      aria-label={`${label}: ${finite.length} points, from ${r1(finite[0])} to ${r1(finite[finite.length - 1])}`}
       style={{ overflow: "visible" }}>
       <path d={p.d} fill="none" stroke="var(--bh-other)" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
       <circle cx={p.last.x} cy={p.last.y} r="3" fill={toneColor(tone)} stroke="var(--bh-surface)" strokeWidth="1.5" />

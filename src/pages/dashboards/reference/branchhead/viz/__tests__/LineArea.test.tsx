@@ -18,7 +18,8 @@ describe("LineArea", () => {
     expect(html).toContain("stroke-dasharray");
     expect(html).toContain("bh-legend");
     expect(html).toContain("Target");
-    expect(html).toContain('role="img"');
+    expect(html).toContain('role="group"');
+    expect(html).toContain('aria-label="Trend, 3 periods: Actual from 1 to 3; Target from 2 to 2"');
   });
   it("draws a dot, not a line, for a single point", () => {
     const l = lineLayout([{ key: "a", label: "A", points: pts([5]) }], 400, 160);

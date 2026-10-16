@@ -1,5 +1,5 @@
 import { EmptyState, Glyph, TipBody } from "./parts";
-import { isNum, r1, scale, toneColor, TONE_LABEL, type Tone } from "./scale";
+import { isNum, r1, safeFormat, scale, summarize, toneColor, TONE_LABEL, type TableSpec, type Tone } from "./scale";
 import { useChartTooltip } from "./useChartTooltip";
 
 export interface BarItem {
@@ -9,6 +9,16 @@ export interface BarItem {
   marker?: number | null;
   tone?: Tone;
   note?: string;
+}
+
+export interface BarListProps {
+  items: BarItem[];
+  max?: number;
+  format: (n: number) => string;
+  onSelect?: (id: string) => void;
+  markerLabel?: string;
+  /** Names the data for assistive tech and the table caption, e.g. "Headcount versus mandate by process". */
+  label?: string;
 }
 
 /** Bar widths and marker positions as % of max (explicit, else the largest value or marker). */
@@ -22,6 +32,8 @@ export function barListLayout(items: BarItem[], max?: number) {
       const m = isNum(it.marker) ? it.marker : null;
       return {
         id: it.id,
+        value: v,
+        marker: m,
         widthPct: r1(scale.clamp(scale.pct(v, top), 0, 100)),
         markerPct: m == null ? null : r1(scale.clamp(scale.pct(m, top), 0, 100)),
         over: m != null && v > m,
@@ -30,41 +42,65 @@ export function barListLayout(items: BarItem[], max?: number) {
   };
 }
 
+function noteFor(it: BarItem, over: boolean, markerLabel: string): string | undefined {
+  return over ? (it.note ?? `Over ${markerLabel}`) : it.note;
+}
+
+/** Table twin built from the same props the chart renders. */
+export function barListTable(p: BarListProps, caption = p.label ?? "Values"): TableSpec {
+  const markerLabel = p.markerLabel ?? "Target";
+  const l = barListLayout(p.items, p.max);
+  const hasMarker = l.rows.some((r) => r.marker != null);
+  return {
+    caption,
+    columns: ["Item", "Value", ...(hasMarker ? [markerLabel] : []), "Note"],
+    rows: p.items.map((it, i) => [
+      it.label,
+      safeFormat(p.format, l.rows[i].value),
+      ...(hasMarker ? [l.rows[i].marker == null ? null : p.format(l.rows[i].marker as number)] : []),
+      noteFor(it, l.rows[i].over, markerLabel) ?? (it.tone && it.tone !== "neutral" ? TONE_LABEL[it.tone] : null),
+    ]),
+  };
+}
+
 /**
  * Ranked horizontal bars with an optional per-row marker (e.g. mandate). One series, so one colour
  * (slot 1) unless a row carries a status tone; over-marker rows always say so in text with an icon.
  */
-export function BarList({ items, max, format, onSelect, markerLabel = "Target" }: {
-  items: BarItem[]; max?: number; format: (n: number) => string; onSelect?: (id: string) => void; markerLabel?: string;
-}) {
+export function BarList(p: BarListProps) {
+  const { items, max, format, onSelect, markerLabel = "Target", label = "Values" } = p;
   const layout = barListLayout(items, max);
   const n = items.length;
   const { focusProps, markProps, surfaceProps, tooltip, active } = useChartTooltip(items.map((it, i) => ({
     x: Math.max(layout.rows[i].widthPct, layout.rows[i].markerPct ?? 0) * 0.68 + 32,
     y: ((i + 0.2) / Math.max(1, n)) * 100,
-    content: <TipBody value={format(it.value)} label={it.label}
+    content: <TipBody value={safeFormat(format, it.value)} label={it.label}
       extra={isNum(it.marker) ? <div className="bh-tip-sub">{markerLabel}: {format(it.marker)}</div> : null} />,
   })));
   if (!n) return <EmptyState height={96} />;
   const hasMarker = layout.rows.some((r) => r.markerPct != null);
+  const aria = summarize(label, items.map((it, i) => {
+    const m = layout.rows[i].marker;
+    return `${it.label} ${safeFormat(format, it.value)}${m != null ? ` of ${format(m)} ${markerLabel}` : ""}`;
+  }));
   return (
-    <div className={active != null ? "bh-viz bh-chart bh-dim" : "bh-viz bh-chart"}>
-      <ul {...(onSelect ? {} : surfaceProps)} className={onSelect ? "bh-rows" : "bh-rows bh-focus"}>
+    <div role="group" aria-label={aria} {...(onSelect ? {} : surfaceProps)}
+      className={`bh-viz bh-chart${active != null ? " bh-dim" : ""}${onSelect ? "" : " bh-focus"}`}>
+      <ul className="bh-rows">
         {items.map((it, i) => {
           const row = layout.rows[i];
-          const note = row.over ? (it.note ?? `Over ${markerLabel}`) : it.note;
+          const note = noteFor(it, row.over, markerLabel);
           const status = it.tone && it.tone !== "neutral" ? it.tone : null;
-          const markerText = isNum(it.marker) ? `, ${markerLabel} ${format(it.marker)}` : "";
           const inner = (
             <>
-              <span className="bh-row-label">{it.label}</span>
+              <span className="bh-row-label" title={it.label}>{it.label}</span>
               <span className="bh-bar-line">
                 <span className="bh-track" aria-hidden="true">
                   <span className={i === active ? "bh-bar bh-mark bh-on" : "bh-bar bh-mark"}
                     style={{ left: 0, width: `${row.widthPct}%`, background: toneColor(it.tone) }} />
                   {row.markerPct != null ? <span className="bh-marker" style={{ left: `${row.markerPct}%` }} /> : null}
                 </span>
-                <span className="bh-row-value">{format(it.value)}</span>
+                <span className="bh-row-value">{safeFormat(format, it.value)}</span>
               </span>
               {note || status ? (
                 <span className="bh-row-note">
@@ -72,7 +108,7 @@ export function BarList({ items, max, format, onSelect, markerLabel = "Target" }
                   {status && !note ? TONE_LABEL[status] : note}
                 </span>
               ) : null}
-              <span className="bh-sr">{markerText}</span>
+              {row.marker != null ? <span className="bh-sr">, {markerLabel} {format(row.marker)}</span> : null}
             </>
           );
           return (

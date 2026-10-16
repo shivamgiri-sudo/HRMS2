@@ -13,9 +13,10 @@ export interface ChartFrameProps {
   children: ReactNode;
 }
 
-function cell(v: string | number | null): string {
+/** Strings render exactly as given (pre-formatted to match chart labels); raw numbers as plain String(n). */
+export function cell(v: string | number | null): string {
   if (v == null) return "—";
-  if (typeof v === "number") return Number.isFinite(v) ? v.toLocaleString("en-IN") : "—";
+  if (typeof v === "number") return Number.isFinite(v) ? String(v) : "—";
   return v;
 }
 

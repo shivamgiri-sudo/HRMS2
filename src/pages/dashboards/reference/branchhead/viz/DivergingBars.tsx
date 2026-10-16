@@ -1,8 +1,17 @@
 import { EmptyState, Legend, TipBody } from "./parts";
-import { isNum, r1 } from "./scale";
+import { isNum, r1, safeFormat, summarize, type TableSpec } from "./scale";
 import { useChartTooltip } from "./useChartTooltip";
 
 export interface DivergingItem { id: string; label: string; value: number }
+export interface DivergingBarsProps {
+  items: DivergingItem[];
+  format: (n: number) => string;
+  onSelect?: (id: string) => void;
+  positiveLabel: string;
+  negativeLabel: string;
+  /** Names the data for assistive tech and the table caption. */
+  label?: string;
+}
 
 /**
  * Bars around a zero line. Mixed signs: zero centred (50 %), each arm scaled to the largest |value|.
@@ -30,27 +39,42 @@ export function divergingLayout(items: DivergingItem[]) {
 
 const COLOR = { pos: "var(--bh-pos)", neg: "var(--bh-neg)", zero: "var(--bh-other)" } as const;
 
+function signWordFor(p: Pick<DivergingBarsProps, "positiveLabel" | "negativeLabel">, s: "pos" | "neg" | "zero"): string {
+  return s === "pos" ? p.positiveLabel : s === "neg" ? p.negativeLabel : "Zero";
+}
+
+/** Table twin built from the same props: value and which side of zero it falls. */
+export function divergingBarsTable(p: DivergingBarsProps, caption = p.label ?? "Values"): TableSpec {
+  const l = divergingLayout(p.items);
+  return {
+    caption,
+    columns: ["Item", "Value", "Side"],
+    rows: p.items.map((it, i) => [it.label, safeFormat(p.format, it.value), signWordFor(p, l.rows[i].sign)]),
+  };
+}
+
 /** Profit / loss style bars: diverging blue <-> red poles, sign also carried by the legend and text. */
-export function DivergingBars({ items, format, onSelect, positiveLabel, negativeLabel }: {
-  items: DivergingItem[]; format: (n: number) => string; onSelect?: (id: string) => void; positiveLabel: string; negativeLabel: string;
-}) {
+export function DivergingBars(p: DivergingBarsProps) {
+  const { items, format, onSelect, positiveLabel, negativeLabel, label = "Values" } = p;
   const layout = divergingLayout(items);
   const n = items.length;
-  const signWord = (s: "pos" | "neg" | "zero") => (s === "pos" ? positiveLabel : s === "neg" ? negativeLabel : "Zero");
+  const signWord = (s: "pos" | "neg" | "zero") => signWordFor(p, s);
   const { focusProps, markProps, surfaceProps, tooltip, active } = useChartTooltip(items.map((it, i) => ({
     x: 32 + (layout.rows[i].leftPct + layout.rows[i].widthPct / 2) * 0.5,
     y: ((i + 0.2) / Math.max(1, n)) * 100,
-    content: <TipBody value={format(it.value)} label={`${it.label} (${signWord(layout.rows[i].sign)})`} color={COLOR[layout.rows[i].sign]} />,
+    content: <TipBody value={safeFormat(format, it.value)} label={`${it.label} (${signWord(layout.rows[i].sign)})`} color={COLOR[layout.rows[i].sign]} />,
   })));
   if (!n) return <EmptyState height={96} />;
+  const aria = summarize(label, items.map((it, i) => `${it.label} ${safeFormat(format, it.value)} ${signWord(layout.rows[i].sign)}`));
   return (
-    <div className={active != null ? "bh-viz bh-chart bh-dim" : "bh-viz bh-chart"}>
-      <ul {...(onSelect ? {} : surfaceProps)} className={onSelect ? "bh-rows" : "bh-rows bh-focus"}>
+    <div role="group" aria-label={aria} {...(onSelect ? {} : surfaceProps)}
+      className={`bh-viz bh-chart${active != null ? " bh-dim" : ""}${onSelect ? "" : " bh-focus"}`}>
+      <ul className="bh-rows">
         {items.map((it, i) => {
           const row = layout.rows[i];
           const inner = (
             <>
-              <span className="bh-row-label">{it.label}</span>
+              <span className="bh-row-label" title={it.label}>{it.label}</span>
               <span className="bh-bar-line">
                 <span className="bh-track" aria-hidden="true">
                   <span className="bh-zero" style={{ left: `${layout.zeroPct}%` }} />
@@ -59,7 +83,7 @@ export function DivergingBars({ items, format, onSelect, positiveLabel, negative
                       style={{ left: `${row.leftPct}%`, width: `${row.widthPct}%`, background: COLOR[row.sign] }} />
                   ) : null}
                 </span>
-                <span className="bh-row-value">{format(it.value)}</span>
+                <span className="bh-row-value">{safeFormat(format, it.value)}</span>
               </span>
               <span className="bh-sr">, {signWord(row.sign)}</span>
             </>

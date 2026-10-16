@@ -81,6 +81,19 @@ export const TONE_LABEL: Record<Tone, string> = {
   neutral: "Neutral",
 };
 
+/** Accessible data summary: "Prefix: a, b, c ... and N more" (first `cap` parts). */
+export function summarize(prefix: string, parts: string[], cap = 6): string {
+  if (!parts.length) return `${prefix}: no data`;
+  const head = parts.slice(0, cap).join(", ");
+  const more = parts.length > cap ? `, and ${parts.length - cap} more` : "";
+  return `${prefix}: ${head}${more}`;
+}
+
+/** Format only finite numbers; anything else is the em dash used across the page. */
+export function safeFormat(format: (n: number) => string, v: number | null | undefined): string {
+  return isNum(v) ? format(v) : "—";
+}
+
 /** Round to one decimal for geometry output (keeps markup and test numbers stable). */
 export function r1(v: number): number {
   return Math.round(v * 10) / 10;

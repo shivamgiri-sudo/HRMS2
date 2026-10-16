@@ -1,9 +1,15 @@
 import { formatCount } from "../format";
 import { EmptyState, TipBody } from "./parts";
-import { isNum, r1, scale, seriesColor } from "./scale";
+import { isNum, r1, scale, seriesColor, type TableSpec } from "./scale";
 import { useChartTooltip } from "./useChartTooltip";
 
 export interface DonutSlice { key: string; label: string; value: number }
+export interface DonutProps {
+  slices: DonutSlice[];
+  centerLabel: string;
+  centerValue: string;
+  format?: (n: number) => string;
+}
 
 const MAX_DRAWN = 4;
 const OTHER = "__other";
@@ -43,10 +49,19 @@ function sliceColor(key: string, slot: number): string {
   return key === OTHER ? "var(--bh-other)" : seriesColor(slot);
 }
 
+/** Table twin from the same props: the drawn (folded) slices with value and share. */
+export function donutTable(p: DonutProps, caption = p.centerLabel): TableSpec {
+  const format = p.format ?? formatCount;
+  const l = donutLayout(p.slices);
+  return {
+    caption,
+    columns: ["Category", "Value", "Share"],
+    rows: [...l.slices.map((s) => [s.label, format(s.value), `${s.pct}%`]), ["Total", format(l.total), l.total > 0 ? "100%" : null]],
+  };
+}
+
 /** Part-to-whole at a glance (<= 4 slices). Slices are separated by a surface-coloured gap, never a border. */
-export function Donut({ slices, centerLabel, centerValue, format = formatCount }: {
-  slices: DonutSlice[]; centerLabel: string; centerValue: string; format?: (n: number) => string;
-}) {
+export function Donut({ slices, centerLabel, centerValue, format = formatCount }: DonutProps) {
   const l = donutLayout(slices);
   const size = 160;
   const c = size / 2;
@@ -67,8 +82,8 @@ export function Donut({ slices, centerLabel, centerValue, format = formatCount }
     <div className={active != null ? "bh-viz bh-chart bh-dim" : "bh-viz bh-chart"}
       style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16 }}>
       <div style={{ position: "relative", width: size, maxWidth: "100%", flex: "none" }}>
-        <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${centerLabel} ${centerValue}: ${summary}`} {...surfaceProps}
-          onPointerLeave={() => surfaceProps.onBlur()}>
+        <svg viewBox={`0 0 ${size} ${size}`} role="group" className="bh-focus"
+          aria-label={`${centerLabel} ${centerValue}: ${summary}`} {...surfaceProps}>
           {l.slices.length === 1 ? (
             <circle className="bh-mark" cx={c} cy={c} r={(ro + ri) / 2} fill="none" stroke={sliceColor(l.slices[0].key, 0)}
               strokeWidth={ro - ri} {...markProps(0)} />
