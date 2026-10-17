@@ -73,7 +73,7 @@ function stubDb(s: Stub) {
     if (q.startsWith("SELECT escalated_by_role, status FROM attendance_mismatch_escalation")) return [s.prior ? [s.prior] : []];
     if (q.includes("JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)")) return [s.manager ? [s.manager] : []];
     if (q.startsWith("SELECT employee_code, CONCAT")) return [[{ employee_code: "MAS57521", name: "Test Agent" }]];
-    if (q.includes("FROM biometric_attendance_log")) return [[{ first_in: "2026-10-01 22:11", last_out: "2026-10-02 07:21" }]];
+    if (q.includes("FROM biometric_attendance_log")) return [[{ first_in: "2026-10-20 22:11", last_out: "2026-10-21 07:21" }]];
     if (q.startsWith("INSERT INTO attendance_mismatch_escalation")) return [{ affectedRows: s.insertAffected ?? 1 }];
     if (q.includes("FROM attendance_mismatch_escalation WHERE adr_id = ? AND escalated_by_role = ? AND status = 'pending'")) return [s.pending ? [s.pending] : []];
     if (q.includes("FROM attendance_daily_record WHERE id = ? LIMIT 1") && q.includes("source_system")) return [s.record ? [s.record] : []];
@@ -90,7 +90,7 @@ const sqlOf = (prefix: string) => calls.filter((c) => c.sql.replace(/\s+/g, " ")
 const raiseInput = {
   adrId: "adr-1",
   employeeId: "emp-1",
-  recordDate: "2026-10-01",
+  recordDate: "2026-10-20",
   currentStatus: "absent",
   aprMinutes: 4,
   biometricMinutes: 551,
@@ -121,11 +121,11 @@ describe("raiseAprCosecDecision", () => {
     const [ins] = sqlOf("INSERT INTO attendance_mismatch_escalation");
     expect(ins).toBeDefined();
     expect(ins!.sql).toMatch(/WHERE NOT EXISTS/);
-    expect(ins!.params).toEqual(expect.arrayContaining(["adr-1", "emp-1", "2026-10-01", "system", APR_COSEC_ROLE, "mgr-emp", "mgr-user"]));
+    expect(ins!.params).toEqual(expect.arrayContaining(["adr-1", "emp-1", "2026-10-20", "system", APR_COSEC_ROLE, "mgr-emp", "mgr-user"]));
     const note = String(ins!.params[8]);
     expect(note).toContain("APR net login 0h 04m (4 min) = absent");
     expect(note).toContain("COSEC 9h 11m (551 min) = present");
-    expect(note).toContain("first punch 2026-10-01 22:11");
+    expect(note).toContain("first punch 2026-10-20 22:11");
 
     expect(createItem).toHaveBeenCalledTimes(1);
     const item = (createItem.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
@@ -165,7 +165,7 @@ describe("raiseAprCosecDecision", () => {
 
 describe("applyManagerDecision", () => {
   const record = {
-    id: "adr-1", employee_id: "emp-1", record_date: "2026-10-01", attendance_status: "absent", lwp_value: 1,
+    id: "adr-1", employee_id: "emp-1", record_date: "2026-10-20", attendance_status: "absent", lwp_value: 1,
     is_locked: 1, override_by: null, regularization_id: null, source_system: "apr_bulk",
   };
 
@@ -226,7 +226,7 @@ describe("POST /api/wfm/mismatches/:id/manager-decision", () => {
   it("lets a reporting manager with only the employee role decide their assigned day", async () => {
     stubDb({
       pending: { id: "esc-1" },
-      record: { id: "adr-1", employee_id: "emp-1", record_date: "2026-10-01", attendance_status: "absent", lwp_value: 1, is_locked: 0, override_by: null, regularization_id: null, source_system: "apr.ReportDate" },
+      record: { id: "adr-1", employee_id: "emp-1", record_date: "2026-10-20", attendance_status: "absent", lwp_value: 1, is_locked: 0, override_by: null, regularization_id: null, source_system: "apr.ReportDate" },
     });
     const res = await request(app("employee")).post("/api/wfm/mismatches/adr-1/manager-decision").send({ status: "present" });
     expect(res.status).toBe(200);
@@ -242,7 +242,7 @@ describe("POST /api/wfm/mismatches/:id/manager-decision", () => {
 
 describe("engine hook: raiseManagerDecisionIfNeeded", () => {
   const result: any = {
-    employeeId: "emp-1", date: "2026-10-05", status: "absent", diallerMinutes: 123,
+    employeeId: "emp-1", date: "2026-10-22", status: "absent", diallerMinutes: 123,
     biometricMinutes: 665, biometricStatus: "present", managerDecisionRequired: true,
   };
 
@@ -276,13 +276,13 @@ describe("raiseDecisionsForBulkRows", () => {
   it("raises for an uploaded absent / half day that COSEC qualifies above, and skips the rest", async () => {
     stubDb({ manager: { id: "m", user_id: "u", name: "B" } });
     engineMock.getBiometricEvidence.mockImplementation(async (_e: string, date: string) => ({
-      minutes: date === "2026-10-05" ? 665 : date === "2026-10-06" ? 100 : 600,
+      minutes: date === "2026-10-22" ? 665 : date === "2026-10-23" ? 100 : 600,
       sourceSystem: "wfm_attendance_session", sourceReference: null,
     }));
     const counts = await raiseDecisionsForBulkRows([
-      { employeeId: "emp-1", date: "2026-10-05", status: "absent", aprMinutes: 123 },   // COSEC present -> raise
-      { employeeId: "emp-1", date: "2026-10-06", status: "absent", aprMinutes: 133 },   // COSEC 100 = absent -> no
-      { employeeId: "emp-1", date: "2026-10-07", status: "present", aprMinutes: 500 },  // APR present -> not a candidate
+      { employeeId: "emp-1", date: "2026-10-22", status: "absent", aprMinutes: 123 },   // COSEC present -> raise
+      { employeeId: "emp-1", date: "2026-10-23", status: "absent", aprMinutes: 133 },   // COSEC 100 = absent -> no
+      { employeeId: "emp-1", date: "2026-10-24", status: "present", aprMinutes: 500 },  // APR present -> not a candidate
     ]);
     expect(counts.raised).toBe(1);
     expect(counts.not_needed).toBe(1);
@@ -291,5 +291,55 @@ describe("raiseDecisionsForBulkRows", () => {
     expect(upd!.sql).toMatch(/mismatch_flag = 1/);
     expect(upd!.sql).not.toMatch(/attendance_status\s*=\s*\?,/);
     expect(upd!.params.slice(0, 3)).toEqual([665, "present", "absent"]);
+  });
+});
+
+describe("rollout cutover — new days only (APR_COSEC_MANAGER_DECISION_FROM, default 2026-10-18)", () => {
+  it("defaults to 2026-10-18 and accepts a valid env override, refusing a malformed one", async () => {
+    const { aprCosecManagerDecisionFrom, managerDecisionApplies } = await import("../apr-cosec-cutover.js");
+    const prev = process.env.APR_COSEC_MANAGER_DECISION_FROM;
+    try {
+      delete process.env.APR_COSEC_MANAGER_DECISION_FROM;
+      expect(aprCosecManagerDecisionFrom()).toBe("2026-10-18");
+      expect(managerDecisionApplies("2026-10-17")).toBe(false);
+      expect(managerDecisionApplies("2026-10-18")).toBe(true);
+      process.env.APR_COSEC_MANAGER_DECISION_FROM = "2026-11-01";
+      expect(managerDecisionApplies("2026-10-25")).toBe(false);
+      expect(managerDecisionApplies("2026-11-01")).toBe(true);
+      process.env.APR_COSEC_MANAGER_DECISION_FROM = "1/11/2026";
+      expect(aprCosecManagerDecisionFrom()).toBe("2026-10-18");
+    } finally {
+      if (prev === undefined) delete process.env.APR_COSEC_MANAGER_DECISION_FROM;
+      else process.env.APR_COSEC_MANAGER_DECISION_FROM = prev;
+    }
+  });
+
+  it("raises no manager item for a day before the cutover", async () => {
+    stubDb({ manager: { id: "m", user_id: "u", name: "B" } });
+    await expect(raiseAprCosecDecision({ ...raiseInput, recordDate: "2026-10-05" })).resolves.toBe("not_needed");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("APR bulk upload: pre-cutover rows are not even read against COSEC", async () => {
+    stubDb({ manager: { id: "m", user_id: "u", name: "B" } });
+    engineMock.getBiometricEvidence.mockResolvedValue({ minutes: 665, sourceSystem: "wfm_attendance_session", sourceReference: null });
+    const counts = await raiseDecisionsForBulkRows([
+      { employeeId: "emp-1", date: "2026-10-05", status: "absent", aprMinutes: 123 },
+      { employeeId: "emp-1", date: "2026-10-17", status: "half_day", aprMinutes: 300 },
+      { employeeId: "emp-1", date: "2026-10-18", status: "absent", aprMinutes: 10 },
+    ]);
+    expect(counts.raised).toBe(1);
+    expect(engineMock.getBiometricEvidence).toHaveBeenCalledTimes(1);
+    expect(engineMock.getBiometricEvidence).toHaveBeenCalledWith("emp-1", "2026-10-18");
+  });
+
+  it("engine hook: a pre-cutover bulk-locked day raises nothing", async () => {
+    stubDb({ manager: { id: "m", user_id: "u", name: "B" } });
+    const bulkRow = { id: "adr-9", is_locked: 1, attendance_status: "absent", source_system: "apr_bulk", override_by: null, regularization_id: null, dialler_minutes: 123 };
+    await attendanceEngineService.raiseManagerDecisionIfNeeded(
+      { employeeId: "emp-1", date: "2026-10-05", status: "absent", biometricMinutes: 665, biometricStatus: "present", managerDecisionRequired: false } as any,
+      bulkRow as any,
+    );
+    expect(calls).toHaveLength(0);
   });
 });

@@ -84,9 +84,12 @@ describe("attendance logic resolution", () => {
       expect(ENGINE).toMatch(/employeeId\?: string \| null\s*\): Promise<boolean> \{\s*const override = employeeId/);
     });
 
-    it("no APR logic builds the day from COSEC any more — the reporting manager decides (2026-10-17)", () => {
-      expect(ENGINE).not.toMatch(/attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr/);
+    it("before the cutover APR+COSEC builds the day from COSEC (plain APR never does); from the cutover the manager decides", () => {
+      // pre-cutover: the 2026-10-05 rescue, keyed to apr_validated_by_cosec only
+      expect(ENGINE).toMatch(/!managerDecidesThisDay\s*&& attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr\s*&& biometricMinutes > 0/);
       expect(ENGINE).not.toMatch(/attendanceLogic === 'apr'\s*&& classifyAsApr\s*&& biometricMinutes > 0/);
+      // from the cutover: APR kept, manager decision raised after the write
+      expect(ENGINE).toMatch(/if \(managerDecidesThisDay\s*&& classifyAsApr/);
       expect(ENGINE).toMatch(/raiseManagerDecisionIfNeeded\(result, written\)/);
     });
 

@@ -21,6 +21,7 @@ import { db } from '../../db/mysql.js';
 import { logger } from '../../logger.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { ESCALATION_DUE_DAYS, managerOf } from './mismatch-escalation.service.js';
+import { managerDecisionApplies } from './apr-cosec-cutover.js';
 
 export const APR_COSEC_ROLE = 'system:apr_cosec';
 export const APR_COSEC_INBOX_ENTITY = 'attendance_apr_cosec_decision';
@@ -103,6 +104,7 @@ export type RaiseOutcome = 'raised' | 'exists' | 'already_escalated' | 'no_manag
  */
 export async function raiseAprCosecDecision(input: RaiseInput): Promise<RaiseOutcome> {
   try {
+    if (!managerDecisionApplies(input.recordDate)) return 'not_needed';
     if (!cosecBeatsApr(input.currentStatus, input.biometricStatus, input.biometricMinutes)) return 'not_needed';
 
     const [existing] = await db.execute<RowDataPacket[]>(
@@ -302,7 +304,8 @@ export async function raiseDecisionsForBulkRows(rows: BulkRow[]): Promise<Record
   const counts: Record<RaiseOutcome, number> = {
     raised: 0, exists: 0, already_escalated: 0, no_manager: 0, not_needed: 0, unavailable: 0,
   };
-  const candidates = rows.filter((r) => r.status === 'absent' || r.status === 'half_day');
+  // Rollout "new days only": an uploaded day before the cutover raises nothing.
+  const candidates = rows.filter((r) => (r.status === 'absent' || r.status === 'half_day') && managerDecisionApplies(r.date));
   if (candidates.length === 0) return counts;
 
   const engine = await import('./attendance-engine.service.js');
