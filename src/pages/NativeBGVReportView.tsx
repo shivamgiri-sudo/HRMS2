@@ -880,7 +880,9 @@ export default function NativeBGVReportView() {
                       {v.submitted_at && (
                         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 mb-2">
                           <span><strong>Submitted:</strong> {formatISTDate(new Date(v.submitted_at))} {formatISTTime(new Date(v.submitted_at))}</span>
-                          {v.gps_distance_m !== null && <span><strong>GPS Distance:</strong> {Number(v.gps_distance_m).toFixed(1)} m from declared address</span>}
+                          {v.gps_distance_m !== null && (v.assessment?.referencePrecision && v.assessment.referencePrecision !== 'address'
+                            ? <span><strong>GPS Distance (approx.):</strong> {Number(v.gps_distance_m) < 1000 ? `${Math.round(Number(v.gps_distance_m))} m` : `${(Number(v.gps_distance_m) / 1000).toFixed(1)} km`} from the {v.assessment.referencePrecision === 'pincode_centre' ? 'pincode' : 'city'} centre, not the house</span>
+                            : <span><strong>GPS Distance:</strong> {Number(v.gps_distance_m).toFixed(1)} m from declared address</span>)}
                           {v.gps_latitude && <span><strong>Coordinates:</strong> <a href={`https://maps.google.com/?q=${v.gps_latitude},${v.gps_longitude}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">{Number(v.gps_latitude).toFixed(5)}, {Number(v.gps_longitude).toFixed(5)}</a></span>}
                           {v.gps_accuracy_m && <span><strong>GPS Accuracy:</strong> ±{Number(v.gps_accuracy_m).toFixed(0)} m</span>}
                         </div>

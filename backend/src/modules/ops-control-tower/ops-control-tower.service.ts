@@ -1015,9 +1015,12 @@ export async function getBgvPendingDetail(
 // declared address' reference point (a pincode centre, so it practically never does) and otherwise sits at
 // status 'submitted' until HR decides pass / fail / review on that candidate's BGV report page. There was no list of
 // those waiting cases anywhere: live 2026-10-05, 33 submissions (up to 17 days old), 0 ever decided. This block is
-// that list. Not nudgeable: the open action is HR's, not the joiner's. A candidate with a verified attempt is done.
+// that list. Not nudgeable: the open action is HR's, not the joiner's. A candidate with a verified attempt is done,
+// and so is one whose BGV report address check HR already decided (passed / failed) on the report form - that path
+// never touches the selfie row (live 2026-10-17: 2 candidates resolved 'passed' there were still listed).
 const ADDRESS_REVIEW_WHERE = `v.status = 'submitted' AND (v.hr_decision IS NULL OR v.hr_decision = 'review')
-        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification vv WHERE vv.candidate_id = v.candidate_id AND vv.status = 'verified')`;
+        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification vv WHERE vv.candidate_id = v.candidate_id AND vv.status = 'verified')
+        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_report rr WHERE rr.candidate_id = v.candidate_id AND rr.address_status IN ('passed','failed'))`;
 
 export async function getAddressReviewPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
@@ -1071,7 +1074,7 @@ export async function getAddressReviewPendingDetail(
       );
       status = a.reasons.join(" · ");
     } catch {
-      status = r.gps_distance_m === null ? "No GPS captured" : `${Math.round(Number(r.gps_distance_m))} m from declared address`;
+      status = r.gps_distance_m === null ? "No GPS captured" : "GPS captured (distance is from the pincode centre, not the house)";
     }
     out.push({
       employeeId: id,
