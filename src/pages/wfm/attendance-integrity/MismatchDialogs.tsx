@@ -202,6 +202,8 @@ export function RespondDialog({ record, onClose, onDone }: DialogProps) {
   useEffect(() => { setStatus(""); setNote(""); }, [record]);
   if (!record) return null;
   const choices = sourceChoices(record);
+  // System-raised for an APR employee (owner ruling 2026-10-17): the manager decides the day.
+  const isDecision = record.escalation?.escalated_by_role === "system:apr_cosec";
 
   async function send() {
     if (!record || !status || !note.trim()) return;
@@ -212,7 +214,7 @@ export function RespondDialog({ record, onClose, onDone }: DialogProps) {
         { recommended_status: status, note: note.trim() },
       );
       if (!res.success) throw new Error(res.message ?? "Failed to send response");
-      toast({ title: "Recommendation sent to WFM" });
+      toast({ title: isDecision ? "Attendance updated" : "Recommendation sent to WFM" });
       onDone();
     } catch (err) {
       toast({ title: errorText(err, "Failed to send response"), variant: "destructive" });
@@ -225,7 +227,7 @@ export function RespondDialog({ record, onClose, onDone }: DialogProps) {
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Your recommendation</DialogTitle>
+          <DialogTitle>{isDecision ? "Your decision" : "Your recommendation"}</DialogTitle>
           <DialogDescription asChild><div><RecordHeader record={record} /></div></DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-1">

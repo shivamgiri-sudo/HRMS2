@@ -493,6 +493,19 @@ function FullRecordDetail({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+// Reporting-manager decision on an APR vs COSEC day (owner ruling 2026-10-17). Raised by
+// backend apr-cosec-manager-decision.service.ts; decided through /api/wfm/mismatches/:id/manager-decision.
+const APR_COSEC_DECISION_ENTITY = "attendance_apr_cosec_decision";
+const APR_COSEC_CHOICES = [
+  { status: "present", label: "Present" },
+  { status: "half_day", label: "Half day" },
+  { status: "absent", label: "Absent" },
+] as const;
+/** Items whose decision was already written server-side — completeTask only does the bookkeeping. */
+const decidedAprCosecItems = new Set<string>();
+const isAprCosecDecision = (t: PendingTask | null | undefined) =>
+  t?.source === "inbox" && t?.entity_type === APR_COSEC_DECISION_ENTITY;
+
 function ActionSheet({
   task,
   onClose,
@@ -517,6 +530,7 @@ function ActionSheet({
   const [awolLastWorkedDate, setAwolLastWorkedDate] = useState("");
   const [awolLoading, setAwolLoading] = useState(false);
   const [awolActing, setAwolActing] = useState<"confirm" | "reject" | null>(null);
+  const [aprCosecActing, setAprCosecActing] = useState<string | null>(null);
 
   useEffect(() => {
     setRemarks("");
@@ -593,6 +607,27 @@ function ActionSheet({
       });
     } finally {
       setAwolActing(null);
+    }
+  };
+
+  const handleAprCosecDecision = async (status: string) => {
+    if (!task?.entity_id) return;
+    setAprCosecActing(status);
+    try {
+      await hrmsApi.post(`/api/wfm/mismatches/${task.entity_id}/manager-decision`, {
+        status,
+        note: remarks || undefined,
+      });
+      decidedAprCosecItems.add(task.id);
+      await onComplete(task.id, remarks);
+      setRemarks("");
+      onClose();
+    } catch (err) {
+      import("sonner").then(({ toast }) => {
+        toast.error(err instanceof Error ? err.message : "Could not save the attendance decision.");
+      });
+    } finally {
+      setAprCosecActing(null);
     }
   };
 
@@ -783,6 +818,22 @@ function ActionSheet({
                     Confirm Absconding
                   </Button>
                 </div>
+              </div>
+            ) : isAprCosecDecision(task) ? (
+              <div className="flex w-full gap-2">
+                {APR_COSEC_CHOICES.map((c) => (
+                  <Button
+                    key={c.status}
+                    size="sm"
+                    onClick={() => void handleAprCosecDecision(c.status)}
+                    disabled={aprCosecActing !== null}
+                    variant={c.status === "present" ? "default" : "outline"}
+                    className="flex-1 gap-1.5"
+                  >
+                    {aprCosecActing === c.status ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    {c.label}
+                  </Button>
+                ))}
               </div>
             ) : task.source === "derived" ? (
               <>
@@ -1384,6 +1435,11 @@ export default function NativeWorkInbox() {
         await hrmsApi.post(`/api/work-inbox/${id}/complete`, { remarks: remarks || undefined });
       } else if (task.source === "derived") {
         throw new Error("This item has no generic completion action — use Approve/Reject instead.");
+      } else if (isAprCosecDecision(task)) {
+        // Decided server-side by /manager-decision, which also closes this inbox item.
+        if (!decidedAprCosecItems.delete(id)) {
+          throw new Error("Open this item and choose Present, Half day or Absent for the day.");
+        }
       } else {
         await hrmsApi.patch(`/api/inbox/${id}/actioned`, {});
       }

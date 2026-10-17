@@ -14,6 +14,8 @@ export type EscalationInfo = {
   escalated_to_code: string | null;
   is_overdue: boolean;
   can_respond: boolean;
+  /** 'system:apr_cosec' = raised automatically for an APR employee; the manager's answer is final. */
+  escalated_by_role?: string | null;
 };
 
 export type MismatchRecord = {

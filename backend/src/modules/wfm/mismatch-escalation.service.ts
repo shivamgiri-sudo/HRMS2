@@ -72,7 +72,7 @@ export async function attachEscalations<T extends RowDataPacket>(rows: T[], view
     const [esc] = await db.execute<RowDataPacket[]>(
       `SELECT x.id, x.adr_id, x.level, x.status, x.due_at, x.escalation_note,
               x.recommended_status, x.recommendation_note, x.responded_at, x.created_at,
-              x.escalated_to_user_id, x.escalated_by_user_id,
+              x.escalated_to_user_id, x.escalated_by_user_id, x.escalated_by_role,
               (x.status = 'pending' AND x.due_at < NOW()) AS is_overdue,
               CONCAT(m.first_name, ' ', COALESCE(m.last_name, '')) AS escalated_to_name,
               m.employee_code AS escalated_to_code
@@ -123,7 +123,7 @@ export async function escalationHistory(adrId: string) {
 
 type ManagerRef = { employeeId: string; userId: string; name: string };
 
-async function managerOf(employeeId: string): Promise<ManagerRef | null> {
+export async function managerOf(employeeId: string): Promise<ManagerRef | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.user_id, CONCAT(m.first_name, ' ', COALESCE(m.last_name, '')) AS name
        FROM employees e
@@ -278,6 +278,10 @@ export async function closeEscalations(adrId: string, _employeeId: string): Prom
   try {
     const { inboxService } = await import('../inbox/inbox.service.js');
     await inboxService.resolveItems({ entity_type: INBOX_ENTITY, entity_id: adrId });
+    // The reporting-manager decision item raised for APR staff (apr-cosec-manager-decision.service.ts,
+    // APR_COSEC_INBOX_ENTITY) — WFM resolving the day answers it too. Literal, not imported, to keep
+    // the two modules free of an import cycle.
+    await inboxService.resolveItems({ entity_type: 'attendance_apr_cosec_decision', entity_id: adrId });
   } catch {
     // best effort — resolution itself already succeeded
   }

@@ -5,6 +5,7 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { loadEmploymentWindows, isWithinWindows, outsideEmploymentReason } from '../../shared/employmentWindow.js';
 import { db } from '../../db/mysql.js';
+import { logger } from '../../logger.js';
 import type { RowDataPacket } from 'mysql2';
 import { isOperationsExecutiveByRegex as isOperationsExecutive, classifyOperationsNetLogin, resolveHalfDayFloorMinutes } from './attendance-engine.service.js';
 import {
@@ -812,6 +813,24 @@ router.post(
           );
         }
       }
+    }
+
+    // Owner ruling 2026-10-17: a saved APR day that COSEC would credit with more is sent to the
+    // employee's reporting manager to decide (apr-cosec-manager-decision.service.ts). The upload's
+    // own verdict is unchanged. Runs after the response — it reads COSEC per row — and never throws.
+    const decisionRows = succeededInsertRows.map((c) => ({
+      employeeId: String(c.params![0]),
+      date: c.attendance_date,
+      status: String(c.params![6]),
+      aprMinutes: c.net_login_minutes,
+    }));
+    if (decisionRows.length > 0) {
+      setImmediate(() => {
+        import('./apr-cosec-manager-decision.service.js')
+          .then(({ raiseDecisionsForBulkRows }) => raiseDecisionsForBulkRows(decisionRows))
+          .then((counts) => logger.info({ counts }, '[apr-bulk] APR/COSEC manager decisions'))
+          .catch((err) => logger.warn({ err: (err as Error).message }, '[apr-bulk] APR/COSEC manager decisions failed'));
+      });
     }
 
     return res.json({

@@ -50,12 +50,12 @@ describe("APR-only judgement is scoped to the covered population", () => {
   // change in either direction has to be made deliberately.
   it("has no biometric fallback for an APR employee whose feed is silent", () => {
     expect(ENGINE).not.toContain("if (rawMinutes === 0 && biometricMinutes > 0");
-    // Plain 'apr' never falls back. Under apr_validated_by_cosec biometric builds the day when APR
-    // is short OR silent (owner ruling 2026-10-05), so the guard no longer requires rawMinutes > 0.
-    expect(ENGINE).toMatch(
-      /attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr\s*&& biometricMinutes > 0\s*&& statusRank/,
-    );
-    expect(ENGINE).not.toMatch(/attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr\s*&& rawMinutes > 0/);
+    // SUPERSEDED 2026-10-17: the apr_validated_by_cosec COSEC rescue (2026-10-05) is gone. No APR
+    // logic re-classifies a day on biometric any more; where COSEC would credit more, the APR status
+    // stands and the reporting manager decides (apr-cosec-manager-decision.service.ts).
+    expect(ENGINE).not.toMatch(/attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr/);
+    expect(ENGINE).not.toMatch(/classifyAsApr = false;/);
+    expect(ENGINE).toMatch(/managerDecisionRequired: classifyAsApr\s*&& biometricMinutes > 0/);
   });
 
   it("sends an APR employee's empty day to the classifier, not the review queue", () => {
@@ -67,10 +67,9 @@ describe("APR-only judgement is scoped to the covered population", () => {
     expect(ENGINE).not.toContain("if (rawMinutes === 0 && !(");
   });
 
-  it("leaves the uncovered population on the fallback", () => {
-    // The fallback block must still exist — removing it outright is the change
-    // that takes 461 people to zero paid days.
-    expect(ENGINE).toMatch(/classifyAsApr = false;/);
+  it("keeps the biometric fallback rule for people who are not APR-judged", () => {
+    // The APR -> biometric switch for APR staff was removed by the 2026-10-17 ruling (manager
+    // decides instead); the biometric default rule for everyone else must still exist.
     expect(ENGINE).toMatch(/attendance_source: 'biometric', full_day_minutes: 540/);
   });
 

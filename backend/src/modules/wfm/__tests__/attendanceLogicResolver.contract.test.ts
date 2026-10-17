@@ -84,10 +84,10 @@ describe("attendance logic resolution", () => {
       expect(ENGINE).toMatch(/employeeId\?: string \| null\s*\): Promise<boolean> \{\s*const override = employeeId/);
     });
 
-    it("APR+COSEC builds the day from COSEC when APR has no record; plain APR still does not", () => {
-      expect(ENGINE).toMatch(/attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr\s*&& biometricMinutes > 0/);
-      // the rescue is keyed to the apr_validated_by_cosec logic only
+    it("no APR logic builds the day from COSEC any more — the reporting manager decides (2026-10-17)", () => {
+      expect(ENGINE).not.toMatch(/attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr/);
       expect(ENGINE).not.toMatch(/attendanceLogic === 'apr'\s*&& classifyAsApr\s*&& biometricMinutes > 0/);
+      expect(ENGINE).toMatch(/raiseManagerDecisionIfNeeded\(result, written\)/);
     });
 
     it("the override table is one additive CREATE TABLE IF NOT EXISTS", () => {
