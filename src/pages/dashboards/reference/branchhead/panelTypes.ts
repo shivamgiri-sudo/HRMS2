@@ -1,8 +1,30 @@
 /** Shapes of the enriched overview sections (built field by field in backend overview.ts). */
+export interface PersonRef { name: string; code?: string; process?: string }
+export interface AbsenceData {
+  /** All flagged people; rows are capped at 10 as in the email. */
+  total: number;
+  /** Consecutive rostered working days with no punch that earn a flag (3). */
+  days: number | string;
+  rows: Array<{ name: string; code: string; process: string; manager: string }>;
+}
 export interface PeopleData {
   totalActive: number; joinedToday: number; leftToday: number; joinedMtd: number; leftMtd: number;
   upcomingExits: number; exitsNotClosed: number; mandateSeatsTotal: number | null;
-  byProcess: Array<{ process: string; active: number; joinedMtd: number; leftMtd: number; mandateSeats: number | null }>;
+  /** Net headcount change this month (joinedMtd - leftMtd). */
+  netMtd: number;
+  /** Left MTD / average headcount * 100, one decimal; null when the average is 0. */
+  attritionMtdPct: number | null;
+  /** Today's joiners / leavers, max 30 each (use joinedToday / leftToday for the true count). */
+  joinedNames: PersonRef[];
+  leftNames: PersonRef[];
+  /** Consecutive absence (email section 7); null when the source is unavailable. */
+  absence: AbsenceData | null;
+  byProcess: Array<{
+    process: string; active: number; joinedMtd: number; leftMtd: number; mandateSeats: number | null;
+    joinedToday: number; leftToday: number; netMtd: number; attritionMtdPct: number | null;
+    /** active - mandateSeats; null without a mandate. */
+    mandateGap: number | null;
+  }>;
   byLob: Array<{ lob: string; active: number }>;
 }
 export interface AttendanceData {
@@ -12,6 +34,10 @@ export interface AttendanceData {
   processWise: Array<{ process: string; late: number }>;
   previousDay: { shrinkagePct: number; absent: number; scheduled: number } | null;
   weekOffWorked: number;
+  /** Always the four bands in order; shift grouping identical to the email (shifts.ts). */
+  bands: Array<{ band: "Morning" | "Afternoon" | "Evening" | "Night"; planned: number; absent: number; late: number }>;
+  /** Late-marked people with no planned shift today, so late adds up to the headline. */
+  lateNotOnRoster: number;
 }
 export interface OfferWindow { offered: number; joined: number; notJoined: number; conversionPct: number | null }
 export interface HiringData {
@@ -26,10 +52,35 @@ export interface HiringData {
     clientRound: number; hold: number; otherClosed: number; open: number; noFeedback: number;
     openQueueCompleted: number; slaBreaches: number; slaTotal: number;
   } | null;
-  pendingActions: Array<{ type: string; count: number; label: string }>;
+  /** Email "Pending actions" rows: grn_pending, leave_pending, regularization_pending, exit_pending (+ any other raw type). */
+  pendingActions: Array<{
+    type: string; count: number; label: string;
+    /** Email age text, e.g. "oldest 8d · 1 over 7d"; null when the source has no age. */
+    age: string | null; oldestDays: number | null; over3Days: number | null; over7Days: number | null;
+  }>;
 }
 export interface HeadRow { head: string; budget: number; charged: number; pct: number }
+export interface RecentGrn {
+  grnNo: string | null; vendor: string | null; head: string | null; subHead: string | null;
+  amountInclGst: number; status: string; stageLabel: string;
+  /** YYYY-MM-DD, "" when unknown. */
+  raisedOn: string; ageDays: number;
+}
+export interface BudgetHistoryMonth {
+  periodCode: string; headerStatus: string | null; declared: number; used: number;
+  /** Budget after closure (closed heads count at what was used). Same number as `effective`. */
+  effective: number; afterClosure: number; usedPct: number | null;
+  headsTotal: number; headsClosed: number;
+  openRows: Array<{ head: string; subHead: string; budget: number; used: number }>;
+}
+export interface OpenSubhead { periodCode: string; head: string; subhead: string; budgetHeld: number; spent: number }
 export interface FinanceData {
+  /** Email section 3: latest GRNs excluding drafts, max 15. No requester or phone is carried (the email has neither). */
+  recentGrns: RecentGrn[];
+  /** Previous months' budget progress and closure (email section 1). */
+  history: BudgetHistoryMonth[];
+  /** Still-open (not closed) sub-heads across those months, flattened. */
+  openSubheads: OpenSubhead[];
   periodCode: string; revenueRunning: number; totalCostRunning: number; operatingProfit: number; opPct: number | null;
   budgetUtilizationPct: number;
   pnl: {
