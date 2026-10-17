@@ -13,7 +13,7 @@ describe("BranchHero", () => {
   });
   it("keeps the title white over the dashboard reference stylesheet's dark heading rule", () => {
     // role-dashboard-reference.css forces h1 to the dark ink colour with !important; the title needs a stronger important rule.
-    expect(render()).toContain("[.role-dashboard-reference_&]:!text-white");
+    expect(render()).toContain("[.role-dashboard-reference_&amp;]:!text-white");
   });
   it("is a real tablist: ten tabs, exactly one selected, roving tabindex, 44px targets", () => {
     const out = render("hiring");
