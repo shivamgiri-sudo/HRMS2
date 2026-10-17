@@ -11,11 +11,12 @@ describe("pendingItems", () => {
       report: { education: "not_run", address: "not_run" },
       addressAttempt: "submitted",
     });
-    expect(items.map((i) => i.category)).toEqual(["bank", "education", "address"]);
+    // Education is not applicable (owner decision 2026-10-17) and is never listed.
+    expect(items.map((i) => i.category)).toEqual(["bank", "address"]);
     expect(items[0].owner).toBe("payroll");
     expect(items[1].owner).toBe("hr");
-    expect(items[2].action).toMatch(/HR to decide/);
-    expect(summarisePending(items)).toMatch(/^3 pending: Bank \(/);
+    expect(items[1].action).toMatch(/HR to decide/);
+    expect(summarisePending(items)).toMatch(/^2 pending: Bank \(/);
   });
   it("DigiLocker covers Aadhaar and PAN; manual report columns count", () => {
     const items = pendingItems({

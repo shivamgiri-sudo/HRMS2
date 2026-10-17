@@ -2,8 +2,8 @@
  * What is actually holding a candidate's BGV back, in HR's words, and who has to act.
  *
  * Ops Control Tower used to show only the stored overall_status ("in_progress"), which told HR nothing:
- * the onboarding link looked finished, because the candidate-side steps were, while education / address /
- * bank review waited on HR or Payroll. This mirrors the category rules of computeAndSaveScore
+ * the onboarding link looked finished, because the candidate-side steps were, while address / bank review
+ * waited on HR or Payroll. This mirrors the category rules of computeAndSaveScore
  * (bgv-verification.service.ts) read-only: same normalisation, same precedence, same DigiLocker-covers-
  * Aadhaar+PAN rule, same manual report columns, same applicability.
  */
@@ -17,7 +17,7 @@ import {
 
 export type PendingOwner = "candidate" | "hr" | "payroll" | "vendor";
 export interface PendingItem {
-  category: "identity" | "bank" | "education" | "address" | "employment" | "criminal";
+  category: "identity" | "bank" | "address" | "employment" | "criminal";
   label: string;
   owner: PendingOwner;
   /** What to do, imperative, no commas (the drawer splits the summary on commas). */
@@ -78,12 +78,8 @@ export function pendingItems(input: PendingInput): PendingItem[] {
     });
   }
 
-  if (!clear("education")) {
-    out.push({
-      category: "education", label: "Education", failed: failed("education"), owner: "hr",
-      action: failed("education") ? "HR to review the failed education check" : "HR to verify the certificate on the BGV report",
-    });
-  }
+  // Education is not applicable (BGV_NOT_APPLICABLE_CATEGORIES, owner decision 2026-10-17): it can still be
+  // recorded on the report, but it is never listed as pending and never holds the BGV back.
 
   if (!clear("address")) {
     const a = input.addressAttempt;
@@ -111,7 +107,21 @@ export function pendingItems(input: PendingInput): PendingItem[] {
   return out;
 }
 
-/** "3 pending: Education (HR to verify the certificate on the BGV report), Address (...)". */
+/**
+ * Whether a report counts as done right now, from its per-category checks, without waiting for the stored
+ * overall_status to be recomputed (it is only rewritten when a check changes, so a rule change such as
+ * education becoming not applicable leaves old rows stale). Mirrors computeAndSaveScore: a stored 'clear' is
+ * done; a 'negative' (HR hard reject) or a locked report keeps its stored verdict; otherwise done when
+ * nothing applicable is outstanding or failed.
+ */
+export function isBgvDone(storedStatus: string | null | undefined, locked: unknown, items: PendingItem[] | undefined): boolean {
+  const s = String(storedStatus ?? "").toLowerCase();
+  if (s === "clear") return true;
+  if (s === "negative" || Number(locked) === 1) return false;
+  return items !== undefined && items.length === 0;
+}
+
+/** "2 pending: Address (HR to send the address selfie link ...), Employment (...)". */
 export function summarisePending(items: PendingItem[]): string {
   if (!items.length) return "Checks complete - overall status not refreshed yet";
   return `${items.length} pending: ${items.map((i) => `${i.label} (${i.action})`).join(", ")}`;
