@@ -138,6 +138,24 @@ export function nextIstDate(date: string): string {
   return (toIST(d) ?? d.toISOString())!.slice(0, 10);
 }
 
+/**
+ * IST minutes past midnight for a DATETIME read from MySQL, independent of the host timezone.
+ * The pool runs with timezone '+05:30' and dateStrings, so a DATETIME arrives as an IST wall-clock
+ * string ("2026-10-02 23:02:26") whose clock digits are read directly. `new Date()` on that string
+ * would parse it in the HOST timezone, which is only right on an IST host. A Date object or an
+ * ISO string carrying an offset is an absolute instant and is shifted UTC -> IST (+330 min).
+ */
+export function istMinutesOfDay(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  if (typeof value === 'string') {
+    const m = /^\d{4}-\d{2}-\d{2}[ T](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(value.trim());
+    if (m) return Number(m[1]) * 60 + Number(m[2]);
+  }
+  const d = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(d.getTime())) return null;
+  return (d.getUTCHours() * 60 + d.getUTCMinutes() + 330) % 1440;
+}
+
 export function prevIstDate(date: string): string {
   const d = new Date(`${date}T00:00:00+05:30`);
   d.setDate(d.getDate() - 1);
@@ -772,43 +790,15 @@ export const attendanceEngineService = {
       [employeeId, date]
     );
     const sessions = sessRows as any[];
-    let totalMinutes = sessions.reduce((s: number, r: any) => s + Number(r.total_login_minutes ?? 0), 0);
+    const totalMinutes = sessions.reduce((s: number, r: any) => s + Number(r.total_login_minutes ?? 0), 0);
     const sourceRef = sessions.length > 0 ? String(sessions[sessions.length - 1].id) : null;
 
-    // Night-shift cross-midnight merge: if any session on this IST date is Partial and started
-    // after 20:00 IST, the shift continues into the next calendar day. Add those early-morning
-    // continuation minutes so the full shift is counted against the shift-start date.
-    // Feature flag: night_shift_cross_midnight_merge (default on).
-    const mergeCrossMidnight = await getFeatureFlagBool('night_shift_cross_midnight_merge', true);
-    if (mergeCrossMidnight && sessions.length > 0) {
-      const hasNightStart = sessions.some((s: any) => {
-        if (s.current_status !== 'Partial' || !s.login_time) return false;
-        const loginDate = new Date(s.login_time);
-        // Convert UTC to IST minutes-of-day (IST = UTC + 5h30m = +330 min)
-        const istMinutesOfDay = (loginDate.getUTCHours() * 60 + loginDate.getUTCMinutes() + 330) % 1440;
-        return istMinutesOfDay >= 20 * 60; // after 20:00 IST
-      });
-
-      if (hasNightStart) {
-        const nextDate = nextIstDate(date);
-        const [nextRows] = await db.execute<RowDataPacket[]>(
-          `SELECT total_login_minutes, current_status, login_time
-           FROM wfm_attendance_session
-           WHERE employee_id = ? AND session_date = ?`,
-          [employeeId, nextDate]
-        );
-        for (const s of nextRows as any[]) {
-          if (!s.login_time) continue;
-          const loginDate = new Date(s.login_time);
-          const istMinutesOfDay = (loginDate.getUTCHours() * 60 + loginDate.getUTCMinutes() + 330) % 1440;
-          // Include only early-morning sessions (before 08:00 IST) — these are the tail of the
-          // night shift that started on `date`, not a new shift that began on the next day.
-          if (istMinutesOfDay < 8 * 60) {
-            totalMinutes += Number(s.total_login_minutes ?? 0);
-          }
-        }
-      }
-    }
+    // No cross-midnight merge here. Since 2026-10-12 the COSEC sync (attributeNightShifts in
+    // cosec-sync.service.ts) writes a whole night shift - evening entry to morning exit - as ONE
+    // session on the date it started, and clears the exit-only morning it consumed. The merge that
+    // used to live here (night_shift_cross_midnight_merge, 3da09af41) also added any next-date
+    // session logged in before 08:00 IST, which counted those minutes twice: MAS57822 2026-10-02
+    // was written as 1826 min against a 505-min session. A next-date session is that date's own shift.
 
     if (totalMinutes > 0) {
       return {
@@ -1127,11 +1117,10 @@ export const attendanceEngineService = {
                  WHERE employee_id = ? AND session_date = ?`,
                 [employeeId, date]
               );
-              const firstBio: Date | null = (firstBioRow[0] as any)?.first_login ?? null;
-              // IST = UTC + 330 min. If no biometric at all, assume genuine new session.
-              const firstBioIstHour = firstBio
-                ? ((new Date(firstBio).getUTCHours() * 60 + new Date(firstBio).getUTCMinutes() + 330) % 1440) / 60
-                : 24;
+              const firstBio: unknown = (firstBioRow[0] as any)?.first_login ?? null;
+              // Host-timezone independent IST clock. If no biometric at all, assume genuine new session.
+              const firstBioIstMinutes = istMinutesOfDay(firstBio);
+              const firstBioIstHour = firstBioIstMinutes == null ? 24 : firstBioIstMinutes / 60;
               if (firstBioIstHour >= 8) {
                 actualMinutesOnWeekOff = aprCheck;
               }
