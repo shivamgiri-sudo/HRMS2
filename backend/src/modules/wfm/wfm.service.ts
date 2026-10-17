@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
-import { isEmployedOn, OUTSIDE_EMPLOYMENT_MESSAGE } from "../../shared/employmentWindow.js";
+import { employmentRefusal } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
 import { scopePredicate } from "./branch-scope.js";
@@ -611,11 +611,15 @@ export const wfmService = {
     }
 
     // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
-    if (input.status === "approved"
-        && !(await isEmployedOn(String(reg.employee_id), String(reg.session_date).slice(0, 10)))) {
-      const e: any = new Error(OUTSIDE_EMPLOYMENT_MESSAGE);
-      e.statusCode = 409;
-      throw e;
+    // The refusal names the window and the exit date on record, so an approver can tell a date after
+    // the employee left (correctly refused) from a wrong exit record (fix the exit record first).
+    if (input.status === "approved") {
+      const refusal = await employmentRefusal(String(reg.employee_id), String(reg.session_date).slice(0, 10));
+      if (refusal) {
+        const e: any = new Error(refusal);
+        e.statusCode = 409;
+        throw e;
+      }
     }
 
     const conn = await db.getConnection();

@@ -94,6 +94,22 @@ export async function isEmployedOn(employeeId: string, date: string): Promise<bo
   return windows ? isWithinWindows(String(date).slice(0, 10), windows) : true;
 }
 
+/**
+ * Null when `date` is inside the employee's employment window (or the employee is unknown, same as
+ * isEmployedOn); otherwise the specific refusal text naming the window and, for a leaver, the exit date
+ * on record. Same two reads as isEmployedOn, so callers can swap one for the other.
+ *
+ * Why: the generic OUTSIDE_EMPLOYMENT_MESSAGE told an approver nothing about WHICH bound the date
+ * crossed. Ahmedabad HR (2026-10-17) read "approval error for left employees" when the dates were simply
+ * after the employee's recorded exit date.
+ */
+export async function employmentRefusal(employeeId: string, date: string): Promise<string | null> {
+  const day = String(date).slice(0, 10);
+  const windows = (await loadEmploymentWindows([employeeId])).get(employeeId);
+  if (!windows || isWithinWindows(day, windows)) return null;
+  return outsideEmploymentReason(day, windows);
+}
+
 /** Splits (employee, date) items into those inside and outside the employment window. */
 export async function partitionByEmployment<T>(
   items: T[],

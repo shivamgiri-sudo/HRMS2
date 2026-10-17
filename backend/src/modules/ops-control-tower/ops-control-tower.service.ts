@@ -157,17 +157,43 @@ function rollupCounts(
 
 // ── 1. Attendance mismatched ────────────────────────────────────────────────────────────────
 // Source: attendance_reconciliation_issue, the same table runAttendanceMismatchBranchDigest()
-// (attendance-mismatch-branch-digest.service.ts) already reads. resolved_at IS NULL = still
-// mismatched; MAX(resolved_at) per branch = when a correction was last actually made.
+// (attendance-mismatch-branch-digest.service.ts) already reads.
+//
+// WFM report 2026-10-17 (Dinesh Mehta): the count did not match the exported list and did not move
+// after an APR upload. Three causes, all fixed here:
+//  1. The count had no date limit (July-September leftovers, 3,620 open items org-wide on 2026-10-17)
+//     while WFM works month by month. It now covers the current IST month only.
+//  2. An item only closes when the nightly audit re-checks it (last 7 days only), so an APR bulk upload
+//     or a correction that settles the day left the item open. An item is now counted only while its
+//     day is still unsettled: no locked attendance record (APR upload, approved correction or payroll
+//     freeze all lock it), and for "no attendance record" items, still no record at all.
+//  3. The drill-down (and its CSV) was capped at 200 rows, below the count for NOIDA / NOIDA-2.
+// The summary and the list share ATTENDANCE_MISMATCH_OPEN_SQL and the same month, so they cannot drift.
+export const ATTENDANCE_MISMATCH_OPEN_SQL = `(ari.resolved_at IS NULL AND NOT EXISTS (
+         SELECT 1 FROM attendance_daily_record adr
+          WHERE adr.employee_id = ari.employee_id AND adr.record_date = ari.issue_date
+            AND (adr.is_locked = 1 OR ari.issue_type = 'missing_adr')))`;
+const ATTENDANCE_MISMATCH_DETAIL_LIMIT = 5000;
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** First day of the current IST month and today (IST), as YYYY-MM-DD. */
+export function currentMonthWindowIST(nowMs = Date.now()): { from: string; to: string } {
+  const today = new Date(nowMs + IST_OFFSET_MS).toISOString().slice(0, 10);
+  return { from: `${today.slice(0, 7)}-01`, to: today };
+}
+
 export async function getAttendanceMismatchBlock(): Promise<MismatchBlock> {
   const branches = await allBranches();
+  const { from, to } = currentMonthWindowIST();
   const rows = await query<RowDataPacket>(
     "attendance-mismatch",
-    `SELECT e.branch_id, SUM(ari.resolved_at IS NULL) AS open_count, MAX(ari.resolved_at) AS last_resolved
+    `SELECT e.branch_id, SUM(CASE WHEN ${ATTENDANCE_MISMATCH_OPEN_SQL} THEN 1 ELSE 0 END) AS open_count,
+            MAX(ari.resolved_at) AS last_resolved
        FROM attendance_reconciliation_issue ari
        JOIN employees e ON e.id = ari.employee_id
-      WHERE ${ACTIVE_STAFF_ONLY}
+      WHERE ari.issue_date BETWEEN ? AND ? AND ${ACTIVE_STAFF_ONLY}
       GROUP BY e.branch_id`,
+    [from, to],
   );
   const byBranch = new Map(rows.map((r) => [String(r.branch_id), r]));
   const out = branches.map((b) => {
@@ -201,16 +227,18 @@ export interface AttendanceMismatchDetailRow {
 export async function getAttendanceMismatchDetail(
   branchId: string,
 ): Promise<AttendanceMismatchDetailRow[]> {
+  const { from, to } = currentMonthWindowIST();
   const rows = await query<RowDataPacket>(
     "attendance-mismatch-detail",
     `SELECT ari.employee_id, ari.employee_code, e.full_name, ari.issue_date, ari.issue_type,
             DATEDIFF(CURDATE(), ari.issue_date) AS days_open
        FROM attendance_reconciliation_issue ari
        JOIN employees e ON e.id = ari.employee_id
-      WHERE e.branch_id = ? AND ari.resolved_at IS NULL AND ${ACTIVE_STAFF_ONLY}
+      WHERE e.branch_id = ? AND ari.issue_date BETWEEN ? AND ?
+        AND ${ATTENDANCE_MISMATCH_OPEN_SQL} AND ${ACTIVE_STAFF_ONLY}
       ORDER BY ari.issue_date ASC
-      LIMIT 200`,
-    [branchId],
+      LIMIT ${ATTENDANCE_MISMATCH_DETAIL_LIMIT}`,
+    [branchId, from, to],
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),

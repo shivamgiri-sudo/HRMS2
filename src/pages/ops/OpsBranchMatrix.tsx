@@ -21,7 +21,7 @@ const fromBlock = (pick: (d: OpsControlTowerSummary) => CountBlock) => ({
 });
 
 export const MATRIX_COLUMNS: MatrixColumn[] = [
-  { id: "mismatch", label: "Attendance mismatch", title: "Days where the biometric machine and the HRMS attendance record do not agree (swiped in but HRMS shows 0 minutes, or no attendance record at all) and nobody has fixed it yet. Open person-days for current staff, all dates.", block: "attendance-mismatch", mediumAt: 5, highAt: 12,
+  { id: "mismatch", label: "Attendance mismatch", title: "Days where the biometric machine and the HRMS attendance record do not agree (swiped in but HRMS shows 0 minutes, or no attendance record at all) and nobody has fixed it yet. Open person-days for current staff in the current month; a day settled by an APR upload, an approved correction or the payroll freeze no longer counts.", block: "attendance-mismatch", mediumAt: 5, highAt: 12,
     count: (d, id) => d.attendanceMismatch.branches.find((b) => b.branchId === id)?.count ?? 0, total: (d) => d.attendanceMismatch.grandTotal },
   { id: "fnf", label: "F&F (leavers)", title: "Exited employees whose full-and-final settlement has not been paid.", block: "fnf-pending", mediumAt: 3, highAt: 8, ...fromBlock((d) => d.fnfPending) },
   { id: "noc", label: "NOC (leavers)", title: "Exit clearance certificates not yet issued.", block: "noc-pending", mediumAt: 2, highAt: 6, ...fromBlock((d) => d.nocPending) },

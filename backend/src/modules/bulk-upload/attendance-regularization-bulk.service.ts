@@ -24,6 +24,7 @@ import {
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 import { withBulkLockRetry } from "./lock-retry.js";
 import { sendSMS } from "../communication/sms.helper.js";
+import { loadEmploymentWindows, isWithinWindows, outsideEmploymentReason } from "../../shared/employmentWindow.js";
 
 export const ENTITY_TYPE = "attendance_regularization";
 
@@ -146,13 +147,35 @@ export async function importRegularizationBatch(
     toStage.push(row);
   }
 
+  // A date outside the employee's employment window (before the salary start date, after the exit
+  // date) can never be approved: reviewRegularization refuses it at the final stage. Refuse it here,
+  // with the window and exit date in the message, instead of letting it travel through the approval
+  // stages first. Live 2026-10-17: 16 Ahmedabad rows for a leaver (exit 2026-09-07) dated 15-30 Sep
+  // sat at payroll_pending, and the final approval reported only a generic "outside employment period".
+  const windowsByEmployee = await loadEmploymentWindows(
+    toStage.map((row) => employees.get((row.data.employee_code ?? "").toUpperCase())!.id),
+  );
+  const inWindow: typeof rows = [];
+  for (const row of toStage) {
+    const d = row.data;
+    const windows = windowsByEmployee.get(employees.get((d.employee_code ?? "").toUpperCase())!.id);
+    if (windows && !isWithinWindows(d.session_date, windows)) {
+      const msg = `Row ${row.rowNo} (${d.employee_code}): ${outsideEmploymentReason(d.session_date, windows)}`;
+      errors.push(msg);
+      await markRowFailed(row.rowId, msg);
+      failed++;
+      continue;
+    }
+    inWindow.push(row);
+  }
+
   // Group by employee so consecutive dates for the same person stay serial (they
   // share a row in attendance_regularization keyed on employee+date, so two parallel
   // inserts for the same employee would race). Different employees touch disjoint rows
   // and run concurrently, bounded by BULK_ROW_CONCURRENCY. This is the same grouping
   // applyRegularizationBatch uses — import now matches apply.
   const byEmployee = new Map<string, typeof rows>();
-  for (const row of toStage) {
+  for (const row of inWindow) {
     const key = (row.data.employee_code ?? "").toUpperCase();
     if (!byEmployee.has(key)) byEmployee.set(key, []);
     byEmployee.get(key)!.push(row);

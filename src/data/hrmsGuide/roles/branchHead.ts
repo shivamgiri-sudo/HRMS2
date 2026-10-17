@@ -288,7 +288,7 @@ export const branchHeadGuide: RoleGuide = {
           menuPath: "Operations → Ops Control Tower",
           frequency: "daily",
           steps: [
-            { action: "In 'Attendance mismatched', read 'Mismatched' and 'Correction done — last date' for your branch.", detail: "Every unresolved mismatch is counted, with no date limit. The last date turns red when there are open issues and the last correction is more than 3 days old." },
+            { action: "In 'Attendance mismatched', read 'Mismatched' and 'Correction done — last date' for your branch.", detail: "Only the current month is counted, and a day settled by an APR upload, an approved correction or the payroll freeze drops out at once. The last date turns red when there are open issues and the last correction is more than 3 days old." },
             { action: "Click the 'Mismatched' number to see each employee, the issue type and how many days it has been open." },
             { action: "Ask your branch WFM to resolve the issues in 'Workforce → Live Monitoring → Attendance Integrity' (Mismatches tab)." },
             { action: "Where the employee was actually present, make sure a regularization is raised and approved (see 'Approve attendance regularization requests')." },

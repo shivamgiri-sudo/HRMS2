@@ -43,10 +43,10 @@ describe("exported filters", () => {
 
 describe("attendance mismatch ignores people who have left", () => {
   it("summary counts only active staff", async () => {
-    expect(await sqlOf(() => svc.getAttendanceMismatchBlock())).toContain(`WHERE ${svc.ACTIVE_STAFF_ONLY}`);
+    expect(await sqlOf(() => svc.getAttendanceMismatchBlock())).toContain(`AND ${svc.ACTIVE_STAFF_ONLY}`);
   });
   it("drill-down lists only active staff", async () => {
-    expect(await sqlOf(() => svc.getAttendanceMismatchDetail(B))).toContain(`ari.resolved_at IS NULL AND ${svc.ACTIVE_STAFF_ONLY}`);
+    expect(await sqlOf(() => svc.getAttendanceMismatchDetail(B))).toContain(`${svc.ATTENDANCE_MISMATCH_OPEN_SQL} AND ${svc.ACTIVE_STAFF_ONLY}`);
   });
 });
 
