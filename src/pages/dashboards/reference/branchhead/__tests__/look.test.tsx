@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AccentCard, ChartCard, EmptyLine, GradientKpi, KPI_HUES, NavyTable, SpecTable, SubTabs, looksNumeric, waterfallData } from "../look";
+import { BarsChart, DonutChart, AccentCard, ChartCard, EmptyLine, GradientKpi, KPI_HUES, NavyTable, SpecTable, SubTabs, looksNumeric, waterfallData } from "../look";
 
 /** WCAG relative luminance contrast of white text on a hex colour. */
 function whiteContrast(hex: string): number {
@@ -71,5 +71,15 @@ describe("cards, sub-tabs and the waterfall", () => {
   it("waterfall bases float deltas from the running total and totals stand on zero", () => {
     const d = waterfallData([{ label: "Rev", value: 100, kind: "total" }, { label: "Cost", value: -30, kind: "delta" }, { label: "Back", value: 5, kind: "delta" }, { label: "OP", value: 75, kind: "total" }]);
     expect(d.map((r) => [r.base, r.total, r.down, r.up])).toEqual([[0, 100, null, null], [70, null, 30, null], [70, null, null, 5], [0, 75, null, null]]);
+  });
+});
+
+describe("charts with nothing to draw", () => {
+  it("an all-zero bar chart or donut shows an empty-state line, not a blank axis frame", () => {
+    const bars = renderToStaticMarkup(<BarsChart label="Tokens" data={[{ k: "Selected", v: 0 }, { k: "Rejected", v: 0 }]} xKey="k" series={[{ key: "v", label: "Decided", color: "#2a78d6" }]} />);
+    expect(bars).toContain("Nothing to show for this period yet");
+    expect(bars).not.toContain("bhl-chart");
+    const donut = renderToStaticMarkup(<DonutChart label="Mix" slices={[{ key: "a", label: "A", value: 0, color: "#2a78d6" }]} center="0" centerLabel="x" />);
+    expect(donut).toContain("Nothing to show for this period yet");
   });
 });

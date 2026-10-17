@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { BranchHeadHealthPayload, BranchOverview } from "../../../../../../backend/src/modules/branch-head-health/types";
-import { HeroScore, pillarRows } from "../HeroScore";
+import { HeroScore, partialScoreNote, pillarRows } from "../HeroScore";
 import * as fx from "./fixtures";
 
 type Score = BranchHeadHealthPayload["branches"][number]["score"];
@@ -85,5 +85,21 @@ describe("HeroScore", () => {
   it("offers the attention count as a button", () => {
     expect(html()).toContain("1 needs attention");
     expect(html({ ov: overview({ attention: [] }) })).not.toContain("attention");
+  });
+});
+
+describe("partial score and empty-roster comparison", () => {
+  const pillars = (scores: Array<number | null>) => ["attendance", "people", "finance", "hiring", "compliance", "quality"].map((key, i) => ({ key, weight: [25, 20, 20, 15, 10, 10][i], score: scores[i] })) as never;
+  const sc = (scores: Array<number | null>, excluded: string[] = []) => ({ score: 100, pillars: pillars(scores), excluded }) as NonNullable<Score>;
+  it("warns when under half the weight has data, and stays quiet otherwise", () => {
+    expect(partialScoreNote(sc([null, 100, null, null, 100, null], ["attendance", "finance", "hiring", "quality"]))).toContain("only 2 of 6 pillars");
+    expect(partialScoreNote(sc([70, 70, 70, 70, 70, 70]))).toBeNull();
+    expect(partialScoreNote(sc([70, 70, 70, null, null, null], ["hiring", "compliance", "quality"]))).toBeNull(); // 65% of the weight
+  });
+  it("shows the note in the hero and no 'vs yesterday' when nobody was scheduled", () => {
+    const att = { ...fx.attendance, scheduled: 0, present: 0, absent: 0, shrinkagePct: 0, previousDay: { shrinkagePct: 100, absent: 5, scheduled: 5 } };
+    const out = renderToStaticMarkup(<HeroScore branch={branch} overview={overview({ attendance: fx.ok(att) })} score={sc([null, 100, null, null, 100, null], ["attendance", "finance", "hiring", "quality"])} onOpenAttention={() => {}} />);
+    expect(out).toContain("Partial score");
+    expect(out).not.toContain("yesterday");
   });
 });
