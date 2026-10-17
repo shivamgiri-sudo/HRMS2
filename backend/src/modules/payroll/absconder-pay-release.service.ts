@@ -20,7 +20,8 @@
 import { randomUUID } from "node:crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculation.service.js";
+import { recalculateOpenPayrollForEmployee, isRunSignedOff } from "./payroll-targeted-recalculation.service.js";
+import { isRunClosed } from "./run-status.js";
 import { absconderHoldConfig, isAbsconderPayHeld } from "./absconder-hold.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { branchOnlyRoleHolders } from "./noc.notifications.js";
@@ -146,9 +147,30 @@ async function closeTasks(x: ExitRow, types: string[]) {
   await inboxService.resolveItems({ entity_type: "exit_request", entity_id: x.id, types }).catch(() => undefined);
 }
 
+/**
+ * Months (of those a release would recalculate) where the employee's every run line sits in a closed or
+ * signed-off run. A release cannot rewrite those: the days are paid through the F&F as a typed amount, with
+ * no PF or ESIC worked out on them, so HR has to file those contributions as arrears themselves.
+ */
+export async function closedMonthsForRelease(x: Pick<ExitRow, "employee_id" | "last_working_day">): Promise<string[]> {
+  const closed: string[] = [];
+  for (const month of monthsToRecalc(x.last_working_day)) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT spr.status, spr.finance_approved_at, spr.ceo_acknowledged_at, spr.validation_status
+         FROM salary_prep_run spr
+         JOIN salary_prep_line spl ON spl.run_id = spr.id AND spl.employee_id = ?
+        WHERE spr.run_month = ?`,
+      [x.employee_id, month],
+    );
+    if (rows.length > 0 && rows.every((r) => isRunClosed(r.status) || isRunSignedOff(r as Record<string, unknown>))) closed.push(month);
+  }
+  return closed;
+}
+
 export async function getHoldState(exitRequestId: string): Promise<{
   state: HoldState; held: boolean; requested: boolean; route: string | null;
   lastEvent: { action: string; reason: string | null; at: string } | null;
+  releaseImpact: { closedMonths: string[] };
 }> {
   const x = await loadExit(exitRequestId);
   const [ev] = await db.execute<RowDataPacket[]>(
@@ -163,7 +185,8 @@ export async function getHoldState(exitRequestId: string): Promise<{
   else if (x.pay_hold_requested_at) state = "hold_requested";
   else if (last?.action === "hold_request_rejected") state = "request_rejected";
   else state = "not_held";
-  return { state, held, requested: Boolean(x.pay_hold_requested_at && !x.pay_hold_at), route: x.pay_release_route, lastEvent: last };
+  const closedMonths = state === "held" ? await closedMonthsForRelease(x).catch(() => []) : [];
+  return { state, held, requested: Boolean(x.pay_hold_requested_at && !x.pay_hold_at), route: x.pay_release_route, lastEvent: last, releaseImpact: { closedMonths } };
 }
 
 /** The reporting manager asks for the salary days to be made 0. Nothing changes until Payroll HR approves. */

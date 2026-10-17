@@ -13,7 +13,10 @@ const { execute, recalc, holdCfg, isHeld, roleHolders } = vi.hoisted(() => ({
   roleHolders: vi.fn(async () => [] as string[]),
 }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../payroll-targeted-recalculation.service.js", () => ({ recalculateOpenPayrollForEmployee: recalc }));
+vi.mock("../payroll-targeted-recalculation.service.js", () => ({
+  recalculateOpenPayrollForEmployee: recalc,
+  isRunSignedOff: (r: { status?: unknown }) => String(r.status ?? "").toLowerCase() === "approved",
+}));
 vi.mock("../absconder-hold.service.js", () => ({ absconderHoldConfig: holdCfg, isAbsconderPayHeld: isHeld }));
 vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem: vi.fn(async () => undefined), resolveItems: vi.fn(async () => undefined) } }));
 vi.mock("../noc.notifications.js", () => ({ branchOnlyRoleHolders: roleHolders }));
@@ -27,20 +30,40 @@ const base = {
   exit_type: "involuntary", exit_sub_type: "absconding", status: "exited",
 };
 let exit: Record<string, unknown> = { ...base };
+let runRows: Record<string, Array<Record<string, unknown>>> = {};
 let lastEvent: { action: string; reason: string | null; created_at: string } | null = null;
 const writes: string[] = [];
 const reason = "salary withheld pending recovery of company property";
 
 beforeEach(() => {
-  execute.mockReset(); recalc.mockReset(); writes.length = 0; exit = { ...base }; lastEvent = null;
+  execute.mockReset(); recalc.mockReset(); writes.length = 0; exit = { ...base }; lastEvent = null; runRows = {};
   holdCfg.mockResolvedValue({ enabled: true }); isHeld.mockResolvedValue(false); roleHolders.mockResolvedValue([]);
   recalc.mockResolvedValue({ status: "recalculated", runId: "r1", message: "" });
-  execute.mockImplementation(async (sql: string) => {
+  execute.mockImplementation(async (sql: string, params?: string[]) => {
     const q = String(sql);
     if (q.includes("FROM exit_request er") && q.includes("JOIN employees e")) return [[exit]];
     if (q.includes("FROM absconder_pay_release_event")) return [lastEvent ? [lastEvent] : []];
+    if (q.includes("FROM salary_prep_run spr")) return [runRows[String(params?.[1] ?? "")] ?? []];
     writes.push(q);
     return [{ affectedRows: 1 }];
+  });
+});
+
+describe("release impact on closed months", () => {
+  const held = { pay_hold_requested_at: "2026-10-06", pay_hold_at: "2026-10-07" };
+  it("lists the months whose every run is closed or signed off (last worked 2026-10-05 -> checks Oct, Sep, Aug)", async () => {
+    exit = { ...base, ...held };
+    runRows = { "2026-10": [{ status: "processing" }], "2026-09": [{ status: "FINALIZED" }], "2026-08": [{ status: "approved" }, { status: "locked" }] };
+    expect((await svc.getHoldState("x1")).releaseImpact.closedMonths).toEqual(["2026-09", "2026-08"]);
+  });
+  it("a month with one open run is not closed; a month with no run line is not listed", async () => {
+    exit = { ...base, ...held };
+    runRows = { "2026-10": [{ status: "FINALIZED" }, { status: "processing" }] };
+    expect((await svc.getHoldState("x1")).releaseImpact.closedMonths).toEqual([]);
+  });
+  it("only asks while held (nothing to warn about otherwise)", async () => {
+    runRows = { "2026-10": [{ status: "FINALIZED" }] };
+    expect((await svc.getHoldState("x1")).releaseImpact.closedMonths).toEqual([]);
   });
 });
 

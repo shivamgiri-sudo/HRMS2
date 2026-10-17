@@ -14,9 +14,13 @@ export interface HoldView {
   canDecideRequest: boolean;
   canPlaceHold: boolean;
   canRelease: boolean;
+  /** Months a release cannot rewrite because their payroll run is closed or signed off. */
+  releaseImpact?: { closedMonths: string[] };
 }
 
 const BASE = "/api/payroll/absconder-pay-release";
+
+export const ARREARS_NOTE = "PF and ESIC are not worked out on a salary paid through the F&F, and the closed month's ECR stays as filed. File the contributions for these days as arrears yourself.";
 
 export const COPY: Record<HoldState, { tone: string; title: string; body: string }> = {
   not_held: {
@@ -75,8 +79,21 @@ export function AbsconderPayHoldView({
           {view.state === "released" && view.route && (
             <p className="mt-1 text-sm">{view.route === "payroll" ? "Paid through the open payroll run." : "That month's payroll had closed: the salary is paid through the F&F."}</p>
           )}
+          {view.state === "released" && view.route === "fnf" && (
+            <p role="note" className="mt-1 text-sm font-semibold">{ARREARS_NOTE}</p>
+          )}
         </div>
       </div>
+
+      {view.canRelease && (view.releaseImpact?.closedMonths.length ?? 0) > 0 && (
+        <div role="alert" className="mt-3 flex items-start gap-2 rounded-lg border border-amber-400 bg-amber-50 p-3 text-sm text-amber-950">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <p>
+            <span className="font-bold">Payroll for {view.releaseImpact!.closedMonths.join(", ")} is already closed.</span>{" "}
+            Releasing will not change that run. The days are paid through the F&F as an amount HR types in. {ARREARS_NOTE}
+          </p>
+        </div>
+      )}
 
       {anyAction && (
         <div className="mt-3">

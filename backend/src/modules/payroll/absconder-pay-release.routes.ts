@@ -96,4 +96,4 @@ post("hold", release.placeHold, () => "Salary is on hold at 0 days until you rel
 post("hold/release", release.releaseHold, (r) =>
   r?.route === "payroll"
     ? "Released. Attendance days are restored in the open payroll run."
-    : "Released. That month's payroll run is closed, so the salary is paid through the F&F.");
+    : "Released. That month's payroll run is closed, so the salary is paid through the F&F. PF and ESIC are NOT worked out on that amount: file them as arrears yourself.");

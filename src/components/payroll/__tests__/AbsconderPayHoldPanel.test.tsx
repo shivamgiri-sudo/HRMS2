@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AbsconderPayHoldView, COPY, type HoldView, type HoldState } from "../AbsconderPayHoldPanel";
+import { AbsconderPayHoldView, ARREARS_NOTE, COPY, type HoldView, type HoldState } from "../AbsconderPayHoldPanel";
 
 const none = { canRequestHold: false, canDecideRequest: false, canPlaceHold: false, canRelease: false };
 const mk = (state: HoldState, flags: Partial<HoldView> = {}, extra: Partial<HoldView> = {}): HoldView => ({
@@ -36,6 +36,25 @@ describe("states", () => {
   });
   it("has copy for every state", () => {
     for (const s of ["not_held", "hold_requested", "request_rejected", "held", "released"] as HoldState[]) expect(COPY[s].title).toBeTruthy();
+  });
+});
+
+describe("closed-month warning before release", () => {
+  it("warns Payroll HR with the months and the PF/ESIC arrears note", () => {
+    const out = html(mk("held", { canRelease: true }, { releaseImpact: { closedMonths: ["2026-09", "2026-08"] } }));
+    expect(out).toContain('role="alert"');
+    expect(out).toContain("2026-09, 2026-08");
+    expect(out).toContain("already closed");
+    expect(out).toContain("arrears");
+  });
+  it("shows no warning when nothing is closed, or to someone who cannot release", () => {
+    expect(html(mk("held", { canRelease: true }, { releaseImpact: { closedMonths: [] } }))).not.toContain('role="alert"');
+    expect(html(mk("held", {}, { releaseImpact: { closedMonths: ["2026-09"] } }))).not.toContain('role="alert"');
+  });
+  it("reminds again after a release that went through the F&F, not after one paid by payroll", () => {
+    expect(html(mk("released", {}, { route: "fnf" }))).toContain("arrears");
+    expect(html(mk("released", {}, { route: "payroll" }))).not.toContain("arrears");
+    expect(ARREARS_NOTE).toMatch(/ESIC/);
   });
 });
 

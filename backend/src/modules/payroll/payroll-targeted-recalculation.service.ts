@@ -28,6 +28,14 @@ export async function queuePayrollRecalculation(params: {
   );
 }
 
+/** A signed-off run (approved, finance/CEO sign-off or validated) is treated like a closed one by employee-level events. */
+export function isRunSignedOff(r: { status?: unknown; finance_approved_at?: unknown; ceo_acknowledged_at?: unknown; validation_status?: unknown }): boolean {
+  return String(r.status ?? "").toLowerCase() === "approved" ||
+    !!r.finance_approved_at ||
+    !!r.ceo_acknowledged_at ||
+    r.validation_status === "validated";
+}
+
 export async function recalculateOpenPayrollForEmployee(params: {
   employeeId: string;
   payrollMonth: string;
@@ -85,11 +93,7 @@ export async function recalculateOpenPayrollForEmployee(params: {
   // without this an employee-level event would silently undo a run's approval. Treat a signed-off
   // run like a closed one: queue the recalculation so the divergence is recorded, and let a human
   // recalculate deliberately (POST /runs/:id/calculate with force) if the figures must change.
-  const isSignedOff = (r: any) =>
-    String(r.status ?? "").toLowerCase() === "approved" ||
-    !!r.finance_approved_at ||
-    !!r.ceo_acknowledged_at ||
-    r.validation_status === "validated";
+  const isSignedOff = isRunSignedOff;
   const openRuns = runs.filter((r) => !isRunClosed(r.status) && !isSignedOff(r));
   const closedRuns = runs.filter((r) => isRunClosed(r.status) || isSignedOff(r));
 
