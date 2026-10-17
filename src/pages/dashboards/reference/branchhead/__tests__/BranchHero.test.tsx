@@ -11,6 +11,10 @@ describe("BranchHero", () => {
     const out = render();
     for (const t of ["Branch Head", "Branch health", "Kolkata", "Watch", "2026-10-15", "from-sky-700 via-blue-700 to-indigo-800"]) expect(out).toContain(t);
   });
+  it("keeps the title white over the dashboard reference stylesheet's dark heading rule", () => {
+    // role-dashboard-reference.css forces h1 to the dark ink colour with !important; the title needs a stronger important rule.
+    expect(render()).toContain("[.role-dashboard-reference_&]:!text-white");
+  });
   it("is a real tablist: ten tabs, exactly one selected, roving tabindex, 44px targets", () => {
     const out = render("hiring");
     expect(out).toContain('role="tablist"');

@@ -56,7 +56,7 @@ export function BranchHero({ branchName, status, date, homeFallback, tabs = BH_S
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-sm"><Building2 className="h-5 w-5" aria-hidden="true" /></span>
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-white/80">Branch Head</p>
-            <h1 className="text-lg font-bold sm:text-xl">Branch health</h1>
+            <h1 className="text-lg font-bold [.role-dashboard-reference_&]:!text-white sm:text-xl">Branch health</h1>
           </div>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-white/90">
