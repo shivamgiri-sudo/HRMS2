@@ -456,24 +456,17 @@ export async function getRunningPeopleCost(
     homeBranchExpr: "s.branch_id",
     homeProcessExpr: "s.process_id",
   });
-  // For closed months (period end ≤ today) where payroll was not finalised, gross_monthly is
-  // a better disbursement estimate than earned_salary_till_date (which is a partial-month
-  // accrual). For the current live month we keep the prorated earned amount.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ${attribution.effectiveBranchExpr} AS branch_id,
             ${attribution.effectiveProcessExpr} AS process_id,
             s.pnl_bucket,
-            SUM(CASE
-              WHEN LAST_DAY(STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d')) <= CURDATE()
-              THEN s.gross_monthly
-              ELSE s.earned_salary_till_date
-            END) AS amount,
+            SUM(s.earned_salary_till_date) AS amount,
             MAX(s.as_of_date) AS as_of_date
        FROM pnl_running_salary_snapshot s
        ${attribution.join}
       WHERE s.period_code = ?${opts.uncoveredOnly ? ` AND ${await snapshotUncoveredByRunSql("s")}` : ""}
       GROUP BY ${attribution.effectiveBranchExpr}, ${attribution.effectiveProcessExpr}, s.pnl_bucket`,
-    [periodCode, periodCode]
+    [periodCode]
   );
 
   for (const row of rows) {
