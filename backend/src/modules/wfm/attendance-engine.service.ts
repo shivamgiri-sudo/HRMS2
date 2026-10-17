@@ -1456,7 +1456,7 @@ export const attendanceEngineService = {
          source_record_date = IF(is_locked = 0, VALUES(source_record_date), source_record_date),
          source_reference   = IF(is_locked = 0, VALUES(source_reference),   source_reference),
          dialler_minutes    = IF(is_locked = 0, VALUES(dialler_minutes),    dialler_minutes),
-         biometric_minutes  = IF(is_locked = 0, VALUES(biometric_minutes),  biometric_minutes),
+         biometric_minutes  = IF(is_locked = 0, VALUES(biometric_minutes),  COALESCE(VALUES(biometric_minutes), biometric_minutes)),
          raw_minutes        = IF(is_locked = 0, VALUES(raw_minutes),        raw_minutes),
          attendance_status  = IF(is_locked = 0, VALUES(attendance_status),  attendance_status),
          biometric_status   = IF(is_locked = 0, VALUES(biometric_status),   biometric_status),
