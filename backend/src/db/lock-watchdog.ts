@@ -161,7 +161,59 @@ const BLOCKERS_SQL = `
     JOIN information_schema.innodb_trx b ON b.trx_id = w.BLOCKING_ENGINE_TRANSACTION_ID
     LEFT JOIN information_schema.PROCESSLIST pl ON pl.ID = b.trx_mysql_thread_id`;
 
-export async function readBlockers(pool: Pool): Promise<BlockerRow[]> {
+export type BlockerSource = "performance_schema" | "information_schema";
+
+interface TrxRow extends RowDataPacket {
+  thread: number; state: string; age_s: number; waited_s: number | null; rows_locked: number; rows_modified: number;
+  query: string | null; user: string | null; db: string | null; command: string | null;
+}
+
+const TRX_SQL = `
+  SELECT t.trx_mysql_thread_id AS thread, t.trx_state AS state,
+         TIMESTAMPDIFF(SECOND, t.trx_started, NOW()) AS age_s,
+         TIMESTAMPDIFF(SECOND, t.trx_wait_started, NOW()) AS waited_s,
+         t.trx_rows_locked AS rows_locked, t.trx_rows_modified AS rows_modified, LEFT(t.trx_query, 500) AS query,
+         pl.USER AS user, pl.DB AS db, pl.COMMAND AS command
+    FROM information_schema.innodb_trx t
+    LEFT JOIN information_schema.PROCESSLIST pl ON pl.ID = t.trx_mysql_thread_id`;
+
+/**
+ * Fallback for servers where the app user cannot read performance_schema.data_lock_waits (production, 2026-10-17:
+ * "SELECT command denied ... for table 'data_lock_waits'"). innodb_trx only needs PROCESS, which db-health already uses.
+ * It says who WAITS but not who they wait FOR, so the holder is inferred: a transaction that holds row locks, is not
+ * itself waiting, and started before the waiter began waiting. planActions still only kills such a holder when it is
+ * IDLE (Sleep), so an inference error can at worst end an idle connection that was holding locks for no reason.
+ */
+export function inferBlockers(trx: Array<{
+  thread: number; state: string; ageS: number; waitedS: number; rowsLocked: number; rowsModified: number;
+  query: string | null; user: string | null; db: string | null; command: string | null;
+}>): BlockerRow[] {
+  const waiters = trx.filter((t) => t.state === "LOCK WAIT" && t.waitedS > 0);
+  const waiterThreads = new Set(waiters.map((w) => w.thread));
+  const holders = trx.filter((t) => t.state !== "LOCK WAIT" && !waiterThreads.has(t.thread) && (t.rowsLocked > 0 || t.rowsModified > 0));
+  const out: BlockerRow[] = [];
+  for (const w of waiters) {
+    for (const h of holders) {
+      if (h.ageS < w.waitedS) continue; // holder began after the waiter started waiting: cannot be what it waits for
+      out.push({
+        blockerThread: h.thread, blockerUser: h.user, blockerDb: h.db, blockerCommand: h.command, blockerAgeS: h.ageS,
+        blockerState: h.state, blockerQuery: h.query, waiterThread: w.thread, waitedS: w.waitedS,
+      });
+    }
+  }
+  return out;
+}
+
+async function readBlockersInferred(pool: Pool): Promise<BlockerRow[]> {
+  const [rows] = await pool.query<TrxRow[]>(TRX_SQL);
+  return inferBlockers(rows.map((r) => ({
+    thread: Number(r.thread), state: String(r.state), ageS: Number(r.age_s ?? 0), waitedS: Number(r.waited_s ?? 0),
+    rowsLocked: Number(r.rows_locked ?? 0), rowsModified: Number(r.rows_modified ?? 0),
+    query: r.query, user: r.user, db: r.db, command: r.command,
+  })));
+}
+
+async function readBlockersPrecise(pool: Pool): Promise<BlockerRow[]> {
   const [rows] = await pool.query<RawRow[]>(BLOCKERS_SQL);
   return rows.map((r) => ({
     blockerThread: Number(r.blocker_thread), blockerUser: r.blocker_user, blockerDb: r.blocker_db,
@@ -170,19 +222,34 @@ export async function readBlockers(pool: Pool): Promise<BlockerRow[]> {
   }));
 }
 
+/** Exact answer from performance_schema when allowed, otherwise the inferred one from information_schema. */
+export async function readBlockers(pool: Pool): Promise<BlockerRow[]> {
+  return (await readBlockersWithSource(pool)).rows;
+}
+
+export async function readBlockersWithSource(pool: Pool): Promise<{ rows: BlockerRow[]; source: BlockerSource; note?: string }> {
+  try {
+    return { rows: await readBlockersPrecise(pool), source: "performance_schema" };
+  } catch (preciseErr) {
+    const note = preciseErr instanceof Error ? preciseErr.message : String(preciseErr);
+    return { rows: await readBlockersInferred(pool), source: "information_schema", note };
+  }
+}
+
 // ── runtime state ────────────────────────────────────────────────────────────
 const killLog: number[] = [];           // epoch ms of recent kills, for the hourly cap
 const alertedAt = new Map<number, number>(); // thread -> last alert, so one stuck query is not recorded every 15 s
 const ALERT_REPEAT_MS = 5 * 60_000;
 
-export interface SweepResult { actions: PlannedAction[]; error?: string }
+export interface SweepResult { actions: PlannedAction[]; error?: string; source?: BlockerSource }
 
 export async function sweepOnce(pool: Pool, cfg: WatchdogConfig = loadWatchdogConfig(), now = Date.now()): Promise<SweepResult> {
   if (cfg.mode === "off") return { actions: [] };
   while (killLog.length && now - killLog[0] > 3_600_000) killLog.shift();
   let rows: BlockerRow[];
+  let source: BlockerSource = "performance_schema";
   try {
-    rows = await readBlockers(pool);
+    ({ rows, source } = await readBlockersWithSource(pool));
   } catch (err) {
     // No access to performance_schema / information_schema on this server: report once per sweep, do nothing.
     return { actions: [], error: err instanceof Error ? err.message : String(err) };
@@ -193,6 +260,7 @@ export async function sweepOnce(pool: Pool, cfg: WatchdogConfig = loadWatchdogCo
   try {
     const ownThread = (conn as unknown as { threadId?: number }).threadId;
     const plan = planActions(rows, cfg, { ownThread, killsThisHour: killLog.length });
+    if (source === "information_schema") for (const a of plan) a.reason = `${a.reason} [inferred holder]`;
     const done: PlannedAction[] = [];
     for (const a of plan) {
       if (a.action === "alerted" && now - (alertedAt.get(a.thread) ?? 0) < ALERT_REPEAT_MS) continue;
@@ -218,7 +286,7 @@ export async function sweepOnce(pool: Pool, cfg: WatchdogConfig = loadWatchdogCo
         );
       } catch { /* table not migrated yet: the kill still happened and is logged by the caller */ }
     }
-    return { actions: done };
+    return { actions: done, source };
   } finally {
     conn.release();
   }

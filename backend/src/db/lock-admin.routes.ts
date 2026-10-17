@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "./mysql.js";
 import { peekLockConflicts } from "./lock-telemetry.js";
-import { loadWatchdogConfig, readBlockers } from "./lock-watchdog.js";
+import { loadWatchdogConfig, readBlockersWithSource } from "./lock-watchdog.js";
 
 /**
  * GET /api/admin/db/locks?hours=24
@@ -18,8 +18,13 @@ dbLocksRouter.get("/", async (req, res, next) => {
 
     let live: unknown[] = [];
     let liveError: string | null = null;
+    let liveSource: string | null = null;
+    let liveNote: string | null = null;
     try {
-      live = (await readBlockers(db as never)).map((b) => ({ ...b, blockerQuery: b.blockerQuery?.slice(0, 200) ?? null }));
+      const r = await readBlockersWithSource(db as never);
+      live = r.rows.map((b) => ({ ...b, blockerQuery: b.blockerQuery?.slice(0, 200) ?? null }));
+      liveSource = r.source;
+      liveNote = r.note ?? null;
     } catch (err) {
       liveError = err instanceof Error ? err.message : String(err);
     }
@@ -54,7 +59,7 @@ dbLocksRouter.get("/", async (req, res, next) => {
           mode: cfg.mode, idleBlockerS: cfg.idleBlockerS, killActive: cfg.killActive,
           maxKillsPerSweep: cfg.maxKillsPerSweep, maxKillsPerHour: cfg.maxKillsPerHour,
         },
-        live, liveError,
+        live, liveSource, liveNote, liveError,
         topStatements, byHour, watchdogActions,
         unflushedInThisProcess: peekLockConflicts().slice(0, 25),
       },

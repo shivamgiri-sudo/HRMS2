@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loadWatchdogConfig, planActions, type BlockerRow, type WatchdogConfig } from "../lock-watchdog.js";
 
 const cfg = (over: Partial<WatchdogConfig> = {}): WatchdogConfig => ({
@@ -84,5 +84,67 @@ describe("loadWatchdogConfig", () => {
     expect(c).toMatchObject({ mode: "observe", idleBlockerS: 9, killActive: true, activeAgeS: 180 });
     expect(loadWatchdogConfig({ DB_LOCK_WATCHDOG_MODE: "off" }).mode).toBe("off");
     expect(loadWatchdogConfig({ DB_LOCK_WATCHDOG_MODE: "bogus" }).mode).toBe("kill");
+  });
+});
+
+import { inferBlockers, readBlockersWithSource } from "../lock-watchdog.js";
+
+type Trx = Parameters<typeof inferBlockers>[0][number];
+const trx = (over: Partial<Trx> = {}): Trx => ({
+  thread: 1, state: "RUNNING", ageS: 60, waitedS: 0, rowsLocked: 0, rowsModified: 0, query: null, user: "app", db: "hrms", command: "Sleep", ...over,
+});
+
+describe("inferBlockers (no performance_schema access)", () => {
+  it("pairs a waiter with an older transaction that holds row locks", () => {
+    const rows = inferBlockers([
+      trx({ thread: 10, ageS: 50, rowsLocked: 3, rowsModified: 1 }),          // holder, idle
+      trx({ thread: 20, state: "LOCK WAIT", ageS: 20, waitedS: 18 }),         // waiter
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ blockerThread: 10, waiterThread: 20, waitedS: 18, blockerCommand: "Sleep" });
+  });
+
+  it("ignores transactions that hold nothing, and ones that started after the waiter began waiting", () => {
+    const rows = inferBlockers([
+      trx({ thread: 10, ageS: 50, rowsLocked: 0, rowsModified: 0 }),          // holds nothing
+      trx({ thread: 11, ageS: 5, rowsLocked: 4 }),                            // younger than the wait
+      trx({ thread: 20, state: "LOCK WAIT", ageS: 30, waitedS: 25 }),
+    ]);
+    expect(rows).toEqual([]);
+  });
+
+  it("never treats a waiter as a holder, and returns nothing when nobody waits", () => {
+    expect(inferBlockers([trx({ thread: 10, ageS: 50, rowsLocked: 3 })])).toEqual([]);
+    expect(inferBlockers([trx({ thread: 20, state: "LOCK WAIT", ageS: 30, waitedS: 25, rowsLocked: 2 })])).toEqual([]);
+  });
+
+  it("feeds planActions: an idle inferred holder is killed, an active one is only alerted", () => {
+    const idle = inferBlockers([trx({ thread: 10, ageS: 90, rowsLocked: 2 }), trx({ thread: 20, state: "LOCK WAIT", ageS: 40, waitedS: 20 })]);
+    expect(planActions(idle, cfg())[0].action).toBe("killed");
+    const active = inferBlockers([trx({ thread: 10, ageS: 90, rowsLocked: 2, command: "Query", query: "UPDATE t SET a=1" }), trx({ thread: 20, state: "LOCK WAIT", ageS: 40, waitedS: 20 })]);
+    expect(planActions(active, cfg())[0].action).toBe("alerted");
+  });
+});
+
+describe("readBlockersWithSource", () => {
+  it("falls back to information_schema when performance_schema is denied, and says so", async () => {
+    const denied = Object.assign(new Error("SELECT command denied to user 'app' for table 'data_lock_waits'"), { errno: 1142 });
+    const query = vi.fn()
+      .mockRejectedValueOnce(denied)
+      .mockResolvedValueOnce([[
+        { thread: 10, state: "RUNNING", age_s: 50, waited_s: null, rows_locked: 2, rows_modified: 1, query: null, user: "app", db: "hrms", command: "Sleep" },
+        { thread: 20, state: "LOCK WAIT", age_s: 20, waited_s: 18, rows_locked: 0, rows_modified: 0, query: "UPDATE t", user: "app", db: "hrms", command: "Query" },
+      ], []]);
+    const r = await readBlockersWithSource({ query } as never);
+    expect(r.source).toBe("information_schema");
+    expect(r.note).toMatch(/denied/);
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0].blockerThread).toBe(10);
+  });
+
+  it("uses the exact source when it is allowed", async () => {
+    const query = vi.fn().mockResolvedValueOnce([[], []]);
+    expect((await readBlockersWithSource({ query } as never)).source).toBe("performance_schema");
+    expect(query).toHaveBeenCalledTimes(1);
   });
 });
