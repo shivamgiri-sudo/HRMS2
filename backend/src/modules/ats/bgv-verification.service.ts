@@ -275,7 +275,21 @@ export function normalizeCheckType(checkType: string): string {
   return checkType;
 }
 
+/**
+ * BGV categories that are recorded but never required (owner decision 2026-10-17:
+ * "Yes complete without Education it is not applicable"). Education can still be
+ * verified and stored on the report, but it adds nothing to the score, a failed or
+ * missing education check does not hold the verdict back, and it is never listed
+ * as pending. Before this, 5 of 661 reports ever had education passed, so it held
+ * almost every report at 'in_progress'.
+ */
+export const BGV_NOT_APPLICABLE_CATEGORIES: readonly string[] = ["education"];
+
+/** Categories every candidate must clear besides identity (Aadhaar + PAN, or DigiLocker). */
+export const BGV_BASE_REQUIRED_CATEGORIES: readonly string[] = ["bank", "address"];
+
 // Weights per canonical check category (denominator is dynamic per candidate).
+// education keeps its entry so the table stays complete, but it is not applicable and is not scored.
 const CHECK_WEIGHTS: Record<string, number> = {
   aadhaar: 25,
   pan: 20,
@@ -286,12 +300,17 @@ const CHECK_WEIGHTS: Record<string, number> = {
   criminal: 10,
 };
 
+/** aadhaar + pan + bank + address = 70. Education is not applicable, so it is not in the denominator. */
+export const BGV_BASE_DENOMINATOR =
+  CHECK_WEIGHTS.aadhaar + CHECK_WEIGHTS.pan + CHECK_WEIGHTS.bank + CHECK_WEIGHTS.address;
+
 /**
  * Determine which checks are applicable for this candidate based on their
  * designation, department, and whether they are a fresher.
  *
  * Rules:
- * - Base (everyone): aadhaar(25) + pan(20) + bank(15) + education(10) + address(10) = 80
+ * - Base (everyone): aadhaar(25) + pan(20) + bank(15) + address(10) = 70
+ *   (education is not applicable — BGV_NOT_APPLICABLE_CATEGORIES)
  * - employment (+10): only when candidate is NOT a fresher
  * - criminal (+10): only for Finance/Accounts/Compliance/Sales & Marketing depts
  *                   OR Manager-and-above designations
@@ -337,7 +356,7 @@ export function deriveApplicableChecksFromRow(row: ApplicableChecksRow): {
   }
 
   const includeEmployment = !isFresher;
-  const denominator = 80 + (includeEmployment ? 10 : 0) + (includeCriminal ? 10 : 0);
+  const denominator = BGV_BASE_DENOMINATOR + (includeEmployment ? 10 : 0) + (includeCriminal ? 10 : 0);
 
   return { includeEmployment, includeCriminal, denominator };
 }
@@ -383,14 +402,16 @@ export type DerivedBgvStatus = "pending" | "in_progress" | "clear" | "refer";
  * the same category set and DigiLocker-covers-aadhaar+pan rule used by
  * computeAndSaveScore below, so the score and the verdict can never disagree.
  *
- * 'clear'    — every applicable category (id, bank, education, address, and
+ * 'clear'    — every applicable category (id, bank, address, and
  *              employment/criminal when applicable) is verified or waived.
+ *              Education is not applicable (BGV_NOT_APPLICABLE_CATEGORIES):
+ *              its status, even 'failed', does not affect the verdict.
  * 'refer'    — any applicable category came back mismatch/failed. Needs a
  *              human look; never auto-escalated further than that.
  * 'in_progress' — nothing has failed, but not everything applicable is clear yet.
  * 'pending'  — no checks recorded at all.
  */
-function deriveOverallStatus(
+export function deriveOverallStatus(
   bestStatus: Map<string, string>,
   digilockerClear: boolean,
   includeEmployment: boolean,
@@ -401,7 +422,7 @@ function deriveOverallStatus(
 
   if (bestStatus.size === 0) return "pending";
 
-  const requiredTypes = ["bank", "education", "address"];
+  const requiredTypes = [...BGV_BASE_REQUIRED_CATEGORIES];
   if (includeEmployment) requiredTypes.push("employment");
   if (includeCriminal) requiredTypes.push("criminal");
 
@@ -499,8 +520,7 @@ export async function computeAndSaveScore(candidateId: string): Promise<{ score:
   else if (isHalfCredit("pan"))              earned += CHECK_WEIGHTS.pan * 0.5;
   if (isClear("bank"))                       earned += CHECK_WEIGHTS.bank;            // 15
   else if (isHalfCredit("bank"))             earned += CHECK_WEIGHTS.bank * 0.5;
-  if (isClear("education"))                  earned += CHECK_WEIGHTS.education;       // 10
-  else if (isHalfCredit("education"))        earned += CHECK_WEIGHTS.education * 0.5;
+  // education: not applicable — recorded on the report, never scored.
   if (isClear("address"))                    earned += CHECK_WEIGHTS.address;         // 10
   else if (isHalfCredit("address"))          earned += CHECK_WEIGHTS.address * 0.5;
   if (includeEmployment) {

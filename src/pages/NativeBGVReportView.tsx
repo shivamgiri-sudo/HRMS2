@@ -129,7 +129,9 @@ export default function NativeBGVReportView() {
   const expText = String(experience?.working_experience ?? '').toLowerCase();
   const isFresherDerived = !expYears && (!expText || expText === 'fresher' || expText === 'no' || expText === '0');
   const includeEmployment = !isFresherDerived;
-  const denominator = 80 + (includeEmployment ? 10 : 0);
+  // Education is not applicable (owner decision 2026-10-17), so the base is
+  // aadhaar 25 + pan 20 + bank 15 + address 10 = 70, matching the backend score.
+  const denominator = 70 + (includeEmployment ? 10 : 0);
 
   type ScoreRow = { label: string; weight: number; earned: number; status: string; applicable: boolean };
   const scoreRows: ScoreRow[] = [
@@ -155,7 +157,7 @@ export default function NativeBGVReportView() {
       label: 'Education', weight: 10,
       earned: isClearCat('education') ? 10 : isHalfCat('education') ? 5 : 0,
       status: bestCheckStatus.get('education') ?? 'not_run',
-      applicable: true,
+      applicable: false,
     },
     {
       label: 'Address', weight: 10,

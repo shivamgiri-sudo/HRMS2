@@ -23,7 +23,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type Rows = Record<string, unknown>[];
 const state: {
-  employee?: Rows; issued?: Rows; bgv?: Rows; docs?: Rows; esign?: Rows; review?: Rows;
+  employee?: Rows; issued?: Rows; bgv?: Rows; docs?: Rows; esign?: Rows; review?: Rows; checks?: Rows;
 } = {};
 
 vi.mock("../../../db/mysql.js", () => ({
@@ -32,6 +32,7 @@ vi.mock("../../../db/mysql.js", () => ({
       const s = String(sql);
       if (s.includes("FROM employees e")) return [state.employee ?? []];
       if (s.includes("FROM appointment_letter_issue")) return [state.issued ?? []];
+      if (s.includes("FROM candidate_bgv_check")) return [state.checks ?? []];
       if (s.includes("FROM candidate_bgv_report")) return [state.bgv ?? []];
       if (s.includes("signed_count")) return [state.esign ?? []];
       if (s.includes("employee_joining_document_checklist")) return [state.docs ?? []];
@@ -60,6 +61,7 @@ function setup(over: Partial<typeof state> = {}) {
   state.docs = [{ mandatory_total: 6, mandatory_done: 6, pending_names: null }];
   state.esign = [{ signed_count: 1 }];
   state.review = [{ status: "approved", package_accepted: 1, salary_package_id: "pkg-1" }];
+  state.checks = [];
   Object.assign(state, over);
 }
 
@@ -73,6 +75,61 @@ describe("the happy path", () => {
     expect(r.eligible).toBe(true);
     expect(r.blockers).toEqual([]);
     expect(r.employeeCode).toBe("MAS62917");
+  });
+});
+
+describe("BGV - education not applicable (owner decision 2026-10-17)", () => {
+  // A fresher (no experience row) with identity, bank and address clear: complete without education,
+  // even though the stored overall_status is still the stale value computed under the old rule.
+  const CLEAR_CHECKS = [
+    { candidate_id: "cand-1", check_type: "digilocker", status: "verified" },
+    { candidate_id: "cand-1", check_type: "bank", status: "verified" },
+  ];
+  const report = (overall_status: string, extra: Record<string, unknown> = {}) => [{
+    candidate_id: "cand-1", overall_status, is_auto_approved: 0, locked: 0,
+    address_status: "passed", education_status: "not_run", ...extra,
+  }];
+
+  it("a stale in_progress report with every applicable check clear needs no override", async () => {
+    setup({ bgv: report("in_progress"), checks: CLEAR_CHECKS });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(r.warnings.map((w) => w.code)).not.toContain("bgv_not_clear");
+    expect(r.blockers).toEqual([]);
+    expect(r.eligible).toBe(true);
+  });
+
+  it("a stale 'refer' caused only by a failed education check is not adverse", async () => {
+    setup({ bgv: report("refer", { education_status: "failed" }), checks: CLEAR_CHECKS });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(codes(r)).not.toContain("bgv_adverse");
+    expect(r.warnings.map((w) => w.code)).not.toContain("bgv_not_clear");
+  });
+
+  it("a 'refer' from a failed bank check still blocks", async () => {
+    setup({
+      bgv: report("refer"),
+      checks: [
+        { candidate_id: "cand-1", check_type: "digilocker", status: "verified" },
+        { candidate_id: "cand-1", check_type: "bank", status: "failed" },
+      ],
+    });
+    expect(codes(await evaluateAppointmentLetterEligibility("emp-1"))).toContain("bgv_adverse");
+  });
+
+  it("address still outstanding still warns, and the warning does not mention education", async () => {
+    setup({ bgv: report("in_progress", { address_status: "not_run" }), checks: CLEAR_CHECKS });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    const w = r.warnings.find((x) => x.code === "bgv_not_clear");
+    expect(w?.reason).toContain("Address");
+    expect(w?.reason).not.toMatch(/education/i);
+  });
+
+  it("negative and locked reports keep their stored verdict", async () => {
+    setup({ bgv: report("negative"), checks: CLEAR_CHECKS });
+    expect(codes(await evaluateAppointmentLetterEligibility("emp-1"))).toContain("bgv_adverse");
+    setup({ bgv: report("in_progress", { locked: 1 }), checks: CLEAR_CHECKS });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(r.warnings.map((w) => w.code)).toContain("bgv_not_clear");
   });
 });
 

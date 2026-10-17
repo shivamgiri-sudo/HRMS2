@@ -20,10 +20,17 @@
  *                issued, to anybody, and this was the only reason.
  *
  *                The cause is upstream and not fixable from here:
- *                deriveOverallStatus() only returns 'clear' once education AND
- *                address are verified or waived, and neither has an automated
- *                provider — so unless somebody marks them by hand, which nobody
- *                does, BGV never derives to 'clear' for anyone.
+ *                deriveOverallStatus() only returned 'clear' once education AND
+ *                address were verified or waived, and neither has an automated
+ *                provider — so unless somebody marked them by hand, which nobody
+ *                did, BGV never derived to 'clear' for anyone.
+ *
+ *                Owner decision 2026-10-17: education is not applicable. The
+ *                stored overall_status of an old report is only recomputed when
+ *                a check changes, so this gate also reads the per-category
+ *                checks live (isBgvDone, the same reading Ops Control Tower
+ *                uses): a report whose applicable checks are all clear counts as
+ *                clear even before its stored verdict is refreshed.
  *
  *                Decided by the product owner on 2026-09-08: an adverse report
  *                ('refer'/'negative') and an auto-approved one still block
@@ -55,7 +62,8 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getApplicableChecks, deriveApplicableChecksFromRow, APPLICABLE_CHECKS_ROW_SQL } from "../ats/bgv-verification.service.js";
+import { getApplicableChecks, deriveApplicableChecksFromRow, APPLICABLE_CHECKS_ROW_SQL, BGV_BASE_DENOMINATOR } from "../ats/bgv-verification.service.js";
+import { getPendingItemsBatch, isBgvDone, type PendingItem } from "../ats/bgv-pending-items.js";
 import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
 
 export type EligibilityBlocker = {
@@ -134,6 +142,8 @@ export type EligibilityBatch = {
   contractSigned: Set<string>;
   bgv: Map<string, RowDataPacket>;
   applicable: Map<string, RowDataPacket | undefined>;
+  /** Live per-category pending items (bgv-pending-items.ts); absent when that lookup failed. */
+  bgvLive?: Map<string, PendingItem[]>;
   docs: Map<string, DocsRow>;
   esignSignedCount: Map<string, number>;
   salary: Map<string, SalaryRow>;
@@ -188,7 +198,7 @@ export async function loadEligibilityBatch(employeeIds: string[]): Promise<Eligi
   if (candidateIds.length > 0) {
     const candPlaceholders = candidateIds.map(() => "?").join(",");
     const [bgvRows] = await db.execute<RowDataPacket[]>(
-      `SELECT candidate_id, overall_status, is_auto_approved,
+      `SELECT candidate_id, overall_status, is_auto_approved, locked,
               aadhaar_status, pan_status, digilocker_status, bank_status,
               education_status, address_status, employment_status, criminal_status
          FROM candidate_bgv_report WHERE candidate_id IN (${candPlaceholders})`,
@@ -202,6 +212,8 @@ export async function loadEligibilityBatch(employeeIds: string[]): Promise<Eligi
       candidateIds,
     ).catch(() => [[]] as unknown as [RowDataPacket[]]);
     for (const row of applicableRows as RowDataPacket[]) empty.applicable.set(String(row.candidate_id), row);
+
+    empty.bgvLive = await getPendingItemsBatch(candidateIds).catch(() => undefined);
   }
 
   const terminalPlaceholders = TERMINAL_DOCUMENT_STATUSES.map(() => "?").join(",");
@@ -263,8 +275,9 @@ export async function loadEligibilityBatch(employeeIds: string[]): Promise<Eligi
  *
  * A category counts as done only at 'passed' or 'waived'. Everything else —
  * 'not_run', 'partial', 'failed' — is outstanding, which is the honest reading:
- * education and address have no automated provider, so they sit at 'not_run'
- * until a human marks them, and that is precisely what HR needs telling.
+ * address has no automated provider, so it sits at 'not_run' until a human
+ * marks it, and that is precisely what HR needs telling. Education is not
+ * applicable and is never listed.
  */
 async function outstandingBgvCategories(
   candidateId: string,
@@ -278,7 +291,7 @@ async function outstandingBgvCategories(
     : await getApplicableChecks(candidateId)
       // A failure here must not cost HR the blocker itself — fall back to the
       // narrower base set rather than throwing away the whole eligibility answer.
-      .catch(() => ({ includeEmployment: false, includeCriminal: false, denominator: 80 }));
+      .catch(() => ({ includeEmployment: false, includeCriminal: false, denominator: BGV_BASE_DENOMINATOR }));
 
   const done = (col: string) => {
     const v = String(report[col] ?? "").trim().toLowerCase();
@@ -291,7 +304,7 @@ async function outstandingBgvCategories(
     if (!done("pan_status")) outstanding.push("PAN");
   }
   if (!done("bank_status")) outstanding.push("bank");
-  if (!done("education_status")) outstanding.push("education");
+  // education_status: not applicable (owner decision 2026-10-17), never outstanding.
   if (!done("address_status")) outstanding.push("address");
   if (includeEmployment && !done("employment_status")) outstanding.push("employment");
   if (includeCriminal && !done("criminal_status")) outstanding.push("criminal");
@@ -378,7 +391,7 @@ export async function evaluateAppointmentLetterEligibility(
       report = batch.bgv.get(candidateId);
     } else {
       const [bgv] = await db.execute<RowDataPacket[]>(
-        `SELECT overall_status, is_auto_approved,
+        `SELECT overall_status, is_auto_approved, locked,
                 aadhaar_status, pan_status, digilocker_status, bank_status,
                 education_status, address_status, employment_status, criminal_status
            FROM candidate_bgv_report WHERE candidate_id = ? LIMIT 1`,
@@ -390,6 +403,11 @@ export async function evaluateAppointmentLetterEligibility(
       blockers.push({ code: "bgv_not_started", reason: "Background verification has not been run.", severity: "critical" });
     } else {
       const status = String(report.overall_status ?? "");
+      // Live per-category reading: undefined when the lookup failed, which leaves the stored verdict in charge.
+      const live: PendingItem[] | undefined = batch
+        ? batch.bgvLive?.get(candidateId)
+        : (await getPendingItemsBatch([candidateId]).catch(() => undefined))?.get(candidateId);
+      const liveDone = isBgvDone(status, report.locked, live);
       if (Number(report.is_auto_approved) === 1) {
         // A report auto-approved by the system is not a report anyone checked,
         // whatever status it ended up at. Checked first, and unconditionally,
@@ -399,9 +417,11 @@ export async function evaluateAppointmentLetterEligibility(
           reason: "The BGV report was auto-approved and has not been reviewed by HR.",
           severity: "critical",
         });
-      } else if (status === "refer" || status === "negative") {
+      } else if (status === "negative" || (status === "refer" && !liveDone)) {
         // An adverse finding. Never forceable: this is the one BGV outcome that
         // says something was actually found, rather than not yet looked for.
+        // A stored 'refer' whose applicable checks are all clear now (only a
+        // not-applicable category such as education had failed) is not adverse.
         blockers.push({
           code: "bgv_adverse",
           reason:
@@ -409,20 +429,21 @@ export async function evaluateAppointmentLetterEligibility(
             "issued against an adverse BGV report.",
           severity: "critical",
         });
-      } else if (status !== "clear") {
+      } else if (!liveDone) {
         // In progress, and a human is on it. Name the categories, not just the
         // verdict: "in_progress" sent HR to the BGV report to work out which of
-        // seven checks was holding the letter — and the answer is usually
-        // education or address, which have no automated provider and so sit at
-        // 'not_run' until somebody marks them by hand.
+        // seven checks was holding the letter — usually address, which has no
+        // automated provider and so sits at 'not_run' until somebody marks it.
         //
         // A warning rather than a blocker, so issuance costs HR an explicit
         // override with a recorded reason instead of being impossible.
-        const outstanding = await outstandingBgvCategories(
-          candidateId,
-          report,
-          batch ? { row: batch.applicable.get(candidateId) } : undefined,
-        );
+        const outstanding = live
+          ? live.map((i) => i.label)
+          : await outstandingBgvCategories(
+            candidateId,
+            report,
+            batch ? { row: batch.applicable.get(candidateId) } : undefined,
+          );
         warnings.push({
           code: "bgv_not_clear",
           reason:

@@ -244,7 +244,7 @@ export const MANDATORY_DOCUMENTS: MandatoryDocuments = {
   aadhaar_card: true,
   bank_proof: true,
   photo: true,
-  educational_certificates: true,
+  educational_certificates: false, // not applicable for BGV (owner decision 2026-10-17)
   address_proof: true,
   previous_employment_letters: true, // Will check if lateral hire
 };

@@ -7,7 +7,7 @@
 
 import { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
-import { getBgvRequirementsByDesignation, BgvRequirements, isLateralFromExperienceLabel, DOCUMENT_TYPE_MAPPINGS } from './bgv-config.js';
+import { getBgvRequirementsByDesignation, BgvRequirements, isLateralFromExperienceLabel, DOCUMENT_TYPE_MAPPINGS, MANDATORY_DOCUMENTS } from './bgv-config.js';
 
 export interface BgvCheck {
   check_type: string;
@@ -306,8 +306,11 @@ async function checkMandatoryDocuments(
     });
   }
 
-  // Check Educational certificates
-  if (!hasDocumentType(uploadedTypes, DOCUMENT_TYPE_MAPPINGS.educational_certificates)) {
+  // Educational certificates: not required for BGV (owner decision 2026-10-17, education is
+  // not applicable — BGV_NOT_APPLICABLE_CATEGORIES in bgv-verification.service.ts). Uploads are
+  // still collected by onboarding; their absence no longer makes BGV "not ready".
+  if (MANDATORY_DOCUMENTS.educational_certificates
+      && !hasDocumentType(uploadedTypes, DOCUMENT_TYPE_MAPPINGS.educational_certificates)) {
     blockers.push({
       check_type: 'document_education',
       reason: 'Educational certificates not uploaded',

@@ -149,7 +149,7 @@ describe("Appointment letters — the BGV blocker is specific", () => {
 
   it("names the outstanding categories in the blocker reason", () => {
     expect(eligibility).toContain("outstandingBgvCategories(");
-    expect(eligibility).toContain("candidateId,\n          report,");
+    expect(eligibility).toMatch(/outstandingBgvCategories\(\s*candidateId,\s*report,/);
     expect(eligibility).toContain("Outstanding: ${outstanding.join(\", \")}");
   });
 
@@ -171,6 +171,12 @@ describe("Appointment letters — the BGV blocker is specific", () => {
 
   it("keeps the blocker even when applicability cannot be resolved", () => {
     const fn = eligibility.slice(eligibility.indexOf("async function outstandingBgvCategories"));
-    expect(fn).toContain(".catch(() => ({ includeEmployment: false, includeCriminal: false, denominator: 80 }))");
+    expect(fn).toContain(".catch(() => ({ includeEmployment: false, includeCriminal: false, denominator: BGV_BASE_DENOMINATOR }))");
+  });
+
+  it("never names education as outstanding (owner decision 2026-10-17: not applicable)", () => {
+    const fn = eligibility.slice(eligibility.indexOf("async function outstandingBgvCategories"));
+    const body = fn.slice(0, fn.indexOf("export async function"));
+    expect(body).not.toContain('outstanding.push("education")');
   });
 });

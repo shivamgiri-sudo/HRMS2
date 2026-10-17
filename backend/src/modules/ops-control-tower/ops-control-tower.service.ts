@@ -945,40 +945,63 @@ export async function getAccountDetailsMissingDetail(
 // ── 11. BGV pending ──────────────────────────────────────────────────────────────────────────
 // candidate_bgv_report keys off candidate_id, not employee_id — ats_onboarding_bridge (already
 // used by the DigiLocker block) is the join path from employee back to candidate. Done = the
-// report exists and overall_status = 'clear'; anything else (pending/in_progress/refer/negative,
-// or no report row yet) counts as pending.
+// stored overall_status is 'clear', OR its per-category checks are clear right now (isBgvDone in
+// bgv-pending-items.ts). The stored value is only recomputed when a check changes, so without the
+// live reading a rule change (education not applicable, owner decision 2026-10-17) would leave
+// every old report listed until somebody touched it. 'negative' and locked reports keep their
+// stored verdict. No report row yet counts as pending.
 const BGV_DONE = ["clear"];
 /** HR waived BGV initiation for this joiner (live 2026-10-05: 61 of the pending list) — a deliberate exemption, not an open item. */
 const BGV_WAIVED_SQL = `NOT EXISTS (SELECT 1 FROM it_provisioning_request wb
                       WHERE wb.employee_id = e.id AND wb.request_type = 'join'
                         AND wb.task_code = 'HR_BGV_INITIATION' AND wb.status = 'waived')`;
 
+type PendingItemsModule = typeof import("../ats/bgv-pending-items.js");
+
+/**
+ * Drops rows whose checks are complete now although the stored status is stale. If the live lookup
+ * fails, every row is kept (the stored-status answer), so a lookup error can only over-report.
+ */
+async function withLiveBgvItems<T extends RowDataPacket>(
+  rows: T[],
+): Promise<{ rows: T[]; items: Map<string, import("../ats/bgv-pending-items.js").PendingItem[]>; mod: PendingItemsModule | null }> {
+  try {
+    const mod = await import("../ats/bgv-pending-items.js");
+    const items = await mod.getPendingItemsBatch(rows.map((r) => String(r.candidate_id ?? "")));
+    const open = rows.filter((r) => !mod.isBgvDone(r.overall_status, r.locked, items.get(String(r.candidate_id ?? ""))));
+    return { rows: open, items, mod };
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, "[ops-control-tower] live BGV check lookup failed; using stored status");
+    return { rows, items: new Map(), mod: null };
+  }
+}
+
 export async function getBgvPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
-  const rows = await query<RowDataPacket>(
+  const stored = await query<RowDataPacket>(
     "bgv-pending",
-    `SELECT e.branch_id, COUNT(*) AS n
+    `SELECT e.branch_id, b.candidate_id, r.overall_status, r.locked
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
        LEFT JOIN candidate_bgv_report r ON r.candidate_id = b.candidate_id
       WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (r.overall_status IS NULL OR r.overall_status NOT IN (${BGV_DONE.map(() => "?").join(",")}))
-        AND ${BGV_WAIVED_SQL}
-      GROUP BY e.branch_id`,
+        AND ${BGV_WAIVED_SQL}`,
     [NEW_JOINER_WINDOW_DAYS, ...BGV_DONE],
   );
-  return rollupCounts(
-    branches,
-    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
-  );
+  const { rows } = await withLiveBgvItems(stored);
+  const counts = new Map<string, number>();
+  for (const r of rows) counts.set(String(r.branch_id), (counts.get(String(r.branch_id)) ?? 0) + 1);
+  return rollupCounts(branches, counts);
 }
 
 export async function getBgvPendingDetail(
   branchId: string,
 ): Promise<OnboardingDetailRow[]> {
-  const rows = await query<RowDataPacket>(
+  const stored = await query<RowDataPacket>(
     "bgv-pending-detail",
     `SELECT e.id AS employee_id, e.employee_code, e.full_name, b.candidate_id, COALESCE(r.overall_status, 'pending') AS status,
+            r.overall_status, r.locked,
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
@@ -991,20 +1014,12 @@ export async function getBgvPendingDetail(
     [branchId, NEW_JOINER_WINDOW_DAYS, ...BGV_DONE],
   );
   // Say WHAT is pending and who acts, not just the stored word. Falls back to that word if the lookup fails.
-  let items = new Map<string, import("../ats/bgv-pending-items.js").PendingItem[]>();
-  let summarise: ((i: import("../ats/bgv-pending-items.js").PendingItem[]) => string) | null = null;
-  try {
-    const mod = await import("../ats/bgv-pending-items.js");
-    items = await mod.getPendingItemsBatch(rows.map((r) => String(r.candidate_id ?? "")));
-    summarise = mod.summarisePending;
-  } catch {
-    summarise = null;
-  }
+  const { rows, items, mod } = await withLiveBgvItems(stored);
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
     employeeCode: String(r.employee_code ?? ""),
     employeeName: String(r.full_name ?? ""),
-    status: summarise && items.has(String(r.candidate_id)) ? summarise(items.get(String(r.candidate_id))!) : String(r.status),
+    status: mod && items.has(String(r.candidate_id)) ? mod.summarisePending(items.get(String(r.candidate_id))!) : String(r.status),
     daysOpen: Number(r.days_open ?? 0),
   }));
 }
