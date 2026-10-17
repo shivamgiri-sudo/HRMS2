@@ -16,7 +16,8 @@
 // clock used there.
 import { abscondedWithoutExceptionSql } from "../exit/ff-settlement-gate.service.js";
 import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
-import { awaitingFinalApprovalSql, nocFinalApprovalFrom } from "../payroll/noc-final-approval.service.js";
+import { nocFinalApprovalFrom } from "../payroll/noc-final-approval.service.js";
+import { nocPendingSql } from "../payroll/noc-pending-rule.js";
 import { DIGILOCKER_EVIDENCE_SQL } from "../ats/onboarding-bridge-heal.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -156,17 +157,43 @@ function rollupCounts(
 
 // ── 1. Attendance mismatched ────────────────────────────────────────────────────────────────
 // Source: attendance_reconciliation_issue, the same table runAttendanceMismatchBranchDigest()
-// (attendance-mismatch-branch-digest.service.ts) already reads. resolved_at IS NULL = still
-// mismatched; MAX(resolved_at) per branch = when a correction was last actually made.
+// (attendance-mismatch-branch-digest.service.ts) already reads.
+//
+// WFM report 2026-10-17 (Dinesh Mehta): the count did not match the exported list and did not move
+// after an APR upload. Three causes, all fixed here:
+//  1. The count had no date limit (July-September leftovers, 3,620 open items org-wide on 2026-10-17)
+//     while WFM works month by month. It now covers the current IST month only.
+//  2. An item only closes when the nightly audit re-checks it (last 7 days only), so an APR bulk upload
+//     or a correction that settles the day left the item open. An item is now counted only while its
+//     day is still unsettled: no locked attendance record (APR upload, approved correction or payroll
+//     freeze all lock it), and for "no attendance record" items, still no record at all.
+//  3. The drill-down (and its CSV) was capped at 200 rows, below the count for NOIDA / NOIDA-2.
+// The summary and the list share ATTENDANCE_MISMATCH_OPEN_SQL and the same month, so they cannot drift.
+export const ATTENDANCE_MISMATCH_OPEN_SQL = `(ari.resolved_at IS NULL AND NOT EXISTS (
+         SELECT 1 FROM attendance_daily_record adr
+          WHERE adr.employee_id = ari.employee_id AND adr.record_date = ari.issue_date
+            AND (adr.is_locked = 1 OR ari.issue_type = 'missing_adr')))`;
+const ATTENDANCE_MISMATCH_DETAIL_LIMIT = 5000;
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** First day of the current IST month and today (IST), as YYYY-MM-DD. */
+export function currentMonthWindowIST(nowMs = Date.now()): { from: string; to: string } {
+  const today = new Date(nowMs + IST_OFFSET_MS).toISOString().slice(0, 10);
+  return { from: `${today.slice(0, 7)}-01`, to: today };
+}
+
 export async function getAttendanceMismatchBlock(): Promise<MismatchBlock> {
   const branches = await allBranches();
+  const { from, to } = currentMonthWindowIST();
   const rows = await query<RowDataPacket>(
     "attendance-mismatch",
-    `SELECT e.branch_id, SUM(ari.resolved_at IS NULL) AS open_count, MAX(ari.resolved_at) AS last_resolved
+    `SELECT e.branch_id, SUM(CASE WHEN ${ATTENDANCE_MISMATCH_OPEN_SQL} THEN 1 ELSE 0 END) AS open_count,
+            MAX(ari.resolved_at) AS last_resolved
        FROM attendance_reconciliation_issue ari
        JOIN employees e ON e.id = ari.employee_id
-      WHERE ${ACTIVE_STAFF_ONLY}
+      WHERE ari.issue_date BETWEEN ? AND ? AND ${ACTIVE_STAFF_ONLY}
       GROUP BY e.branch_id`,
+    [from, to],
   );
   const byBranch = new Map(rows.map((r) => [String(r.branch_id), r]));
   const out = branches.map((b) => {
@@ -200,16 +227,18 @@ export interface AttendanceMismatchDetailRow {
 export async function getAttendanceMismatchDetail(
   branchId: string,
 ): Promise<AttendanceMismatchDetailRow[]> {
+  const { from, to } = currentMonthWindowIST();
   const rows = await query<RowDataPacket>(
     "attendance-mismatch-detail",
     `SELECT ari.employee_id, ari.employee_code, e.full_name, ari.issue_date, ari.issue_type,
             DATEDIFF(CURDATE(), ari.issue_date) AS days_open
        FROM attendance_reconciliation_issue ari
        JOIN employees e ON e.id = ari.employee_id
-      WHERE e.branch_id = ? AND ari.resolved_at IS NULL AND ${ACTIVE_STAFF_ONLY}
+      WHERE e.branch_id = ? AND ari.issue_date BETWEEN ? AND ?
+        AND ${ATTENDANCE_MISMATCH_OPEN_SQL} AND ${ACTIVE_STAFF_ONLY}
       ORDER BY ari.issue_date ASC
-      LIMIT 200`,
-    [branchId],
+      LIMIT ${ATTENDANCE_MISMATCH_DETAIL_LIMIT}`,
+    [branchId, from, to],
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
@@ -395,26 +424,25 @@ export async function getFnfPendingDetail(
 // ── 5. NOC pending ───────────────────────────────────────────────────────────────────────────
 // noc_case.status is 'invited'/'employee_submitted'/'in_progress' while still open; 'completed',
 // 'cancelled' and 'declined' are terminal. branch_id is carried directly on the case.
-const NOC_OPEN_STATUSES = ["invited", "employee_submitted", "in_progress"];
-
+// The pending rule itself (open and workable, or completed awaiting Payroll Head final approval) lives in
+// payroll/noc-pending-rule.ts so the Exit Command Center lists exactly the people counted here.
 export async function getNocPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   // Completed cases waiting for the Payroll Head's final approval are still a pendency: F&F is
   // locked behind them. Only counted once noc_ph_final_approval_from is switched on.
-  const from = await nocFinalApprovalFrom();
-  const awaiting = from ? ` OR ${awaitingFinalApprovalSql("noc_case")}` : "";
   // An absconder cannot be worked until the Payroll Head records an F&F exception, so — like the F&F
   // count — they are not a pendency anyone can clear. Excluded from the OPEN part only; a completed NOC
   // awaiting the Payroll Head's final approval is still counted.
+  const pending = nocPendingSql("noc_case", "er", "e", await nocFinalApprovalFrom());
   const rows = await query<RowDataPacket>(
     "noc-pending",
     `SELECT noc_case.branch_id, COUNT(*) AS n
        FROM noc_case
        LEFT JOIN exit_request er ON er.id = noc_case.exit_request_id
        LEFT JOIN employees e ON e.id = noc_case.employee_id
-      WHERE (noc_case.status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")}) AND NOT ${abscondedWithoutExceptionSql("er", "e")})${awaiting}
+      WHERE ${pending.sql}
       GROUP BY noc_case.branch_id`,
-    from ? [...NOC_OPEN_STATUSES, from] : NOC_OPEN_STATUSES,
+    pending.params,
   );
   return rollupCounts(
     branches,
@@ -433,7 +461,7 @@ export interface NocDetailRow {
 export async function getNocPendingDetail(
   branchId: string,
 ): Promise<NocDetailRow[]> {
-  const from = await nocFinalApprovalFrom();
+  const pending = nocPendingSql("noc_case", "er", "e", await nocFinalApprovalFrom());
   const rows = await query<RowDataPacket>(
     "noc-pending-detail",
     `SELECT noc_case.employee_id, noc_case.employee_code, noc_case.employee_name, noc_case.status,
@@ -442,10 +470,10 @@ export async function getNocPendingDetail(
        LEFT JOIN exit_request er ON er.id = noc_case.exit_request_id
        LEFT JOIN employees e ON e.id = noc_case.employee_id
       WHERE noc_case.branch_id = ?
-        AND ((noc_case.status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")}) AND NOT ${abscondedWithoutExceptionSql("er", "e")})${from ? ` OR ${awaitingFinalApprovalSql("noc_case")}` : ""})
+        AND ${pending.sql}
       ORDER BY noc_case.initiated_at ASC
       LIMIT 200`,
-    [branchId, ...NOC_OPEN_STATUSES, ...(from ? [from] : [])],
+    [branchId, ...pending.params],
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
@@ -715,6 +743,19 @@ const PENNY_DROP_DONE = ["success", "skipped"];
  * verified evidence, yet all 208 showed as pending). Checking the log alone listed people who had verified
  * (e.g. Suhail Khan, MAS63672) under pending. Mock-provider rows are test data and do not count.
  */
+/**
+ * The penny drop ran, came back manual_review (bank name differs from the joiner's), and HR then reviewed it on the
+ * BGV report and marked the bank check verified. That decision lands only in candidate_bgv_check (the provider's
+ * candidate_bank_verification row stays manual_review and the bridge stays 'initiated'), so these joiners stayed
+ * listed as "waiting for manual bank review" after the review was done (live 2026-10-17: 5 of 35, e.g. MAS63746,
+ * reviewed "Correct" on 2026-10-13). Mock-provider rows are test data and do not count.
+ */
+export const HR_ACCEPTED_BANK_CHECK_SQL = `EXISTS (SELECT 1 FROM ats_onboarding_bridge pb4
+                       JOIN candidate_bgv_check bk ON bk.candidate_id = pb4.candidate_id
+                      WHERE pb4.employee_id = e.id
+                        AND bk.check_type = 'bank' AND bk.status = 'verified'
+                        AND LOWER(COALESCE(bk.provider_key, '')) NOT LIKE '%mock%')`;
+
 const PENNY_DROP_EVIDENCE_SQL = `(
           (latest.penny_drop_status IS NOT NULL AND latest.penny_drop_status IN (${PENNY_DROP_DONE.map((v) => `'${v}'`).join(",")}))
           OR EXISTS (SELECT 1 FROM ats_onboarding_bridge pb
@@ -726,6 +767,7 @@ const PENNY_DROP_EVIDENCE_SQL = `(
                       WHERE pb2.employee_id = e.id
                         AND LOWER(COALESCE(pv.verification_status, '')) = 'verified'
                         AND LOWER(COALESCE(pv.verification_method, '')) <> 'mock')
+          OR ${HR_ACCEPTED_BANK_CHECK_SQL}
         )`;
 
 const PENNY_DROP_LATEST_JOIN = `LEFT JOIN (
@@ -973,9 +1015,12 @@ export async function getBgvPendingDetail(
 // declared address' reference point (a pincode centre, so it practically never does) and otherwise sits at
 // status 'submitted' until HR decides pass / fail / review on that candidate's BGV report page. There was no list of
 // those waiting cases anywhere: live 2026-10-05, 33 submissions (up to 17 days old), 0 ever decided. This block is
-// that list. Not nudgeable: the open action is HR's, not the joiner's. A candidate with a verified attempt is done.
+// that list. Not nudgeable: the open action is HR's, not the joiner's. A candidate with a verified attempt is done,
+// and so is one whose BGV report address check HR already decided (passed / failed) on the report form - that path
+// never touches the selfie row (live 2026-10-17: 2 candidates resolved 'passed' there were still listed).
 const ADDRESS_REVIEW_WHERE = `v.status = 'submitted' AND (v.hr_decision IS NULL OR v.hr_decision = 'review')
-        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification vv WHERE vv.candidate_id = v.candidate_id AND vv.status = 'verified')`;
+        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification vv WHERE vv.candidate_id = v.candidate_id AND vv.status = 'verified')
+        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_report rr WHERE rr.candidate_id = v.candidate_id AND rr.address_status IN ('passed','failed'))`;
 
 export async function getAddressReviewPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
@@ -1029,7 +1074,7 @@ export async function getAddressReviewPendingDetail(
       );
       status = a.reasons.join(" · ");
     } catch {
-      status = r.gps_distance_m === null ? "No GPS captured" : `${Math.round(Number(r.gps_distance_m))} m from declared address`;
+      status = r.gps_distance_m === null ? "No GPS captured" : "GPS captured (distance is from the pincode centre, not the house)";
     }
     out.push({
       employeeId: id,

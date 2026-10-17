@@ -203,9 +203,63 @@ export function isVendorFailedStatusMappingError(error: unknown): boolean {
   return /Status mapping not found/i.test(text) && /status:\s*Failed/i.test(text);
 }
 
+/**
+ * How long a provider "Failed" answer is NOT believed. Luckpay reports "Failed" for a DigiLocker session the
+ * candidate is still completing: live, session 7f24a5a3 (2026-10-01) was polled 7 s after it started and answered
+ * "status: Failed" (BGW_001), then the same session returned the documents at 10:52 - four minutes later. Since
+ * 2026-10-02 that first "Failed" was recorded as terminal and the session was never asked again, so a candidate who
+ * finished at DigiLocker stayed failed and was told to retry (live 30 days to 2026-10-17: 40 candidates whose latest
+ * session is failed and who never received documents; 38 of the 76 "transaction id ... is not success" verdicts came
+ * under 5 minutes after the session started, while 113 of 171 successful sessions complete in under 5 minutes; one
+ * candidate retried 11 times in an hour, each session killed by its first poll). 168 of those 171 completed within
+ * 2 hours, so inside this window a "Failed" answer means "not finished yet".
+ */
+export const PROVIDER_FAILED_GRACE_MS = 2 * 60 * 60 * 1000;
+
+const seconds = (v: unknown): number | null => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * True while a provider "Failed" verdict on a session this young must be treated as still in progress.
+ * Ages are computed in SQL (TIMESTAMPDIFF against NOW()), so no host-timezone parsing is involved.
+ */
+export function isWithinFailedGrace(sessionAgeSeconds: unknown): boolean {
+  const age = seconds(sessionAgeSeconds);
+  return age !== null && age * 1000 < PROVIDER_FAILED_GRACE_MS;
+}
+
+/**
+ * A row already stored as 'failed' is re-asked only when that verdict was itself recorded inside the grace window
+ * (a premature "Failed"). Once a verdict is recorded after the window, updated_at - created_at exceeds it and the
+ * session is terminal for good, so this re-asks the provider at most once per prematurely failed session.
+ */
+export function isPrematureFailedVerdict(verdictAgeSeconds: unknown): boolean {
+  const age = seconds(verdictAgeSeconds);
+  return age !== null && age * 1000 < PROVIDER_FAILED_GRACE_MS;
+}
+
+const MIN_REPOLL_SECONDS = 20;
+
+const NOT_FINISHED_YET =
+  "DigiLocker has not confirmed completion yet. If you finished on DigiLocker, wait a minute and check again - no need to start over.";
+
+async function recordStillPending(candidateId: string, clientTransactionId: string, transactionId: string, raw: unknown) {
+  await updateProviderLog({ clientTransactionId, status: "pending", errorMessage: null });
+  await upsertDigilockerCheck({
+    candidateId, state: "pending", providerRequestId: clientTransactionId,
+    providerReferenceId: transactionId, summary: "DigiLocker: awaiting completion", raw,
+  });
+}
+
 async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutcome> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT client_transaction_id, provider_reference_id, status
+    `SELECT client_transaction_id, provider_reference_id, status,
+            TIMESTAMPDIFF(SECOND, created_at, NOW()) AS session_age_s,
+            TIMESTAMPDIFF(SECOND, created_at, updated_at) AS verdict_age_s,
+            TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS since_update_s
        FROM ats_provider_transaction_log
       WHERE candidate_id = ? AND provider = 'luckpay' AND service_type = 'digilocker'
       ORDER BY updated_at DESC, created_at DESC
@@ -230,9 +284,17 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
     return { state: "completed", clientTransactionId, transactionId, changed: false };
   }
   // Terminal: stop re-polling a session already known to have failed. A new attempt
-  // creates a new transaction row, which becomes the latest one above.
-  if (String(row.status ?? "") === "failed") {
+  // creates a new transaction row, which becomes the latest one above. Exception: a "Failed"
+  // that was recorded while the session was still inside the grace window was premature
+  // (see PROVIDER_FAILED_GRACE_MS), so it is asked again once.
+  if (String(row.status ?? "") === "failed" && !isPrematureFailedVerdict(row.verdict_age_s)) {
     return { state: "failed", clientTransactionId, transactionId, changed: false };
+  }
+  const inGrace = isWithinFailedGrace(row.session_age_s);
+  // The candidate page syncs on every focus / tab return. A session this call already found unfinished is not
+  // re-asked within a few seconds, so the grace window cannot turn into a burst of paid status calls.
+  if (String(row.status ?? "") === "pending" && inGrace && (seconds(row.since_update_s) ?? Infinity) < MIN_REPOLL_SECONDS) {
+    return { state: "pending", clientTransactionId, transactionId, message: NOT_FINISHED_YET, changed: false };
   }
 
   // Logged into the same table the BGV API monitor and cost panel read, so
@@ -246,6 +308,10 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
     );
   } catch (error) {
     if (!isVendorFailedStatusMappingError(error)) throw error;
+    if (inGrace) {
+      await recordStillPending(candidateId, clientTransactionId, transactionId, { providerStatus: "Failed", withinGrace: true });
+      return { state: "pending", providerStatus: "Failed", clientTransactionId, transactionId, message: NOT_FINISHED_YET, changed: false };
+    }
     // Record the verdict so this session is never polled again.
     const message = "DigiLocker session failed (reported by provider)";
     await updateProviderLog({ clientTransactionId, status: "failed", errorMessage: message });
@@ -265,6 +331,11 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
     errorMessage: status.state === "failed" || status.state === "expired" ? status.message : null,
     responsePayload: status.sanitized,
   });
+
+  if (status.state === "failed" && inGrace) {
+    await recordStillPending(candidateId, clientTransactionId, transactionId, status.sanitized);
+    return { state: "pending", providerStatus: status.providerStatus, clientTransactionId, transactionId, message: NOT_FINISHED_YET, changed: false };
+  }
 
   if (status.state !== "completed") {
     await updateProviderLog({

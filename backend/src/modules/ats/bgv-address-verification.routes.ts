@@ -765,8 +765,9 @@ router.post(
 
     const message = autoVerified
       ? "Address verified! Your location matched the declared address."
-      : lat !== null && distanceM !== null
-        ? `Submitted for HR review. Detected distance: ${distanceM.toFixed(1)} m from your declared address.`
+      : lat !== null && distanceM !== null && assessment
+        ? // The reference point is a pincode centre, so the raw metres are not a distance from the home.
+          `Submitted for HR review. ${assessment.reasons[0]}.`
         : "Submitted for HR review.";
 
     return res.json({ success: true, autoVerified, message });

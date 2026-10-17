@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Inbox } from "lucide-react";
 import type { BranchHeadHealthPayload } from "../../../../../backend/src/modules/branch-head-health/types";
 import type { HeadBranch } from "../../../../../backend/src/modules/branch-head-health/scope";
-import { ProcessCoveragePanel } from "./ProcessCoveragePanel";
+import { defaultDrillBranch } from "./ProcessCoveragePanel";
 import { PeopleVisual } from "./sections/PeopleVisual";
 import { AttendanceVisual } from "./sections/AttendanceVisual";
 import { AttritionVisual } from "./sections/AttritionVisual";
@@ -11,7 +11,7 @@ import { ProcessPnlVisual } from "./sections/ProcessPnlVisual";
 import { HiringVisual } from "./sections/HiringVisual";
 import { BacklogVisual } from "./sections/BacklogVisual";
 import { OpsQualityVisual } from "./sections/OpsQualityVisual";
-import { DataHealthChips } from "./sections/DataHealthChips";
+import { ProcessesTab } from "./sections/ProcessesVisual";
 import type { VisualProps } from "./sections/shared";
 import type { DrillTarget, KpiId } from "./drill";
 import { DrillHost, useDrillHost, type DrillHostApi } from "./drill/DrillHost";
@@ -21,6 +21,8 @@ import { BranchOverviewTop } from "./BranchOverviewTop";
 import { BH_SECTIONS, BranchHero, panelDomId, tabDomId } from "./BranchHero";
 import { StatusChip } from "./StatusChip";
 import { BhCard } from "./ui";
+import { downloadBranchHealthExcel } from "./excelExport";
+import { toast } from "sonner";
 
 /** Section clicks and KPI tiles of one branch overview open the drill host for that branch. */
 export function drillHandlers(open: DrillHostApi["open"], branchId: string) {
@@ -78,13 +80,17 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
   const first = data.branches[0];
   const heroName = single ? first.branch.branchName : data.branches.length === 0 ? "No branch" : `${data.branches.length} branches`;
   const showProcesses = data.branches.length > 0 || Boolean(data.processesError);
+  const onDownload = single ? () => {
+    try { downloadBranchHealthExcel(first); } catch (e) { toast.error(e instanceof Error ? e.message : "Could not build the Excel file"); }
+  } : undefined;
+  const downloadHint = single ? undefined : data.branches.length > 1 ? "Pick one branch to download its report" : undefined;
 
   return (
     <div className="space-y-4">
       <BranchHero branchName={heroName} status={single ? first.overview.status : undefined} date={first?.overview.date ?? date}
         homeFallback={data.scope.viaHomeFallback} activeTab={tab} onTabChange={setTab}
         controls={<BranchHeadControls variant="hero" options={options} selectedBranchId={selectedBranchId} onBranchChange={onBranchChange} date={date ?? first?.overview.date}
-          onDateChange={onDateChange} onRefresh={onRefresh} stale={stale} freshness={freshnessText(data.generatedAt)} />} />
+          onDateChange={onDateChange} onRefresh={onRefresh} onDownload={onDownload} downloadHint={downloadHint} stale={stale} freshness={freshnessText(data.generatedAt)} />} />
 
       {data.scope.emptyReason ? (
         <BhCard title="Nothing to show" icon={Inbox}><p className="text-[14px] text-slate-800">{data.scope.emptyReason}</p></BhCard>
@@ -93,10 +99,8 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
       <div role="tabpanel" id={panelDomId(tab)} aria-labelledby={tabDomId(tab)} tabIndex={-1} className="space-y-4 focus:outline-none">
         {tab === "processes" ? (
           showProcesses ? (
-            <div className="space-y-4">
-              <DataHealthChips section={data.dataHealth} />
-              <ProcessCoveragePanel active={data.processes.active} unmapped={data.processes.unmapped} selectedBranchId={selectedBranchId} branchNames={branchNames} error={data.processesError} />
-            </div>
+            <ProcessesTab data={data} selectedBranchId={selectedBranchId} branchNames={branchNames}
+              onOpenProcess={(p) => { const b = defaultDrillBranch(p, selectedBranchId); host.open({ kind: "process", id: p.processId, name: p.processName, branchId: b }, b); }} />
           ) : null
         ) : data.branches.map(({ branch, overview, score }) => {
           const { onSelect, onOpenKpi } = drillHandlers(host.open, branch.branchId);

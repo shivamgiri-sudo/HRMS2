@@ -21,7 +21,7 @@
 // Resolving a mismatch rewrites attendance_status and lwp_value, which payroll reads.
 
 import { Router } from 'express';
-import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireAuth, requireWriteAccess } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
@@ -36,6 +36,7 @@ import {
   escalationHistory,
   recordManagerResponse,
 } from './mismatch-escalation.service.js';
+import { applyManagerDecision, DecisionError, pendingDecisionFor } from './apr-cosec-manager-decision.service.js';
 
 export const mismatchReviewRouter = Router();
 
@@ -48,6 +49,16 @@ const VIEW_ROLES = [
 ] as const;
 
 mismatchReviewRouter.use(requireAuth);
+
+// An APR bulk upload (attendance-apr-bulk.routes.ts) stamps is_locked = 1 on its rows only so the
+// nightly engine cannot overwrite the uploaded verdict — not because payroll froze them (the payroll
+// freeze sets override_by). Such a row is still an open APR vs COSEC disagreement (owner ruling
+// 2026-10-17), so it is shown on the queue (third arm) and may be resolved. Month-level payroll
+// closure still applies through closedPayrollMonths().
+const BULK_LOCK_ONLY_SQL =
+  "(adr.source_system = 'apr_bulk' AND adr.override_by IS NULL AND adr.regularization_id IS NULL)";
+const isBulkLockOnly = (r: { source_system?: unknown; override_by?: unknown; regularization_id?: unknown }) =>
+  r.source_system === 'apr_bulk' && !r.override_by && !r.regularization_id;
 
 
 // ── Payroll-closed months ─────────────────────────────────────────────────────
@@ -180,10 +191,20 @@ async function buildWhere(req: any): Promise<QueueQuery> {
          AND adr.mismatch_resolved_at IS NULL
          AND adr.is_locked = 0
          AND ${dateSql}
+      UNION
+      SELECT adr.id FROM attendance_daily_record adr
+       WHERE adr.mismatch_flag = 1
+         AND adr.mismatch_resolved_at IS NULL
+         AND adr.is_locked = 1
+         AND ${BULK_LOCK_ONLY_SQL}
+         AND adr.biometric_status IS NOT NULL
+         AND adr.apr_status IS NOT NULL
+         AND adr.biometric_status <> adr.apr_status
+         AND ${dateSql}
     ) cand
     JOIN attendance_daily_record adr ON adr.id = cand.id
     LEFT JOIN employees e ON e.id = adr.employee_id`;
-  const fromParams: unknown[] = [...dateParams, ...dateParams];
+  const fromParams: unknown[] = [...dateParams, ...dateParams, ...dateParams];
 
   const conds: string[] = [];
   const params: unknown[] = [];
@@ -287,7 +308,9 @@ mismatchReviewRouter.patch(
     }
 
     const [check] = await db.execute<RowDataPacket[]>(
-      `SELECT id, attendance_status, lwp_value, mismatch_flag, employee_id, record_date, is_locked
+      `SELECT id, attendance_status, lwp_value, mismatch_flag, employee_id, record_date, is_locked,
+              source_system, override_by, regularization_id,
+              DATE_FORMAT(record_date, '%Y-%m-%d') AS record_ymd
        FROM attendance_daily_record WHERE id = ? LIMIT 1`,
       [id]
     );
@@ -302,8 +325,13 @@ mismatchReviewRouter.patch(
       return res.status(403).json({ success: false, message: 'Forbidden: this record is outside your branch / assigned scope' });
     }
 
-    if (rec.is_locked) {
+    if (rec.is_locked && !isBulkLockOnly(rec)) {
       return res.status(409).json({ success: false, message: 'Record is locked by payroll. Use manual override for locked months.' });
+    }
+    // A bulk-locked row has no row-level payroll freeze to stop it, so the month-level one is asked.
+    const recDay = String(rec.record_ymd);
+    if (rec.is_locked && (await closedPayrollMonths()).some(({ start, end }) => recDay >= start && recDay <= end)) {
+      return res.status(409).json({ success: false, message: 'Payroll for this month is finalized. Use manual override for locked months.' });
     }
 
     const resolvedBy = req.authUser?.id as string;
@@ -447,6 +475,11 @@ mismatchReviewRouter.post(
     }
     const rec = await loadScopedRecord(req, req.params.id);
     if (!rec) return res.status(404).json({ success: false, message: 'Record not found' });
+    // A system-raised APR vs COSEC item is the manager's to DECIDE, not to recommend (owner ruling
+    // 2026-10-17) — the same answer from this screen applies the day directly.
+    if (await pendingDecisionFor(rec.id, req.authUser?.id as string)) {
+      return sendDecision(req, res, rec.id, recommended_status, String(note));
+    }
     try {
       const result = await recordManagerResponse({
         adrId: rec.id,
@@ -471,6 +504,39 @@ mismatchReviewRouter.post(
     } catch (err) {
       return sendEscalationError(res, err);
     }
+  })
+);
+
+// ── Reporting-manager decision on an APR vs COSEC day ────────────────────────
+// Owner ruling 2026-10-17. Authorised by assignment, not by role: the caller must be the user the
+// pending system-raised decision is assigned to (apr-cosec-manager-decision.service.ts). Most
+// reporting managers of APR staff hold only the 'employee' role, so a role gate here would lock out
+// exactly the people the ruling names. They act from the Work Inbox.
+
+async function sendDecision(req: any, res: any, adrId: string, status: unknown, note: unknown) {
+  try {
+    const data = await applyManagerDecision({
+      adrId,
+      actorUserId: req.authUser?.id as string,
+      actorRole: req.authUser?.role ?? 'unknown',
+      status: String(status ?? ''),
+      note: typeof note === 'string' ? note : null,
+    });
+    return res.json({ success: true, data: { ...data, decided: true } });
+  } catch (err) {
+    if (err instanceof DecisionError) {
+      return res.status(err.status).json({ success: false, message: err.message });
+    }
+    throw err;
+  }
+}
+
+mismatchReviewRouter.post(
+  '/:id/manager-decision',
+  requireWriteAccess,
+  h(async (req, res) => {
+    const { status, note } = (req.body ?? {}) as { status?: string; note?: string };
+    return sendDecision(req, res, String(req.params.id), status, note);
   })
 );
 

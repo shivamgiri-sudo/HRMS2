@@ -819,8 +819,23 @@ export function renderEmail(
     ...hc.byLob.map((r) => [r.lob, String(r.active)]),
     [{ raw: "<strong>Total</strong>" }, { raw: `<strong>${hcLobTotal}</strong>` }],
   ];
+  // Under each process: its active headcount split by LOB (indented, active column only).
+  const lobSubRows = (r: (typeof hc.byProcess)[number]): (string | { raw: string })[][] =>
+    (r.lobs ?? []).map((l) => [
+      {
+        raw: `<span style="color:${C.muted};padding-left:12px;">&#8627; LOB: ${esc(l.lob)}</span>`,
+      },
+      "",
+      "",
+      { raw: `<span style="color:${C.muted};">${l.active}</span>` },
+      "",
+      "",
+      "",
+      "",
+      "",
+    ]);
   const hcProcessRows = [
-    ...hc.byProcess.map((r) => [
+    ...hc.byProcess.flatMap((r) => [[
       r.mandateSource === "db_bill" ? `${r.process} *` : r.process,
       r.mandateSeats == null ? "—" : String(r.mandateSeats),
       {
@@ -838,7 +853,7 @@ export function renderEmail(
       {
         raw: `<span style="color:${r.joinedMtd - r.leftMtd < 0 ? C.danger : C.success};font-weight:700;">${signed(r.joinedMtd - r.leftMtd)}</span>`,
       },
-    ]),
+    ], ...lobSubRows(r)]),
     [
       { raw: "<strong>Total</strong>" },
       { raw: `<strong>${hc.mandateSeatsTotal ?? "—"}</strong>` },
@@ -912,7 +927,7 @@ export function renderEmail(
       true,
     ) +
     note(
-      "Mandate seats = the process's mandated headcount at this branch (workforce mandate in force today; a * marks a mandate taken from the latest db_bill mandate-seat history because the process has no HRMS mandate). Active vs mandate = active headcount minus mandate; negative = short of the mandate. The total covers only processes that have a mandate.",
+      "Mandate seats = the process's mandated headcount at this branch (workforce mandate in force today; a * marks a mandate taken from the latest db_bill mandate-seat history because the process has no HRMS mandate). Active vs mandate = active headcount minus mandate; negative = short of the mandate. The total covers only processes that have a mandate. The indented LOB rows under each process split its active headcount by Line of Business.",
     ) +
     dataTable(["LOB", "Active"], hcLobRows, true) +
     note(

@@ -9,7 +9,7 @@ import { PeopleVisual } from "../sections/PeopleVisual";
 import { AttendanceVisual } from "../sections/AttendanceVisual";
 import { FinanceVisual, buildFinance } from "../sections/FinanceVisual";
 import { ProcessPnlVisual, buildPnl } from "../sections/ProcessPnlVisual";
-import { OpsQualityVisual, qualityBars } from "../sections/OpsQualityVisual";
+import { OpsQualityVisual, qualityBars, qualityTable } from "../sections/OpsQualityVisual";
 import { HiringVisual } from "../sections/HiringVisual";
 import { selectByName, type VisualProps } from "../sections/shared";
 import { barListTable } from "../viz";
@@ -124,11 +124,12 @@ describe("as-of and independent team chart", () => {
       callmaster: { status: "ok", asOf: "2026-10-12", data: { fatal: fx.ok({ totalFatalCalls: 1, agentsWithFatals: 1, truncated: false }) } },
     });
     const out = renderToStaticMarkup(<OpsQualityVisual overview={ov} payload={fx.payloadOf(ov)} onSelect={() => {}} />);
-    expect(out).toContain("QA quality %, lowest first · As of 2026-10-11");
+    expect(out).toContain("0 of 1 below 85% · As of 2026-10-11");
     expect(out).toContain("As of 2026-10-12");
     const bars = qualityBars([{ processCode: "Q", processName: "No Score", tier: "full", QA_QUALITY_PCT: null, latestDate: null, stale: false }]);
     expect(barListTable(bars).rows[0][1]).toBe("—");
-    expect(out).toContain("No Score —");
+    expect(out).toContain("No score");
+    expect(qualityTable([{ processCode: "Q", processName: "No Score", tier: "full", QA_QUALITY_PCT: null, latestDate: null, stale: false }]).rows[0][1]).toBe("—");
     expect(out).not.toContain("0.0%");
   });
 });

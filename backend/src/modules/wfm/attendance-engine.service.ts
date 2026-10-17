@@ -78,6 +78,12 @@ export interface EngineResult {
   biometricStatus: AttendanceStatus | null;
   aprStatus: AttendanceStatus | null;
   mismatchFlag: number;
+  /**
+   * Set when an APR-judged day is worth less than what COSEC qualifies for (owner ruling
+   * 2026-10-17): the APR status stands and upsertDailyRecord raises a reporting-manager decision
+   * (apr-cosec-manager-decision.service.ts). Optional so every other EngineResult builder is untouched.
+   */
+  managerDecisionRequired?: boolean;
 }
 
 export interface CorrectionInput {
@@ -180,7 +186,11 @@ export function buildShiftWindowInfo(
  *                            matching, so it states the decision instead of leaving it to
  *                            be inferred from no row existing.
  *   apr_validated_by_cosec — APR first; when APR falls short of a full day the biometric
- *                            reading is classified too and the better of the two is used.
+ *                            reading is classified too. For days before the cutover
+ *                            (apr-cosec-cutover.ts, default 2026-10-18) the better of the two is
+ *                            used. From the cutover on (owner ruling 2026-10-17) the better COSEC
+ *                            reading is NOT applied automatically: the APR status stands and the
+ *                            reporting manager decides the day (apr-cosec-manager-decision.service.ts).
  */
 import type { AttendanceLogic, AprEligibilityRow } from './attendance-logic-resolver.js';
 import { resolveAttendanceLogicFromRows } from './attendance-logic-resolver.js';
@@ -201,6 +211,7 @@ function statusRank(status: AttendanceStatus | null): number {
 // Legacy regex fallback — used when apr_eligibility_config table is empty.
 export { isOperationsExecutiveByRegex } from './attendance-logic-resolver.js';
 import { isOperationsExecutiveByRegex } from './attendance-logic-resolver.js';
+import { managerDecisionApplies } from './apr-cosec-cutover.js';
 
 function isOperationsDepartmentName(departmentName: string): boolean {
   const department = departmentName.trim().toLowerCase();
@@ -926,7 +937,9 @@ export const attendanceEngineService = {
     if (!emp) return;
 
     let managerUserId: string | null = null;
-    if (emp.reporting_manager_id) {
+    // A day that needs a manager decision already put one in the manager's inbox
+    // (raiseManagerDecisionIfNeeded) — a second "review required" item for the same day is noise.
+    if (emp.reporting_manager_id && !result.managerDecisionRequired) {
       const [managerRows] = await db.execute<RowDataPacket[]>(
         `SELECT user_id FROM employees WHERE id = ? LIMIT 1`, [emp.reporting_manager_id]
       );
@@ -1212,10 +1225,12 @@ export const attendanceEngineService = {
     let aprStatusRaw: AttendanceStatus | null = null;
     let mismatchFlag = 0;
 
-    // Tracks which classifier the final status is derived from. Starts as the source
-    // the employee is configured for, but an APR employee with no APR evidence falls
-    // back to biometric below, and must then be classified as biometric too.
+    // Tracks which classifier the final status is derived from. Starts as the source the employee
+    // is configured for. Only a day BEFORE the APR/COSEC manager-decision cutover can still switch
+    // an APR employee to biometric (the old apr_validated_by_cosec upgrade below).
     let classifyAsApr = isAprEmployee;
+    // Owner rollout 2026-10-17, "new days only": days before the cutover keep the old upgrade.
+    const managerDecidesThisDay = managerDecisionApplies(date);
 
     // Set inside the APR branch below: whether the dialler feed actually carries
     // this employee. Only someone the feed covers is judged on APR alone.
@@ -1254,19 +1269,20 @@ export const attendanceEngineService = {
       // Absence of an APR record IS the attendance answer for this population (2026-09-03).
       // An APR employee with 0 rawMinutes falls through to the classifier and lands on 'absent'.
 
-      // Third logic: APR validated by COSEC.
+      // APR vs COSEC — owner ruling 2026-10-17 (replaces the 'apr_validated_by_cosec' auto-upgrade
+      // and the 2026-10-05 "silent APR feed is built from COSEC" rule):
+      //   "if Attendance source is APR then it should be notified to reporting manager to decide
+      //    the attendance; if attendance source is Cosec then there is no issue."
+      // So COSEC no longer replaces the APR verdict for anyone judged on APR, whichever APR logic
+      // they are on. The APR status stands, mismatch_flag is already 1 above, and the return below
+      // marks the day managerDecisionRequired so upsertDailyRecord raises one reporting-manager
+      // decision for it. The readings are kept on source_reference so the row says why.
       //
-      // APR still leads. But where plain 'apr' treats a short net login as the final answer,
-      // this asks the biometric feed the same question and keeps whichever reading credits
-      // the employee more — someone who was in the building nine hours but logged 300
-      // dialler minutes is present, not a half day. It can only raise a day's status, never
-      // lower one, so a process moved onto this logic cannot cost anyone pay.
-      //
-      // Owner ruling 2026-10-05: when APR has NO record for the day (rawMinutes 0) the day is
-      // built from COSEC instead of being left absent. Before this the rescue only applied when
-      // APR had some minutes, so an APR+COSEC employee with a silent feed and a full day on the
-      // card reader was absent. Plain 'apr' is unchanged: a silent feed is still the answer there.
-      if (attendanceLogic === 'apr_validated_by_cosec'
+      // BEFORE the cutover (apr-cosec-cutover.ts) the previous behaviour is kept exactly — third
+      // logic, APR validated by COSEC: whichever reading credits the employee more is used, and
+      // (owner ruling 2026-10-05) a silent APR feed is built from COSEC. Plain 'apr' never upgrades.
+      if (!managerDecidesThisDay
+          && attendanceLogic === 'apr_validated_by_cosec'
           && classifyAsApr
           && biometricMinutes > 0
           && statusRank(biometricStatusRaw) > statusRank(aprStatusRaw)) {
@@ -1280,6 +1296,14 @@ export const attendanceEngineService = {
         sourceReference = `APR tally: apr=${aprMinutesForTrail}min (${aprStatusRaw}), `
           + `biometric=${biometricMinutes}min (${biometricStatusRaw}) — biometric used`;
         rule = { ...rule, attendance_source: 'biometric', full_day_minutes: cosecFullDayMinutes, half_day_minutes: halfDayFloor };
+      }
+      if (managerDecidesThisDay
+          && classifyAsApr
+          && biometricMinutes > 0
+          && statusRank(biometricStatusRaw) > statusRank(aprStatusRaw)) {
+        sourceReference = `APR vs COSEC: apr=${rawMinutes}min (${aprStatusRaw}), `
+          + `biometric=${biometricMinutes}min (${biometricStatusRaw}) — APR kept, reporting manager to decide`
+          + ` [logic ${attendanceLogic}]`;
       }
     } else {
       rule = { ...rule, attendance_source: 'biometric', full_day_minutes: cosecFullDayMinutes, half_day_minutes: halfDayFloor };
@@ -1424,6 +1448,12 @@ export const attendanceEngineService = {
       biometricStatus: biometricStatusRaw,
       aprStatus: aprStatusRaw,
       mismatchFlag,
+      // Asked of the FINAL status, so an approved half-day leave that already lifted the day to
+      // what COSEC shows needs no decision.
+      managerDecisionRequired: managerDecidesThisDay
+        && classifyAsApr
+        && biometricMinutes > 0
+        && statusRank(biometricStatusRaw) > statusRank(finalStatus),
     };
   },
 
@@ -1456,7 +1486,7 @@ export const attendanceEngineService = {
          source_record_date = IF(is_locked = 0, VALUES(source_record_date), source_record_date),
          source_reference   = IF(is_locked = 0, VALUES(source_reference),   source_reference),
          dialler_minutes    = IF(is_locked = 0, VALUES(dialler_minutes),    dialler_minutes),
-         biometric_minutes  = IF(is_locked = 0, VALUES(biometric_minutes),  biometric_minutes),
+         biometric_minutes  = IF(is_locked = 0, VALUES(biometric_minutes),  COALESCE(VALUES(biometric_minutes), biometric_minutes)),
          raw_minutes        = IF(is_locked = 0, VALUES(raw_minutes),        raw_minutes),
          attendance_status  = IF(is_locked = 0, VALUES(attendance_status),  attendance_status),
          biometric_status   = IF(is_locked = 0, VALUES(biometric_status),   biometric_status),
@@ -1484,7 +1514,56 @@ export const attendanceEngineService = {
       `SELECT * FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1`,
       [result.employeeId, result.date]
     );
-    return rows[0] as AttendanceDailyRecord;
+    const written = rows[0] as AttendanceDailyRecord;
+    await this.raiseManagerDecisionIfNeeded(result, written);
+    return written;
+  },
+
+  /**
+   * Owner ruling 2026-10-17: an APR-judged day that COSEC would credit with more goes to the
+   * employee's reporting manager to decide. Only when this write actually landed (an is_locked row
+   * kept its old values, so there is nothing new to decide). Never throws.
+   */
+  async raiseManagerDecisionIfNeeded(result: EngineResult, written: AttendanceDailyRecord | undefined): Promise<void> {
+    if (!written) return;
+    const w = written as AttendanceDailyRecord & {
+      source_system?: string | null; override_by?: string | null; regularization_id?: string | null;
+    };
+    // An APR bulk-upload day is locked against the engine, but COSEC can arrive after the upload
+    // (cosec-sync re-runs the engine for the day). Ask the same question of the uploaded verdict.
+    if (Number(w.is_locked) === 1) {
+      if (!managerDecisionApplies(result.date)) return;
+      if (w.source_system !== 'apr_bulk' || w.override_by || w.regularization_id) return;
+      if (w.attendance_status !== 'absent' && w.attendance_status !== 'half_day') return;
+      if (statusRank(result.biometricStatus) <= statusRank(w.attendance_status)) return;
+      try {
+        const { raiseDecisionsForBulkRows } = await import('./apr-cosec-manager-decision.service.js');
+        await raiseDecisionsForBulkRows([{
+          employeeId: result.employeeId, date: result.date,
+          status: w.attendance_status, aprMinutes: Number(w.dialler_minutes ?? 0),
+        }]);
+      } catch (err) {
+        logger.warn({ err: (err as Error).message, employeeId: result.employeeId, date: result.date },
+          '[attendance-engine] APR/COSEC manager decision not raised (bulk day)');
+      }
+      return;
+    }
+    if (!result.managerDecisionRequired || written.attendance_status !== result.status) return;
+    try {
+      const { raiseAprCosecDecision } = await import('./apr-cosec-manager-decision.service.js');
+      await raiseAprCosecDecision({
+        adrId: String(written.id),
+        employeeId: result.employeeId,
+        recordDate: result.date,
+        currentStatus: result.status,
+        aprMinutes: result.diallerMinutes,
+        biometricMinutes: result.biometricMinutes ?? 0,
+        biometricStatus: String(result.biometricStatus ?? ''),
+      });
+    } catch (err) {
+      logger.warn({ err: (err as Error).message, employeeId: result.employeeId, date: result.date },
+        '[attendance-engine] APR/COSEC manager decision not raised');
+    }
   },
 
   // WFM manual correction — always wins, sets is_locked = 1

@@ -197,7 +197,17 @@ export const richPayload = (ov: BranchOverview = richOverview()): BranchHeadHeal
       { key: "hiring", weight: 15, score: 69 }, { key: "compliance", weight: 10, score: 52 }, { key: "quality", weight: 10, score: 74 },
     ], excluded: [] },
   }],
-  processes: { active: PROCS.map((p, i) => procRow({ processId: `p-${i}`, processCode: `P${i}`, processName: p, headcount: 40 + i * 10, mandatedSeats: 50 })), unmapped: [] },
+  processes: {
+    active: [
+      ...PROCS.map((p, i) => procRow({
+        processId: `p-${i}`, processCode: `P${i}`, processName: p, headcount: 40 + i * 10, mandatedSeats: i === 5 ? null : 50,
+        tier: i === 3 ? "baseline" : i === 4 ? "outbound_sale" : i === 5 ? "not_wired" : i === 1 ? "inbound_quality" : "full",
+        latestMetricDate: i === 5 ? null : i === 3 ? "2026-09-20" : "2026-10-14",
+      })),
+      procRow({ processId: "p-bss", processCode: "BSS_KOL", processName: "BSS_Kolkata billing", headcount: 0, mandatedSeats: null, tier: "not_wired", latestMetricDate: null, billingMirror: true }),
+    ],
+    unmapped: [procRow({ processId: "p-idle", processCode: "IDLE1", processName: "Idle legacy queue", headcount: 0, mandatedSeats: null, tier: "not_wired", latestMetricDate: null, branchIds: [] })],
+  },
   dataHealth: ok({ unmappedProcesses: 1, costCentresWithoutProcess: 2, overMandate: [{ costCentre: "CC-KOL-07", seats: 80, headcount: 86 }], staleProcesses: 1 }),
   generatedAt: "2026-10-15T05:00:00Z",
 });

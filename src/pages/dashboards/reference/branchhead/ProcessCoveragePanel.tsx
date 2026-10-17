@@ -1,152 +1,88 @@
 import { useState } from "react";
-import { CheckCircle2, ChevronDown, CircleDashed, Info, ShieldAlert, TrendingUp, Layers, PhoneIncoming, PhoneOutgoing } from "lucide-react";
-import { BhCard } from "./ui";
-import { useProcessDrilldown } from "@/hooks/useBranchHeadHealth";
-import type { BranchProcess, CoverageTier, DrillRow } from "../../../../../backend/src/modules/branch-head-health/processes";
+import { ChevronDown, Info, X } from "lucide-react";
+import type { BranchProcess } from "../../../../../backend/src/modules/branch-head-health/processes";
+import { AccentCard, EmptyLine } from "./look";
+import { CoverageTable, freshness, seatGap, sortWorstFirst } from "./processRows";
+import { ProcessAgents } from "./processAgents";
 
-const TIER = {
-  full: { label: "Full", Icon: CheckCircle2, cls: "bg-emerald-50 text-emerald-900 border-emerald-300" },
-  inbound_quality: { label: "Inbound + quality", Icon: PhoneIncoming, cls: "bg-blue-50 text-blue-900 border-blue-300" },
-  outbound_sale: { label: "Outbound sale", Icon: PhoneOutgoing, cls: "bg-blue-50 text-blue-900 border-blue-300" },
-  baseline: { label: "Baseline only", Icon: TrendingUp, cls: "bg-amber-50 text-amber-900 border-amber-300" },
-  not_wired: { label: "Not wired", Icon: CircleDashed, cls: "bg-slate-100 text-slate-800 border-slate-300" },
-} as const;
+export { CoverageBadge, coverageLabel, defaultDrillBranch, DrilldownTable, drillMetricFor, ProcessAgents } from "./processAgents";
 
-/** Plain-text tier label (for table twins). */
-export function coverageLabel(tier: CoverageTier): string {
-  return (TIER[tier] ?? TIER.not_wired).label;
+/** Tile filters for the coverage table (Processes tab KPI tiles). */
+export type CoverageFilter = "full" | "baseline" | "stale" | "over" | "unmapped";
+const FILTER_WORDS: Record<CoverageFilter, string> = {
+  full: "Full coverage", baseline: "Baseline only", stale: "Stale data", over: "Over mandate", unmapped: "Not mapped to a cost centre",
+};
+
+export function applyFilter(rows: BranchProcess[], f: CoverageFilter | null | undefined, asOf?: string): BranchProcess[] {
+  if (f === "full" || f === "baseline") return rows.filter((p) => p.tier === f);
+  if (f === "stale") return rows.filter((p) => freshness(p.latestMetricDate, asOf) === "stale");
+  if (f === "over") return rows.filter((p) => seatGap(p).over > 0);
+  return rows;
 }
 
-export function CoverageBadge({ tier }: { tier: CoverageTier }) {
-  const { label, Icon, cls } = TIER[tier] ?? TIER.not_wired;
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[12px] font-semibold ${cls}`}>
-      <Icon className="h-3.5 w-3.5" aria-hidden="true" />{label}
-    </span>
-  );
-}
+interface Shared { asOf?: string; branchNames: Record<string, string>; openId: string | null; onToggle: (p: BranchProcess) => void; onOpenProcess?: (p: BranchProcess) => void }
 
-/** Drill-down metric per coverage tier; null means no agent-level metric exists for the tier. */
-export function drillMetricFor(tier: CoverageTier): { key: string; label: string } | null {
-  if (tier === "full" || tier === "inbound_quality") return { key: "QA_QUALITY_PCT", label: "QA quality %" };
-  if (tier === "outbound_sale") return { key: "FUNNEL_SALE_PCT", label: "Sale conversion %" };
-  return null;
-}
-
-export function DrilldownTable({ rows, valueLabel }: { rows: DrillRow[]; valueLabel?: string | null }) {
-  if (rows.length === 0) return <p className="text-[13px] text-slate-700">No agent-level values for this process yet.</p>;
-  return (
-    <table className="w-full text-left text-[13px]">
-      <caption className="sr-only">Agent values for the selected process</caption>
-      <thead><tr className="text-slate-700"><th className="py-1 pr-2">Code</th><th className="py-1 pr-2">Name</th>{valueLabel ? <th className="py-1 text-right">{valueLabel}</th> : null}</tr></thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr key={r.employeeCode} className="border-t border-slate-100">
-            <td className="py-1.5 pr-2">{r.employeeCode}</td><td className="py-1.5 pr-2">{r.name}</td>
-            {valueLabel ? <td className="py-1.5 text-right font-semibold">{r.value == null ? "—" : r.value}</td> : null}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function Drill({ branchId, processId, tier }: { branchId: string; processId: string; tier: CoverageTier }) {
-  const metric = drillMetricFor(tier);
-  // Baseline / not-wired processes have no agent-level metric; the request still lists names (value column hidden).
-  const q = useProcessDrilldown(branchId, processId, metric?.key ?? "QA_QUALITY_PCT", true);
-  if (q.isLoading) return <div className="kit-shimmer h-24 rounded-lg" aria-busy="true" aria-label="Loading agent values" />;
-  if (q.isError) return <p role="alert" className="text-[13px] text-rose-900">Agent values could not be loaded.</p>;
-  return (
-    <>
-      {metric ? null : <p className="pb-2 text-[12px] text-slate-700">No agent-level metric for this process type</p>}
-      <DrilldownTable rows={q.data ?? []} valueLabel={metric?.label ?? null} />
-    </>
-  );
-}
-
-/** Default drill branch: the globally selected branch if the process is reachable there, else its first branch. */
-export function defaultDrillBranch(p: BranchProcess, selectedBranchId: string): string {
-  return p.branchIds.includes(selectedBranchId) ? selectedBranchId : p.branchIds[0] ?? "";
-}
-
-/**
- * The agent list for one process (the only place person names appear): branch picker when the process
- * spans several branches, then the lazy drill-down. Mount it only on demand; it fetches when mounted.
- */
-export function ProcessAgents({ p, selectedBranchId, branchNames }: { p: BranchProcess; selectedBranchId: string; branchNames: Record<string, string> }) {
-  const [picked, setPicked] = useState("");
-  const drillBranch = p.branchIds.includes(picked) ? picked : defaultDrillBranch(p, selectedBranchId);
-  if (p.branchIds.length === 0) {
-    return <p className="text-[13px] text-slate-700">Agent names are not available: this process has no cost centre or headcount in your selected branches.</p>;
-  }
-  return (
-    <>
-      {p.branchIds.length > 1 ? (
-        <label className="mb-2 block text-[12px] font-semibold text-slate-800">
-          Branch for agent values
-          <select value={drillBranch} onChange={(e) => setPicked(e.target.value)}
-            className="mt-1 block min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-[14px] text-slate-900">
-            {p.branchIds.map((b) => <option key={b} value={b}>{branchNames[b] ?? b}</option>)}
-          </select>
-        </label>
-      ) : null}
-      <Drill branchId={drillBranch} processId={p.processId} tier={p.tier} />
-    </>
-  );
-}
-
-function ProcessRow({ p, selectedBranchId, branchNames }: { p: BranchProcess; selectedBranchId: string; branchNames: Record<string, string> }) {
-  const [open, setOpen] = useState(false);
-  // Zero (or no) mandated seats means the process is not mandated, so headcount cannot be "over" it.
-  const mandated = p.mandatedSeats != null && p.mandatedSeats > 0;
-  const over = mandated && p.headcount > (p.mandatedSeats as number);
-  return (
-    <li className="border-t border-slate-100 first:border-t-0">
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
-        className="flex min-h-[44px] w-full flex-wrap items-center gap-x-3 gap-y-1 px-1 py-2 text-left">
-        <ChevronDown className={`h-4 w-4 shrink-0 ${open ? "" : "-rotate-90"}`} aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-slate-900">{p.processName}</span>
-        <CoverageBadge tier={p.tier} />
-        <span className="text-[12px] text-slate-700">
-          {mandated ? `${p.headcount} of ${p.mandatedSeats} seats` : `${p.headcount} headcount - no mandated seats`}
-          {over ? <span className="ml-1 inline-flex items-center gap-1 font-bold text-rose-900"><ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />Over mandate</span> : null}
-        </span>
-      </button>
-      {open ? (
-        <div className="px-2 pb-3"><ProcessAgents p={p} selectedBranchId={selectedBranchId} branchNames={branchNames} /></div>
-      ) : null}
-    </li>
-  );
-}
-
-function Group({ id, title, note, rows, selectedBranchId, branchNames }: { id: string; title: string; note?: string; rows: BranchProcess[]; selectedBranchId: string; branchNames: Record<string, string> }) {
+function Group({ id, title, note, rows, open, ...shared }: Shared & { id: string; title: string; note?: string; rows: BranchProcess[]; open?: boolean }) {
   if (rows.length === 0) return null;
   return (
-    <details data-group={id} className="bh-fold mt-3">
+    <details data-group={id} className="bh-fold mt-3" open={open}>
       <summary className="bh-fold-sum">
         <span>{title} ({rows.length})</span><ChevronDown className="bh-fold-chev h-4 w-4" aria-hidden="true" />
       </summary>
       <div className="px-3 pb-2">
         {note ? <p className="flex items-start gap-1.5 pb-2 text-[12px] text-slate-700"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{note}</p> : null}
-        <ul>{rows.map((p) => <ProcessRow key={p.processId} p={p} selectedBranchId={selectedBranchId} branchNames={branchNames} />)}</ul>
+        <CoverageTable caption={title} rows={sortWorstFirst(rows, shared.asOf)} {...shared} />
       </div>
     </details>
   );
 }
 
-export function ProcessCoveragePanel({ active, unmapped, selectedBranchId = "", branchNames = {}, error }: {
-  active: BranchProcess[]; unmapped: BranchProcess[]; selectedBranchId?: string; branchNames?: Record<string, string>; error?: boolean;
-}) {
+export interface ProcessCoveragePanelProps {
+  active: BranchProcess[];
+  unmapped: BranchProcess[];
+  selectedBranchId?: string;
+  branchNames?: Record<string, string>;
+  error?: boolean;
+  /** Report date: data older than 14 days before it is stale. */
+  asOf?: string;
+  filter?: CoverageFilter | null;
+  onClearFilter?: () => void;
+  /** Opens the process drawer (process 360) for the row. */
+  onOpenProcess?: (p: BranchProcess) => void;
+}
+
+export function ProcessCoveragePanel({ active, unmapped, selectedBranchId = "", branchNames = {}, error, asOf, filter, onClearFilter, onOpenProcess }: ProcessCoveragePanelProps) {
+  const [openId, setOpenId] = useState<string | null>(null);
   const normal = active.filter((p) => !p.billingMirror);
   const mirrors = active.filter((p) => p.billingMirror);
+  const shown = sortWorstFirst(applyFilter(normal, filter, asOf), asOf);
+  const opened = [...active, ...unmapped].find((p) => p.processId === openId) ?? null;
+  const shared: Shared = { asOf, branchNames, openId, onToggle: (p) => setOpenId((cur) => (cur === p.processId ? null : p.processId)), onOpenProcess };
   return (
-    <BhCard icon={Layers} tone="indigo" title="Process coverage" subtitle="Which processes report quality and sales data. Agent names appear only when you open a process.">
+    <AccentCard title="Process coverage" accent="violet" chip={`${normal.length} active · worst first`}>
+      <p className="mb-2 text-[12px] text-slate-700">Which processes report quality and sales data. Agent names appear only when you open a process.</p>
       {error ? <p role="alert" className="mb-2 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-[13px] text-amber-900"><Info className="h-4 w-4" aria-hidden="true" />Process coverage could not be loaded. Other sections are unaffected.</p> : null}
-      {normal.length === 0 && !error ? <p className="text-[13px] text-slate-700">No active processes for this branch.</p> : null}
-      <ul>{normal.map((p) => <ProcessRow key={p.processId} p={p} selectedBranchId={selectedBranchId} branchNames={branchNames} />)}</ul>
-      <Group id="mirrors" title="Billing mirrors (BSS_*)" rows={mirrors} selectedBranchId={selectedBranchId} branchNames={branchNames} />
-      <Group id="unmapped" title="Not mapped to a cost centre" note="Most of these are idle billing mirrors with no cost centre; they are listed for completeness." rows={unmapped} selectedBranchId={selectedBranchId} branchNames={branchNames} />
-    </BhCard>
+      {filter && filter !== "unmapped" ? (
+        <p role="status" className="mb-2 flex flex-wrap items-center gap-2 text-[13px] text-slate-800">
+          {`Showing ${shown.length} of ${normal.length}: ${FILTER_WORDS[filter]}`}
+          {onClearFilter ? (
+            <button type="button" onClick={onClearFilter} className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-2 font-semibold text-blue-900 hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+              <X className="h-4 w-4" aria-hidden="true" />Clear filter
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+      {normal.length === 0 && !error ? <EmptyLine text="No active processes for this branch." /> : null}
+      {normal.length > 0 ? <CoverageTable caption="Process coverage, worst first" rows={shown} {...shared} /> : null}
+      {opened ? (
+        <div id="bh-process-agents" className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="mb-2 text-[13px] font-bold text-slate-900">{`Agents - ${opened.processName}`}</p>
+          <ProcessAgents p={opened} selectedBranchId={selectedBranchId} branchNames={branchNames} />
+        </div>
+      ) : null}
+      <Group id="mirrors" title="Billing mirrors (BSS_*)" rows={mirrors} {...shared} />
+      <Group id="unmapped" title="Not mapped to a cost centre" open={filter === "unmapped" || undefined}
+        note="Most of these are idle billing mirrors with no cost centre; they are listed for completeness." rows={unmapped} {...shared} />
+    </AccentCard>
   );
 }

@@ -24,6 +24,17 @@ export const EXACT_M = 50;
 export const SAME_AREA_M = 10_000;
 export const DIFFERENT_CITY_M = 50_000;
 export const MAX_GPS_ACCURACY_M = 100;
+/**
+ * Radius treated as "inside the declared pincode area". The reference point is a pincode centre (live
+ * 2026-10-17: 281 links, 248 distinct addresses but 137 reference points; 34 different Noida addresses in
+ * pincode 201309 all carry the identical point 28.6135061, 77.3686447), so a candidate at home routinely
+ * reads 1-2 km "away". Within this radius that number says nothing about the house and must not be shown
+ * as a distance from the home.
+ */
+export const PINCODE_AREA_M = 3_000;
+
+/** How precise the reference point is. geocodeAddress tries pincode, then city+state, then the full text. */
+export type ReferencePrecision = "pincode_centre" | "city_centre" | "address";
 
 export type AddressTier = "verified" | "needs_hr" | "conflict";
 export type LocationSignal = "exact" | "same_area" | "different_area" | "different_city" | "no_gps" | "poor_accuracy";
@@ -40,7 +51,31 @@ export interface AddressAssessment {
   tier: AddressTier;
   location: LocationSignal;
   documents: DocumentSignal;
+  /** Precision of the reference point the distance was measured from; anything but "address" is approximate. */
+  referencePrecision: ReferencePrecision;
   reasons: string[];
+}
+
+/**
+ * Mirrors geocodeAddress' order (bgv-address-verification.routes.ts): a valid 6-digit present pincode is
+ * geocoded first, then city + state. Only without either was the full address text geocoded.
+ */
+export function referencePrecisionFor(declared: DeclaredAddress): ReferencePrecision {
+  if (/^\d{6}$/.test(String(declared.pincode ?? "").trim())) return "pincode_centre";
+  if (String(declared.city ?? "").trim() && String(declared.state ?? "").trim()) return "city_centre";
+  return "address";
+}
+
+/** Human wording for the GPS distance. A centroid reference is never presented as a distance from the home. */
+export function describeDistance(distanceM: number | null, precision: ReferencePrecision): string {
+  if (distanceM === null || !Number.isFinite(distanceM)) return "No GPS captured";
+  const amount = distanceM < 1000 ? `${Math.round(distanceM)} m` : `${(distanceM / 1000).toFixed(1)} km`;
+  if (precision === "address") return `${amount} from the declared address area`;
+  const centre = precision === "pincode_centre" ? "pincode" : "city";
+  if (precision === "pincode_centre" && distanceM <= PINCODE_AREA_M) {
+    return `Inside the declared pincode area (the map reference is the pincode centre, not the house, so ${amount} is not a distance from the home)`;
+  }
+  return `About ${amount} from the centre of the declared ${centre} (approximate: the reference is the ${centre} centre, not the house)`;
 }
 
 const STOPWORDS = new Set([
@@ -102,13 +137,8 @@ export function assess(input: {
   const location = assessLocation(input.distanceM, input.accuracyM);
   const documents = assessDocuments(input.declared, input.govt);
   const reasons: string[] = [];
-
-  const km = input.distanceM === null ? null : input.distanceM / 1000;
-  const where =
-    km === null ? "No GPS captured"
-    : km < 1 ? `${Math.round(input.distanceM as number)} m from the declared address area`
-    : `${km.toFixed(1)} km from the declared address area`;
-  reasons.push(where);
+  const referencePrecision = referencePrecisionFor(input.declared);
+  reasons.push(describeDistance(input.distanceM, referencePrecision));
   if (location === "poor_accuracy") reasons.push(`GPS accuracy ${Math.round(input.accuracyM ?? 0)} m is too coarse to rely on`);
   reasons.push(
     documents === "match" ? "Aadhaar address matches (pincode and locality)"
@@ -121,7 +151,7 @@ export function assess(input: {
   if (location === "exact") tier = "verified";
   else if (location === "different_city") tier = "conflict";
   else if (location === "same_area" && (documents === "match" || documents === "pincode_only")) tier = "verified";
-  return { tier, location, documents, reasons };
+  return { tier, location, documents, referencePrecision, reasons };
 }
 
 export function summarise(a: AddressAssessment): string {

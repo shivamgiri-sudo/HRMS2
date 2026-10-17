@@ -103,11 +103,15 @@ describe("OpsQualityVisual", () => {
 });
 
 describe("DataHealthChips", () => {
-  it("counts as chips and the over-mandate table behind a toggle", () => {
+  it("over-mandate cost centres in an accent card with a count chip, worst first; none is an empty line", () => {
     const out = renderToStaticMarkup(<DataHealthChips section={{ status: "ok", asOf: "2026-10-15", data: {
-      unmappedProcesses: 3, costCentresWithoutProcess: 7, staleProcesses: 2, overMandate: [{ costCentre: "CC-OVER", seats: 10, headcount: 13 }],
+      unmappedProcesses: 3, costCentresWithoutProcess: 7, staleProcesses: 2, overMandate: [{ costCentre: "CC-A", seats: 10, headcount: 11 }, { costCentre: "CC-OVER", seats: 10, headcount: 13 }],
     } }} />);
-    for (const t of ["Data health", "Unmapped processes", "Cost centres without a process", "Stale processes", "Cost centres over mandate", "CC-OVER", "Over by 3"]) expect(out).toContain(t);
+    for (const t of ["Cost centres over mandate", "2 over", "View as table", "CC-OVER 13 of 10 seats, Over by 3"]) expect(out).toContain(t);
+    expect(out.indexOf("CC-OVER 13")).toBeLessThan(out.indexOf("CC-A 11"));
+    const none = renderToStaticMarkup(<DataHealthChips section={{ status: "ok", asOf: "x", data: { unmappedProcesses: 0, costCentresWithoutProcess: 0, staleProcesses: 0, overMandate: [] } }} />);
+    expect(none).toContain("No cost centre is over its mandated seats.");
+    expect(none).toContain("0 over");
   });
   it("error and empty", () => {
     expect(renderToStaticMarkup(<DataHealthChips section={{ status: "error", data: null, asOf: "x" }} />)).toContain("Data health could not be loaded.");

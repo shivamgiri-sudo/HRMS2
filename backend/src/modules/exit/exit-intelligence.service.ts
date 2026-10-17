@@ -4,6 +4,8 @@ import { db } from "../../db/mysql.js";
 import { calculateEmployeeEngagementHealth } from "../engagement/engagement-health.service.js";
 import { scalar } from "../../shared/dbHelpers.js";
 import { buildScopeWhereClause, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { nocFinalApprovalFrom } from "../payroll/noc-final-approval.service.js";
+import { nocPendingSql } from "../payroll/noc-pending-rule.js";
 
 function riskLabel(score: number): "low" | "medium" | "high" | "critical" {
   if (score >= 75) return "critical";
@@ -162,6 +164,8 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
     scopeParams = clause.params;
   }
 
+  const nocPending = nocPendingSql("nc", "er", "e", await nocFinalApprovalFrom());
+
   const summaryP = db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total,
@@ -202,7 +206,7 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
            FROM exit_clearance_task GROUP BY exit_request_id
        ) clearance ON clearance.exit_request_id = er.id
        LEFT JOIN (
-         SELECT exit_request_id, status,
+         SELECT exit_request_id, status, override_at, payroll_head_approved_at, legacy_source, completed_at,
                 ROW_NUMBER() OVER (PARTITION BY exit_request_id ORDER BY created_at DESC) AS rn
            FROM noc_case
        ) nc ON nc.exit_request_id = er.id AND nc.rn = 1
@@ -212,9 +216,35 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
       WHERE (${scopeWhere})
       ORDER BY
         FIELD(er.status,'submitted','manager_review','hr_review','admin_review','accepted','notice_serving') DESC,
+        -- An exit whose NOC is still pending (the same rule the Ops Control Tower NOC count uses) is
+        -- never pushed past the 200-row cap by newer closed exits: the board's search is client-side
+        -- over these rows, so a capped-out row could not be found at all (WFM report 2026-10-17).
+        COALESCE(${nocPending.sql}, 0) DESC,
         er.created_at DESC
       LIMIT 200`,
-    [...scopeParams],
+    [...scopeParams, ...nocPending.params],
+  );
+
+  // Pending NOC cases that have no exit request at all (HR raised the NOC straight from the NOC
+  // screen). They are counted as NOC-pending in the Ops Control Tower but the board above lists
+  // exit requests only, so they are returned separately for the Command Center to show and search.
+  const nocWithoutExitP = db.execute<RowDataPacket[]>(
+    `SELECT nc.id AS noc_case_id, nc.employee_id, nc.employee_code, nc.employee_name,
+            nc.status AS noc_case_status,
+            DATE_FORMAT(nc.last_working_day, '%Y-%m-%d') AS last_working_day,
+            DATEDIFF(CURDATE(), COALESCE(nc.initiated_at, nc.employee_submitted_at)) AS days_open,
+            b.branch_name, p.process_name
+       FROM noc_case nc
+       JOIN employees e ON e.id = nc.employee_id
+       LEFT JOIN exit_request er ON er.id = nc.exit_request_id
+       LEFT JOIN branch_master b ON b.id = nc.branch_id
+       LEFT JOIN process_master p ON p.id = nc.process_id
+      WHERE er.id IS NULL
+        AND ${nocPending.sql}
+        AND (${scopeWhere})
+      ORDER BY nc.last_working_day DESC
+      LIMIT 500`,
+    [...nocPending.params, ...scopeParams],
   );
 
   const clearanceJoin = bypass
@@ -335,8 +365,8 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
     [...scopeParams],
   );
 
-  const [[summary], [requests], [clearance], [attritionTrend], [reasonBreakdown], [branchBreakdown], [aonBreakdown]] =
-    await Promise.all([summaryP, requestsP, clearanceP, attritionTrendP, reasonBreakdownP, branchBreakdownP, aonBreakdownP]);
+  const [[summary], [requests], [clearance], [attritionTrend], [reasonBreakdown], [branchBreakdown], [aonBreakdown], [nocWithoutExit]] =
+    await Promise.all([summaryP, requestsP, clearanceP, attritionTrendP, reasonBreakdownP, branchBreakdownP, aonBreakdownP, nocWithoutExitP]);
 
   return {
     summary: summary[0] ?? {},
@@ -346,6 +376,7 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
     reason_breakdown: reasonBreakdown,
     branch_breakdown: branchBreakdown,
     aon_breakdown: aonBreakdown,
+    noc_without_exit: nocWithoutExit,
   };
 }
 

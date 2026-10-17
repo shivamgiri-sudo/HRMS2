@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assess, assessDocuments, assessLocation } from "../address-verification-assessment.js";
+import { assess, assessDocuments, assessLocation, describeDistance, referencePrecisionFor } from "../address-verification-assessment.js";
 
 const declared = { line: "Flat 12 Shiv Apartments Rajouri Garden", city: "New Delhi", state: "Delhi", pincode: "110027" };
 const govtMatch = { line: "12 Shiv Apartments, Rajouri Garden", locality: "Rajouri Garden", district: "West Delhi", state: "Delhi", pincode: "110027" };
@@ -45,5 +45,34 @@ describe("assess tiers", () => {
   });
   it("exact GPS verifies on its own", () => {
     expect(assess({ distanceM: 20, accuracyM: 10, declared, govt: [] }).tier).toBe("verified");
+  });
+});
+
+describe("centroid reference is approximate (WFM: own/rented houses shown as 1-2 km away)", () => {
+  it("a declared 6-digit pincode means the reference is the pincode centre", () => {
+    expect(referencePrecisionFor(declared)).toBe("pincode_centre");
+    expect(referencePrecisionFor({ ...declared, pincode: null })).toBe("city_centre");
+    expect(referencePrecisionFor({ line: "x", city: null, state: null, pincode: "12" })).toBe("address");
+  });
+  it("1-2 km from a pincode centre is reported as inside the pincode area, never as a distance from the home", () => {
+    const a = assess({ distanceM: 1400, accuracyM: 20, declared, govt: [] });
+    expect(a.referencePrecision).toBe("pincode_centre");
+    expect(a.reasons[0]).toMatch(/^Inside the declared pincode area/);
+    expect(a.reasons[0]).toMatch(/not a distance from the home/);
+    expect(a.reasons.join(" ")).not.toMatch(/from the declared address area/);
+  });
+  it("beyond the pincode area the distance is labelled approximate and from the centre", () => {
+    expect(describeDistance(8000, "pincode_centre")).toBe(
+      "About 8.0 km from the centre of the declared pincode (approximate: the reference is the pincode centre, not the house)",
+    );
+    expect(describeDistance(1500, "city_centre")).toMatch(/^About 1\.5 km from the centre of the declared city/);
+  });
+  it("only a full-address reference keeps the plain distance wording", () => {
+    expect(describeDistance(816, "address")).toBe("816 m from the declared address area");
+    expect(describeDistance(null, "pincode_centre")).toBe("No GPS captured");
+  });
+  it("tiers are unchanged by the wording", () => {
+    expect(assess({ distanceM: 1400, accuracyM: 20, declared, govt: [govtMatch] }).tier).toBe("verified");
+    expect(assess({ distanceM: 1400, accuracyM: 20, declared, govt: [] }).tier).toBe("needs_hr");
   });
 });
