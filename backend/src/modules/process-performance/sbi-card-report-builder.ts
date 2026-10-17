@@ -676,7 +676,7 @@ export async function buildNcNaDialingValidation(params: {
     campaign: string;
     agent: string;
     lead_id: string | number;
-    phone_number: string;
+    account_no: string;
     status: string;
     term_reason: string;
     comments: string;
@@ -697,15 +697,16 @@ export async function buildNcNaDialingValidation(params: {
   const rows = await vicidialQuery<NcNaRow>(`
     SELECT
       vl.call_date,
-      vl.campaign_id            AS campaign,
-      vl.user                   AS agent,
+      vl.campaign_id                                AS campaign,
+      vl.user                                       AS agent,
       vl.lead_id,
-      vl.phone_number,
+      COALESCE(ll.source_id, vl.phone_number)       AS account_no,
       vl.status,
-      COALESCE(vl.term_reason, '')  AS term_reason,
-      COALESCE(vl.comments, '')     AS comments,
-      COALESCE(vl.length_in_sec, 0) AS length_in_sec
+      COALESCE(vl.term_reason, '')                  AS term_reason,
+      COALESCE(vl.comments, '')                     AS comments,
+      COALESCE(vl.length_in_sec, 0)                 AS length_in_sec
     FROM vicidial_log vl
+    LEFT JOIN vicidial_list ll ON ll.lead_id = vl.lead_id
     WHERE DATE(vl.call_date) BETWEEN ? AND ?
       AND vl.status IN ('NC', 'NAA')
       AND vl.user != 'VDAD'
@@ -722,7 +723,7 @@ export async function buildNcNaDialingValidation(params: {
     "Campaign",
     "Agent",
     "Lead ID",
-    "Phone Number",
+    "Account No",
     "Disposition",
     "Hang-up Code",
     "Remarks",
@@ -763,7 +764,7 @@ export async function buildNcNaDialingValidation(params: {
       x.campaign ?? "",
       x.agent ?? "",
       x.lead_id ?? "",
-      x.phone_number ?? "",
+      x.account_no ?? "",
       x.status ?? "",
       x.term_reason ?? "",
       x.comments ?? "",

@@ -10,11 +10,13 @@ const MONTH_LABEL_TO_PERIOD = {
 const PERIOD_TO_LABEL = Object.fromEntries(Object.entries(MONTH_LABEL_TO_PERIOD).map(([k,v])=>[v,k]));
 
 async function main() {
+  const pw = process.env.DB_PASSWORD;
+  if (!pw) throw new Error('DB_PASSWORD is not set. Run: node --env-file=backend/.env scripts/pnl_full_breakup.mjs');
   const db = await mysql.createConnection({
-    host: '122.184.128.90',
-    user: 'shivam_user',
-    password: 'qwersdfg!@#hjk',
-    database: 'mas_hrms',
+    host: process.env.DB_HOST ?? '122.184.128.90',
+    user: process.env.DB_USER ?? 'shivam_user',
+    password: pw,
+    database: process.env.DB_NAME ?? 'mas_hrms',
     connectTimeout: 30000,
   });
 
@@ -158,10 +160,13 @@ async function main() {
     return L(t.revenue - t.people_cost - t.grn_cost).padStart(7);
   }).join(' '));
 
-  console.log('\n=== GOOGLE SHEET REFERENCE ===');
-  const sheetRev = [298.09, 292.75, 294.53, 292.62, 288.19, 276.47];
-  const sheetSal = [216.71, 211.74, 214.94, 209.44, 201.45, 198.05];
-  const sheetEBIT= [2.43, 2.90, -3.03, 8.19, 11.41, 5.40];
+  // Reference from CEO Dashboard (17-Oct-2026). Revenue = actual invoiced per CEO Dashboard.
+  // EBITDA from CEO Dashboard differs from script — CEO uses net-salary only (no employer PF/ESIC/gratuity).
+  // Script EBITDA uses actual people cost (net + employer) which is the correct P&L basis.
+  console.log('\n=== GOOGLE SHEET REFERENCE (CEO Dashboard Oct-17) ===');
+  const sheetRev = [298.09, 292.75, 294.53, 292.62, 288.19, 277.83];
+  const sheetSal = [216.71, 211.74, 214.94, 209.44, 201.45, 198.05]; // from Financial Performance Sep-13 export
+  const sheetEBIT= [5.26, 4.52, 6.72, 5.56, 12.29, 11.35]; // CEO Dashboard Oct-17 (higher EBITDA = lower cost basis)
   console.log('  Revenue:      ' + sheetRev.map(v => v.toFixed(2).padStart(7)).join(' '));
   console.log('  Salary:       ' + sheetSal.map(v => v.toFixed(2).padStart(7)).join(' '));
   console.log('  EBITDA:       ' + sheetEBIT.map(v => v.toFixed(2).padStart(7)).join(' '));
