@@ -715,6 +715,19 @@ const PENNY_DROP_DONE = ["success", "skipped"];
  * verified evidence, yet all 208 showed as pending). Checking the log alone listed people who had verified
  * (e.g. Suhail Khan, MAS63672) under pending. Mock-provider rows are test data and do not count.
  */
+/**
+ * The penny drop ran, came back manual_review (bank name differs from the joiner's), and HR then reviewed it on the
+ * BGV report and marked the bank check verified. That decision lands only in candidate_bgv_check (the provider's
+ * candidate_bank_verification row stays manual_review and the bridge stays 'initiated'), so these joiners stayed
+ * listed as "waiting for manual bank review" after the review was done (live 2026-10-17: 5 of 35, e.g. MAS63746,
+ * reviewed "Correct" on 2026-10-13). Mock-provider rows are test data and do not count.
+ */
+export const HR_ACCEPTED_BANK_CHECK_SQL = `EXISTS (SELECT 1 FROM ats_onboarding_bridge pb4
+                       JOIN candidate_bgv_check bk ON bk.candidate_id = pb4.candidate_id
+                      WHERE pb4.employee_id = e.id
+                        AND bk.check_type = 'bank' AND bk.status = 'verified'
+                        AND LOWER(COALESCE(bk.provider_key, '')) NOT LIKE '%mock%')`;
+
 const PENNY_DROP_EVIDENCE_SQL = `(
           (latest.penny_drop_status IS NOT NULL AND latest.penny_drop_status IN (${PENNY_DROP_DONE.map((v) => `'${v}'`).join(",")}))
           OR EXISTS (SELECT 1 FROM ats_onboarding_bridge pb
@@ -726,6 +739,7 @@ const PENNY_DROP_EVIDENCE_SQL = `(
                       WHERE pb2.employee_id = e.id
                         AND LOWER(COALESCE(pv.verification_status, '')) = 'verified'
                         AND LOWER(COALESCE(pv.verification_method, '')) <> 'mock')
+          OR ${HR_ACCEPTED_BANK_CHECK_SQL}
         )`;
 
 const PENNY_DROP_LATEST_JOIN = `LEFT JOIN (
