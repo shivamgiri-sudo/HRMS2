@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { isFinanceSheetPeriod } from "./pnl-finance-sheet.js";
 
 /**
  * OPEN-BUDGET RESERVE (owner accounting rule 2026-10-06). Live P&L counts a budget line at its full
@@ -27,6 +28,8 @@ const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 export async function readOpenBudgetReserve(period: string): Promise<OpenBudgetReserve> {
   const out: OpenBudgetReserve = { byCostCentre: new Map(), unallocatedByBranch: new Map() };
   if (!/^\d{4}-\d{2}$/.test(period) || !(await tableExists("finance_budget_line"))) return out;
+  // Months Finance closed in db_bill follow its P&L sheet (pnl-finance-sheet.ts), which carries no HRMS budget headroom.
+  if (isFinanceSheetPeriod(period)) return out;
   const hasSubheadClosure = await tableExists("finance_budget_subhead_closure");
   const hasCcClosure = await tableExists("finance_budget_cost_centre_closure");
 

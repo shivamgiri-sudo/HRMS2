@@ -34,8 +34,10 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
   it("readGrnSpend has ONE legacy source, the db_bill mirror, read for periods before 2026-10 only (owner rules 2026-10-12, 2026-10-16)", () => {
     const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
     const mirror = service.slice(service.indexOf("async function readLegacyMirrorSpend("), service.indexOf("export async function readGrnSpend("));
-    expect(mirror.split("FROM grn_entry_snapshot").length - 1).toBe(1);
-    expect(mirror.split("LEFT JOIN grn_entry_line_snapshot").length - 1).toBe(1);
+    const from = service.slice(service.indexOf("function mirrorFromWhere("), service.indexOf("const CAPEX_SUB_HEAD_SQL"));
+    expect(from.split("FROM grn_entry_snapshot").length - 1).toBe(1);
+    expect(from.split("LEFT JOIN grn_entry_line_snapshot").length - 1).toBe(1);
+    expect(mirror).toContain("${mirrorFromWhere(");
     expect(mirror, "no correlated subquery inside the mirror query: it made the consumed read take 33-46 s on prod").not.toContain("NOT EXISTS");
     const body = readerBody();
     expect(body, "billed history is consumed, never reserved: reading it for both kinds counted every line twice").toContain('kind === "consumed" && isHistoricalPeriod && (await tableExists("grn_entry_line_snapshot"))');
@@ -112,8 +114,8 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
 describe("legacy mirror leg is on the MAS Callnet P&L sheet's basis (owner rule 2026-10-17)", () => {
   it("reads particulars ex-GST, db_bill's RejectDate, MAS Callnet only, no negative-id rows", () => {
     const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
-    const mirror = service.slice(service.indexOf("async function readLegacyMirrorSpend("), service.indexOf("export async function readGrnSpend("));
-    expect(mirror).toContain("COALESCE(CASE WHEN l.entry_type = 'Imprest' THEN l.total ELSE l.amount END, ge.amount) AS amount");
+    const mirror = service.slice(service.indexOf("const MIRROR_AMOUNT_SQL"), service.indexOf("export async function readGrnSpend("));
+    expect(mirror).toContain("COALESCE(CASE WHEN l.entry_type = 'Imprest' THEN l.total ELSE l.amount END, ge.amount)");
     expect(mirror).toContain("ge.rejected_at IS NULL");
     expect(mirror).not.toContain("ge.is_rejected = 0");
     expect(mirror).toContain("ge.bill_source_id > 0");

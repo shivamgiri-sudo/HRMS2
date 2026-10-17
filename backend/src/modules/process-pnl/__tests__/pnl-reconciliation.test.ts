@@ -1,4 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// These fixtures use 2026 months that Finance closed in db_bill; the rules under test are the HRMS ones that apply from
+// 2026-10, so the Finance-sheet switch (pnl-finance-sheet.ts, tested in pnl-finance-sheet.test.ts) is held off here.
+vi.mock("../pnl-finance-sheet.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../pnl-finance-sheet.js")>()),
+  isFinanceSheetPeriod: () => false,
+  readFinanceSheetLines: async () => [],
+  readFinanceSheetPayroll: async () => null,
+  readFinanceSheetPeopleCost: async () => null,
+}));
 
 const { execute, tableExists } = vi.hoisted(() => ({
   execute: vi.fn(),

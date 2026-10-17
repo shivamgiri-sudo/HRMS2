@@ -1,3 +1,4 @@
+import { readFinanceSheetPeopleCost } from "./pnl-finance-sheet.js";
 import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { getCachedAllocationSummary, normalizePeriod } from "./canonical-pnl.service.js";
@@ -140,6 +141,49 @@ const ADDITIVE_FIELDS: (keyof BpoPnlRow)[] = [
   "agentSalary", "dscPeople", "dscNonPeople", "dsc", "bmcPeople", "bmcNonPeople", "bmc",
   "contribution", "ebitda", "depreciation", "amortization", "ebit", "financeCost", "pbt", "tax", "pat",
 ];
+
+/**
+ * Revenue per branch rebuilt from the cost-centre lines: a cost centre counts in the branch of its process's column, falling back to
+ * its own branch. Without this a branch column (cost centre's branch) and the sum of its process columns (process's branch) disagree:
+ * NOIDA, May-26, Rs 134.62 L against Rs 121.45 L. Used for Finance-sheet months only; the source is returned unchanged when its
+ * cost-centre lines do not add up to its branch total.
+ */
+function revenueBranchByProcess(src: ActualsByKey, rows: BpoPnlRow[]): ActualsByKey {
+  if (!src.ccKeys || !src.byCostCentre.size) return src;
+  const sumOf = (m: Map<string, number>) => [...m.values()].reduce((t, v) => t + v, 0);
+  if (Math.abs(sumOf(src.byCostCentre) - sumOf(src.byBranch)) > 1) return src;
+  const processBranch = new Map<string, string>();
+  for (const row of rows) if (row.processId && row.branchId) processBranch.set(String(row.processId), String(row.branchId));
+  const byBranch = new Map<string, number>();
+  for (const [cc, amount] of src.byCostCentre) {
+    const key = src.ccKeys.get(cc);
+    const branch = (key?.processId ? processBranch.get(key.processId) : undefined) ?? key?.branchId ?? null;
+    if (branch) byBranch.set(branch, (byBranch.get(branch) ?? 0) + amount);
+  }
+  return { ...src, byBranch };
+}
+
+/** Branch columns for a Finance-sheet month that the process engine has no row for (AHMEDABAD-NEELAKANTH, closed in June 2026,
+ *  still carried rent and GRNs on the sheet). Only branches the caller may see. */
+async function financeSheetOnlyBranchColumns(
+  existing: { column: StatementColumn }[],
+  people: PeopleCostByKey,
+  idc: ActualsByKey,
+  filters: Partial<PnlQueryFilters>,
+): Promise<{ column: StatementColumn; data: Record<string, unknown> }[]> {
+  const have = new Set(existing.map((c) => c.column.id));
+  const allowed = (filters as { branchIds?: string[] }).branchIds ?? (filters.branchId ? [String(filters.branchId)] : null);
+  const ids = [...new Set([...people.byBranch.keys(), ...idc.byBranch.keys()])]
+    .filter((id) => id && !have.has(id) && (!allowed || allowed.includes(id)));
+  if (!ids.length) return [];
+  const names = await queryRows<RowDataPacket>(
+    `SELECT id, branch_name FROM branch_master WHERE id IN (${ids.map(() => "?").join(",")})`, ids);
+  const nameOf = new Map(names.map((r) => [String(r.id), String(r.branch_name)]));
+  return ids.filter((id) => nameOf.has(id)).map((id) => ({
+    column: { id, code: id, name: nameOf.get(id)!, branchName: nameOf.get(id)!, processName: null, status: null },
+    data: {},
+  }));
+}
 
 function aggregateByBranch(rows: BpoPnlRow[]): { column: StatementColumn; data: Record<string, unknown> }[] {
   const byBranch = new Map<string, BpoPnlRow[]>();
@@ -392,11 +436,17 @@ function enrichColumn(
   const baseRevenue = useBilled ? billedPlusEstimate : useCanonical ? existingRevenue : plannedRevenue;
   // The canonical figure already carries the forecast (see above); the billed and planned maps do not.
   const reconciledBranchRevenue = !key.processId && key.branchId ? branchRevenue?.get(key.branchId) : undefined;
-  const recognizedRevenue = reconciledBranchRevenue !== undefined
-    ? reconciledBranchRevenue
-    : baseRevenue + (useCanonical ? 0 : (forecastAmount ?? 0));
+  // A month Finance closed in db_bill (pnl-finance-sheet.ts): what db_bill invoiced, nothing else — no seat
+  // estimate, planned seats or forecast. Bla Bli Blu, Aug-26, showed Rs 7.56 L of planned seats on top of the
+  // Rs 6.72 L invoiced under Raritiq; DU Digital its Rs 4.00 L plan.
+  const financeSheetMonth = people.fromFinanceSheet === true;
+  const recognizedRevenue = financeSheetMonth
+    ? invoiced
+    : reconciledBranchRevenue !== undefined
+      ? reconciledBranchRevenue
+      : baseRevenue + (useCanonical ? 0 : (forecastAmount ?? 0));
   out.recognizedRevenue = recognizedRevenue;
-  out.revenueForecast = forecastAmount ?? 0;
+  out.revenueForecast = financeSheetMonth ? 0 : forecastAmount ?? 0;
   out.plannedRevenue = plannedRevenue;
   out.invoicedRevenue = invoiced;
   out.revenueEstimated = (!periodOpen && billedPlusEstimate > 0) ? estimated : 0;
@@ -495,9 +545,11 @@ function enrichColumn(
   const hasSnapshot = Boolean(snapshot)
     && (snapshot!.agent_salary + snapshot!.dsc_people + snapshot!.bmc_people) > 0;
 
-  const agentSalary = hasSnapshot ? snapshot!.agent_salary : unassignedBranchColumn ? 0 : n(out.agentSalary);
-  const dscSalary = hasSnapshot ? snapshot!.dsc_people : unassignedBranchColumn ? 0 : n(out.dscSalary ?? out.dscPeople);
-  const bmcSalary = hasSnapshot ? snapshot!.bmc_people : unassignedBranchColumn ? 0 : n(out.bmcSalary ?? out.bmcPeople);
+  // Finance's P&L sheet is the whole month's salary: a column it does not name carries none (pnl-finance-sheet.ts).
+  const noFallback = unassignedBranchColumn || people.fromFinanceSheet === true;
+  const agentSalary = hasSnapshot ? snapshot!.agent_salary : noFallback ? 0 : n(out.agentSalary);
+  const dscSalary = hasSnapshot ? snapshot!.dsc_people : noFallback ? 0 : n(out.dscSalary ?? out.dscPeople);
+  const bmcSalary = hasSnapshot ? snapshot!.bmc_people : noFallback ? 0 : n(out.bmcSalary ?? out.bmcPeople);
   out.agentSalary = agentSalary;
   /*
    * Indirect Cost = GRN Consumed + GRN Committed (reserved), both ex-GST — owner rule 2026-09-24:
@@ -836,6 +888,9 @@ async function getStatementSummary(filters: Partial<PnlQueryFilters>) {
  * (__tests__/payroll-statement-branch-view.test.ts).
  */
 export async function getStatementPeopleCost(period: string): Promise<PeopleCostByKey> {
+  // Months Finance closed in db_bill: salary as Finance's P&L sheet calculates it (pnl-finance-sheet.ts).
+  const sheet = await readFinanceSheetPeopleCost(period);
+  if (sheet) return sheet;
   const actual = await getActualPeopleCost(period);
   if (actual.byBranch.size === 0 && actual.byProcess.size === 0) return getRunningPeopleCost(period);
   // Some cost centres run, others not yet: their staff keep the accrual (pnl-payroll-coverage.ts).
@@ -976,7 +1031,13 @@ export async function getStatement(
   const unproratedByBranch = await unproratedReader(periodCode).catch(() => new Map<string, { staff: number; amount: number }>());
   const forecastCcs = forecast ? [...forecast.byCostCentre.keys()] : [];
   const revenue = forecastCcs.length ? withoutCostCentres(driverRevenue, forecastCcs) : driverRevenue;
-  const invoicedRevenue = forecastCcs.length ? withoutCostCentres(invoicedRevenueAll, forecastCcs) : invoicedRevenueAll;
+  const invoicedRevenueNoForecast = forecastCcs.length ? withoutCostCentres(invoicedRevenueAll, forecastCcs) : invoicedRevenueAll;
+  // A month Finance closed in db_bill (pnl-finance-sheet.ts) reads its branch revenue the way its process columns read it, so a
+  // branch is the sum of its processes, as on Finance's sheet.
+  const invoicedRevenue = people.fromFinanceSheet ? revenueBranchByProcess(invoicedRevenueNoForecast, rows) : invoicedRevenueNoForecast;
+  if (viewBy === "branch" && people.fromFinanceSheet) {
+    columnData = [...columnData, ...(await financeSheetOnlyBranchColumns(columnData, people, idc, filters))];
+  }
   const estimate = forecastCcs.length ? withoutCostCentres(rawEstimate, forecastCcs) : rawEstimate;
   columnData = columnData.map((item) => {
     const data = enrichColumn(

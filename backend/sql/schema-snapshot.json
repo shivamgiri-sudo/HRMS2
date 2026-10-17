@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1369,
-  "columnCount": 20006,
+  "tableCount": 1370,
+  "columnCount": 20028,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -16485,6 +16485,30 @@
       "updated_by",
       "created_at",
       "updated_at"
+    ],
+    "pnl_finance_sheet_line": [
+      "id",
+      "period_code",
+      "sheet_branch",
+      "sheet_process",
+      "branch_id",
+      "process_id",
+      "revenue",
+      "agent_salary",
+      "dsc_salary",
+      "bmc_salary",
+      "idc_total",
+      "idc_communication",
+      "idc_computer_hire",
+      "idc_office_rent",
+      "idc_cam_misc",
+      "idc_electricity",
+      "idc_staff_welfare",
+      "idc_others",
+      "interest",
+      "operating_profit",
+      "source_ref",
+      "imported_at"
     ],
     "pnl_manual_adjustment": [
       "id",

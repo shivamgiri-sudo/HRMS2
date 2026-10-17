@@ -1,3 +1,4 @@
+import { isFinanceSheetPeriod, readFinanceSheetPayroll, type FinanceSheetPayroll } from "./pnl-finance-sheet.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
@@ -490,6 +491,9 @@ async function readBudgets(period: string) {
  * reader getRunningPeopleCost) follows it too, via payrollAttributionSql.
  */
 async function readPayroll(period: string): Promise<Map<string, { cost: number; staff: number }>> {
+  // Months Finance closed in db_bill: the salary of Finance's P&L sheet, on each process's cost centre (pnl-finance-sheet.ts).
+  const sheet = await readFinanceSheetPayroll(period);
+  if (sheet) return sheet.byCostCentre;
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
   const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
@@ -561,11 +565,34 @@ function processClause(col: string, processIds: string[] | undefined): { sql: st
   return { sql: `AND ${col} IN (${marks(processIds)})`, params: processIds };
 }
 
+/** The sheet salary with no HRMS cost centre, per branch, in the shape readUnallocatedPayroll returns. A process view keeps
+ *  only the sheet lines of its processes; lines with no process belong to no process view. */
+async function sheetUnallocated(
+  sheet: FinanceSheetPayroll,
+  branchIds: string[] | undefined,
+  processIds?: string[],
+): Promise<Array<{ branchId: string | null; branchName: string; cost: number; staff: number }>> {
+  const byBranch = new Map<string, number>();
+  for (const u of sheet.unallocated) {
+    if (branchIds?.length && !branchIds.includes(u.branchId)) continue;
+    if (processIds !== undefined && (!u.processId || !processIds.includes(u.processId))) continue;
+    byBranch.set(u.branchId, (byBranch.get(u.branchId) ?? 0) + u.cost);
+  }
+  if (!byBranch.size) return [];
+  const ids = [...byBranch.keys()];
+  const [names] = await db.execute<RowDataPacket[]>(
+    `SELECT id, branch_name FROM branch_master WHERE id IN (${marks(ids)})`, ids);
+  const nameOf = new Map(names.map((r) => [String(r.id), String(r.branch_name)]));
+  return ids.map((id) => ({ branchId: id, branchName: nameOf.get(id) ?? "Unassigned", cost: byBranch.get(id) ?? 0, staff: 0 }));
+}
+
 async function readUnallocatedPayroll(
   period: string,
   branchIds: string[] | undefined,
   processIds?: string[],
 ): Promise<Array<{ branchId: string | null; branchName: string; cost: number; staff: number }>> {
+  const sheet = await readFinanceSheetPayroll(period);
+  if (sheet) return sheetUnallocated(sheet, branchIds, processIds);
   if (!(await tableExists("salary_prep_line"))) return [];
   const [posted] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS line_count
@@ -756,13 +783,17 @@ function readPeriodSources(period: string) {
         runningSalaryFreshness(period),
       ]),
       exceptions(period),
-      getForecastRevenueByCostCentre(period),
+      // No revenue forecast in a month Finance closed in db_bill: the invoice is the revenue (pnl-finance-sheet.ts).
+      isFinanceSheetPeriod(period) ? Promise.resolve(new Map()) : getForecastRevenueByCostCentre(period),
       readOpenBudgetReserve(period),
     ]);
     // Legacy (db_bill mirror) spend used up budget the HRMS lines never saw: take it off the open headroom so it is not counted twice.
     const legacy = (await consumedP.catch(() => [] as GrnSpendRow[])).filter((row) => row.source === "db_bill_mirror");
     const openBudgetAdjusted = legacy.length ? offsetReserveByLegacySpend(openBudget, legacy) : openBudget;
-    return { revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, forecasts, openBudget: openBudgetAdjusted };
+    // Months Finance closed in db_bill (pnl-finance-sheet.ts): the consumed GRN rows, so spend that no Live P&L row carries can
+    // still count in its branch, as on the Statement.
+    const sheetMonthGrnRows = isFinanceSheetPeriod(period) ? await consumedP.catch(() => [] as GrnSpendRow[]) : [];
+    return { revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, forecasts, openBudget: openBudgetAdjusted, sheetMonthGrnRows };
   });
 }
 
@@ -804,7 +835,8 @@ async function buildPnlReconciliation(
   // nobody billed. A failure here degrades to "no estimate", never to a broken Live P&L.
   // Read in parallel with the period sources (it depends on none of them).
   const asOfDate = filters.asOfDate ?? getCurrentDateIST();
-  const estimateApplies = isEstimateWindow(period, asOfDate);
+  // A month Finance closed in db_bill counts what db_bill invoiced, never a seat estimate (pnl-finance-sheet.ts).
+  const estimateApplies = isEstimateWindow(period, asOfDate) && !isFinanceSheetPeriod(period);
 
   const [allCostCentres, sources, unallocated, seatBilling] = await Promise.all([
     readCostCentres(filters),
@@ -994,6 +1026,26 @@ async function buildPnlReconciliation(
     current.marginPct = pct(current.operatingProfit, current.revenue);
     unallocatedBudgetReserve += amount;
   }
+  // A Finance-sheet month: GRN spend no row carries — db_bill GRNs with no cost centre HRMS can place or on a cost centre this
+  // view does not list (another company's code), and the branch part of the Finance allocation — is branch and company cost,
+  // never a row, so Live P&L adds up to the Statement.
+  const listedCostCentres = new Set(rows.map((row) => row.costCentreId));
+  const grnUnallocated = new Map<string, number>();
+  for (const row of sources.sheetMonthGrnRows) {
+    if (!row.branchId || (row.costCentreId && listedCostCentres.has(row.costCentreId))) continue;
+    grnUnallocated.set(row.branchId, (grnUnallocated.get(row.branchId) ?? 0) + row.amount);
+  }
+  let unallocatedGrn = 0;
+  for (const [branchId, amount] of grnUnallocated) {
+    if (viewBranches && !viewBranches.has(branchId)) continue;
+    if (filters.processIds) continue;
+    const current = branchMap.get(branchId);
+    if (!current) continue;
+    current.grnActual += amount;
+    current.operatingProfit -= amount;
+    current.marginPct = pct(current.operatingProfit, current.revenue);
+    unallocatedGrn += amount;
+  }
   const unallocatedCost = unallocatedPayroll.reduce((t, u) => t + u.cost, 0);
   const unallocatedStaff = unallocatedPayroll.reduce((t, u) => t + u.staff, 0);
 
@@ -1009,7 +1061,7 @@ async function buildPnlReconciliation(
     revenueEstimated: sum((row) => row.revenueEstimated),
     estimatedCostCentres: rows.filter((row) => row.revenueBasis === "ESTIMATED").length,
     perDayRevenue: sum((row) => row.perDayRevenue),
-    grnActual: sum((row) => row.grnActual),
+    grnActual: sum((row) => row.grnActual) + unallocatedGrn,
     grnEstimated: sum((row) => row.grnEstimated),
     openBudgetReserve: sum((row) => row.openBudgetReserve) + unallocatedBudgetReserve,
     revenueForecast: sum((row) => row.revenueForecast ?? 0),
@@ -1018,7 +1070,7 @@ async function buildPnlReconciliation(
     branchBudget: Array.from(branchMap.values()).reduce((total, row) => total + row.branchBudget, 0),
     payrollCost: sum((row) => row.payrollCost) + unallocatedCost,
     staffPaid: sum((row) => row.staffPaid) + unallocatedStaff,
-    operatingProfit: sum((row) => row.operatingProfit) - unallocatedCost - unallocatedBudgetReserve,
+    operatingProfit: sum((row) => row.operatingProfit) - unallocatedCost - unallocatedBudgetReserve - unallocatedGrn,
     marginPct: null,
     depreciation: belowTheLine.depreciation,
     financeCost: belowTheLine.financeCost,

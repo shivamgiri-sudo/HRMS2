@@ -417,6 +417,9 @@ export interface PeopleCostByKey {
   coverageByBranch: Map<string, PeopleCoverage>;
   coverageByProcess: Map<string, PeopleCoverage>;
   asOfDate: string | null;
+  /** Set when the figures are Finance's P&L sheet (pnl-finance-sheet.ts): complete for the month, so a column the
+   *  sheet does not name has no people cost — it must not fall back to HRMS payroll. */
+  fromFinanceSheet?: boolean;
 }
 
 const emptyBuckets = (): Record<PnlPeopleBucket, number> =>

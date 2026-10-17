@@ -4,6 +4,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import { grnAllocationExGstSql, grnRequestExGstSql } from "./pnl-ex-gst.js";
 import { nonVoidRunSql } from "../payroll/run-status.js";
 import { hrmsBillRevenueEnabled, hrmsCreditRevenueSql, hrmsInvoiceRevenueSql } from "./pnl-hrms-bill-revenue.js";
+import { financeAllocationRows, financeSheetCostCentres, isFinanceSheetPeriod, readFinanceSheetLines } from "./pnl-finance-sheet.js";
 
 /**
  * The two P&L lines that already exist as data but were never read by the statement.
@@ -280,6 +281,56 @@ const ORDINARY_GRN_CONSUMED_SQL =
 /** …and at which it still holds a reservation (approved by Branch/Accounts Head, not yet Finance Head). */
 const ORDINARY_GRN_RESERVED_SQL = "'branch_head_approved','accounts_head_approved'";
 
+/** Leg 3's amount: a Vendor particular ex-GST, an Imprest at total, the header amount when a GRN has no particulars. */
+const MIRROR_AMOUNT_SQL = "COALESCE(CASE WHEN l.entry_type = 'Imprest' THEN l.total ELSE l.amount END, ge.amount)";
+
+/**
+ * Leg 3's rows: one per GRN particular (cost centre `ccm`, branch `bm`), already filtered to what the P&L counts. Shared by the
+ * leg itself and by the Finance-sheet allocation (pnl-finance-sheet.ts), which must see exactly the same GRNs.
+ */
+function mirrorFromWhere(processJoinSql: string): string {
+  return `FROM grn_entry_snapshot ge
+       LEFT JOIN grn_entry_line_snapshot l ON l.grn_source_id = ge.bill_source_id
+       LEFT JOIN cost_centre_master ccm ON ccm.bill_source_id = l.cost_centre_source_id
+       ${processJoinSql}
+       -- One branch per name: three branch_master rows are called HEAD OFFICE (two inactive), and joining on the name alone
+       -- counted every Head Office GRN three times.
+       LEFT JOIN (SELECT UPPER(TRIM(branch_name)) AS name_key, COALESCE(MAX(CASE WHEN active_status = 1 THEN id END), MAX(id)) AS id
+                    FROM branch_master GROUP BY UPPER(TRIM(branch_name))) bm
+              ON bm.name_key = UPPER(TRIM(ge.branch_name)) COLLATE utf8mb4_unicode_ci
+      WHERE ge.period_code = ? AND ge.bill_source_id > 0 AND ge.rejected_at IS NULL
+        AND (ge.entry_status IS NULL OR ge.entry_status != 'reconciliation')
+        AND (ge.comp_id IS NULL OR ge.comp_id = 1)
+        AND (ge.grn_no IS NULL OR (ge.grn_no NOT LIKE 'IDC/%' AND ge.grn_no NOT LIKE 'Pikquick/%'))`;
+}
+
+/**
+ * db_bill asset (capital) sub-heads ("Computers 26-27 COST", "Computer Software Cost 2026 - 27", "ELECTRICAL INSTALLATIONS - COST",
+ * "FURNITURE & FIXTURE - COST", ...). They stay in the P&L (owner, 2026-10-17), but the Finance sheet never carries them, so the
+ * sheet's indirect cost is compared with the db_bill GRNs WITHOUT them when the Finance allocation is worked out.
+ */
+const CAPEX_SUB_HEAD_SQL = `UPPER(sh.head_name) REGEXP '^(COMPUTER|ELECTRICAL INSTALLATIONS|FURNITURE & FIXTURE|AIRCONDITIONNG|OTHER-).*COST'`;
+
+/** The period's db_bill GRN spend without asset sub-heads, by branch and process ("branch|process", process "" when none). */
+async function readMirrorOperatingSpend(periodCode: string): Promise<Map<string, number>> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(bm.id, ccm.branch_id) AS branch_id, COALESCE(pc5.process_id, ccm.process_id) AS process_id,
+            SUM(${MIRROR_AMOUNT_SQL}) AS amount
+       ${mirrorFromWhere(`LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc5 ON pc5.cost_centre_id = ccm.id`)}
+        AND NOT EXISTS (SELECT 1 FROM finance_expense_head_snapshot sh
+                         WHERE sh.head_type = 'subhead' AND sh.bill_source_id = ge.sub_head_id AND ${CAPEX_SUB_HEAD_SQL})
+      GROUP BY 1, 2`,
+    [periodCode],
+  );
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.branch_id) continue;
+    const key = `${r.branch_id}|${r.process_id ?? ""}`;
+    out.set(key, (out.get(key) ?? 0) + Number(r.amount ?? 0));
+  }
+  return out;
+}
+
 /**
  * Leg 3 of readGrnSpend: the db_bill mirror. Only read for periods before 2026-10, when db_bill was Finance's GRN book and the
  * MAS Callnet P&L sheet was built from it; legs 1-2 (HRMS-raised GRNs) are not read for those periods, so nothing here can count twice.
@@ -304,22 +355,10 @@ export async function readLegacyMirrorSpend(
 ): Promise<RowDataPacket[]> {
   const [lines] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(bm.id, ccm.branch_id) AS branch_id, ccm.id AS cost_centre_id, ${processCol(null, "pc3")} AS process_id,
-            COALESCE(CASE WHEN l.entry_type = 'Imprest' THEN l.total ELSE l.amount END, ge.amount) AS amount,
+            ${MIRROR_AMOUNT_SQL} AS amount,
             COALESCE(ge.grn_no, CAST(ge.bill_source_id AS CHAR)) AS grn_ref, ge.vendor AS vendor,
             COALESCE(l.particular, ge.description) AS particular
-       FROM grn_entry_snapshot ge
-       LEFT JOIN grn_entry_line_snapshot l ON l.grn_source_id = ge.bill_source_id
-       LEFT JOIN cost_centre_master ccm ON ccm.bill_source_id = l.cost_centre_source_id
-       ${processJoin("pc3")}
-       -- One branch per name: three branch_master rows are called HEAD OFFICE (two inactive), and joining on the name alone
-       -- counted every Head Office GRN three times.
-       LEFT JOIN (SELECT UPPER(TRIM(branch_name)) AS name_key, COALESCE(MAX(CASE WHEN active_status = 1 THEN id END), MAX(id)) AS id
-                    FROM branch_master GROUP BY UPPER(TRIM(branch_name))) bm
-              ON bm.name_key = UPPER(TRIM(ge.branch_name)) COLLATE utf8mb4_unicode_ci
-      WHERE ge.period_code = ? AND ge.bill_source_id > 0 AND ge.rejected_at IS NULL
-        AND (ge.entry_status IS NULL OR ge.entry_status != 'reconciliation')
-        AND (ge.comp_id IS NULL OR ge.comp_id = 1)
-        AND (ge.grn_no IS NULL OR (ge.grn_no NOT LIKE 'IDC/%' AND ge.grn_no NOT LIKE 'Pikquick/%'))`,
+       ${mirrorFromWhere(processJoin("pc3"))}`,
     [periodCode],
   );
 
@@ -389,7 +428,7 @@ export async function readGrnSpend(
   // Fix: for historical periods (< 2026-10), skip L1+L2 (HRMS GRNs) and use only L3 (db_bill
   // mirror) + L4 (manual corrections). For Oct 2026+, Finance enters GRNs directly in HRMS so
   // L1+L2 are the only source (no mirror).
-  const isHistoricalPeriod = periodCode < "2026-10";
+  const isHistoricalPeriod = isFinanceSheetPeriod(periodCode);
 
   if (!isHistoricalPeriod) {
     // Leg 1 — Smart GRN per-cost-centre allocation rows.
@@ -442,6 +481,21 @@ export async function readGrnSpend(
   // Historical periods (Apr-Sep 2026): only the mirror counts; L1+L2 are skipped (see above).
   if (kind === "consumed" && isHistoricalPeriod && (await tableExists("grn_entry_line_snapshot"))) {
     rows.push(...(await readLegacyMirrorSpend(periodCode, scope, withProcess, processJoin, processCol, withDetail)));
+    // Leg 5 — the Finance allocation: what Finance's P&L sheet carries as indirect cost beyond the db_bill GRNs
+    // (pnl-finance-sheet.ts). Only for months the sheet has been loaded for.
+    const sheetLines = await readFinanceSheetLines(periodCode);
+    if (sheetLines.length) {
+      const allocation = financeAllocationRows(sheetLines, await readMirrorOperatingSpend(periodCode));
+      const ccOf = await financeSheetCostCentres(allocation.map((a) => a.processId ?? ""));
+      for (const a of allocation) {
+        rows.push({
+          branch_id: a.branchId, cost_centre_id: a.processId ? ccOf.get(a.processId) ?? null : null,
+          process_id: withProcess ? a.processId : null, amount: a.amount,
+          source: withDetail ? "finance_sheet_allocation" : null, grn_ref: null,
+          label: withDetail ? "Finance allocation — P&L sheet indirect cost not booked as a db_bill GRN" : null, bill_date: null,
+        } as unknown as RowDataPacket);
+      }
+    }
   }
 
   const text = (v: unknown) =>
