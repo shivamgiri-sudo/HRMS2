@@ -251,7 +251,9 @@ export function buildGrnVoucher(
   // TDS on the value before GST, as the legacy sheet does (10% of Rs 4,38,900 rent = 43,890).
   let tdsAmount = 0;
   let tdsLedger = "";
-  if (input.tds && input.tds.ratePct > 0) {
+  // Imprest GRNs never carry TDS: the legacy imprest sheet (MASAUGIMP.xlsx, 126 vouchers incl. repairs and promotions)
+  // has two lines on every voucher and no TDS, and these are small cash spends by the float holder.
+  if (input.grnType !== "imprest" && input.tds && input.tds.ratePct > 0) {
     tdsLedger = input.tds.ledger?.trim() || names.tdsLedgers[input.tds.section] || "";
     if (!tdsLedger)
       return fail(`No Tally TDS ledger is set for section ${input.tds.section}.`);

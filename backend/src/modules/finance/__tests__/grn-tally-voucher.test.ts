@@ -169,7 +169,25 @@ describe("buildGrnVoucher — legacy JrnlP import shape", () => {
       }),
     );
     expect(v.entries.at(-1)).toEqual({ ledger: "Deepak Kashyap Imp A/C", side: "Cr", amount: 13038 });
-    expect(v.header.voucherNumber).toBe("DK AXIS CARD/Mas/9/26/126");
+    // Legacy imprest sheet: the voucher number is the GRN number only, dated the approval day.
+    expect(v.header.voucherNumber).toBe("Mas/9/26/126");
+    expect(v.header.date).toBe("2026-09-14");
+    expect(v.header.narration).toBe("Office rental charges f/m of Sep-26 Tower1 302 3rd floor GRN NO.: Mas/9/26/126");
+  });
+
+  it("imprest GRN never carries TDS, even when the sub-head has a rule (legacy imprest sheet has none)", () => {
+    const v = ok(
+      base({
+        grnType: "imprest", vendorLedger: null, imprestLedger: "Aman Lawaniya", expenseLedger: "Business Promotion Expenses",
+        amountWithoutTax: 170, taxAmount: 0, gross: 170, gstType: "none",
+        tds: { section: "194C", ratePct: 2, basis: "Sub-head 194C @ 2%" },
+      }),
+    );
+    expect(v.tdsAmount).toBe(0);
+    expect(v.entries).toEqual([
+      { ledger: "Business Promotion Expenses", side: "Dr", amount: 170 },
+      { ledger: "Aman Lawaniya", side: "Cr", amount: 170 },
+    ]);
   });
 
   it("missing bill number prints NA, as the legacy sheet does", () => {
