@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { BranchOverview } from "../../../../../../backend/src/modules/branch-head-health/types";
-import { PeopleVisual, buildPeople } from "../sections/PeopleVisual";
+import { PeopleVisual, buildPeople, lobSlices } from "../sections/PeopleVisual";
 import { AttendanceVisual, buildAttendance, noPresentNote, shrinkageChange } from "../sections/AttendanceVisual";
 import { AttritionVisual, RISK_TIER_COLORS, buildAttrition } from "../sections/AttritionVisual";
 import * as fx from "./fixtures";
@@ -22,7 +22,7 @@ describe("PeopleVisual", () => {
     expect(out).toContain("Over by 10");
     expect(out.match(/Over by/g)?.length).toBe(1);
     expect(out.match(/No mandate/g)?.length).toBe(2);
-    expect(out).toContain('class="bh-marker"');
+    expect(out).toContain("Headcount versus mandate by process: Alpha Voice 60 of 50, Beta Chat 40");
   });
   it("table twin carries every process with joined and left month to date", () => {
     const b = buildPeople(fx.people);
@@ -39,16 +39,18 @@ describe("PeopleVisual", () => {
     const b = buildPeople(d);
     expect(b.lobTable.columns).toEqual(["Item", "A", "B", "C", "Other", "Total"]);
     expect(flat(b.lobTable)).toContain("Active|60|50|40|60|210");
+    expect(lobSlices([...d.byLob]).map((x) => [x.label, x.value])).toEqual([["A", 60], ["B", 50], ["C", 40], ["Other", 60]]);
     const o = render(PeopleVisual, { people: fx.ok(d) });
-    expect(o).toContain("All lines of business");
-    expect(o).toContain(">F<");
+    expect(o).toContain("Active headcount by line of business: A 60, B 50, C 40, Other 60");
   });
   it("empty, error and missing", () => {
     expect(render(PeopleVisual, { people: fx.emptySection() })).toContain("No headcount data for this date");
     expect(render(PeopleVisual, { people: fx.err("boom") })).toContain("Headcount could not be loaded.");
     expect(render(PeopleVisual, { people: undefined as never })).toContain("Not available yet");
     const zero = { ...fx.people, byProcess: [], byLob: [], totalActive: 0, mandateSeatsTotal: null };
-    expect(render(PeopleVisual, { people: fx.ok(zero) })).toContain("No data");
+    const z = render(PeopleVisual, { people: fx.ok(zero) });
+    expect(z).toContain("No processes with headcount");
+    expect(z).toContain("No line of business mapped");
   });
 });
 
@@ -89,7 +91,7 @@ describe("AttendanceVisual", () => {
     expect(flat(b.byProcessTable)).toContain("Beta Chat|10|9|1|20");
   });
   it("keeps the shift-slot detail, late by process and late by team without names", () => {
-    for (const t of ["Shift-slot detail", "09:00-18:00", "Late arrivals by process", "Beta Chat", "Late arrivals by team", "Team 1"]) expect(out).toContain(t);
+    for (const t of ["By process and shift slot", "09:00-18:00", "Not on today&#x27;s roster", "Shift bands: planned, absent, late", "Morning (Planned 60, Absent 4, Late 5)", "Late arrivals by process", "Beta Chat", "Late arrivals by team", "Team 1"]) expect(out).toContain(t);
     expect(out).not.toContain("Secret Manager");
   });
   it("empty, error and zero", () => {
@@ -97,7 +99,7 @@ describe("AttendanceVisual", () => {
     expect(render(AttendanceVisual, { attendance: fx.err("down") })).toContain("could not be loaded");
     const z = { ...fx.attendance, scheduled: 0, present: 0, absent: 0, onLeave: 0, shrinkagePct: 0, bySlot: [], processWise: [], previousDay: null };
     const o = render(AttendanceVisual, { attendance: fx.ok(z), leaderboard: fx.ok([]) });
-    expect(o).toContain("No data");
+    expect(o).toContain("No shift slots for this date");
     expect(o).not.toContain("NaN");
   });
 });
@@ -110,9 +112,8 @@ describe("AttritionVisual", () => {
     expect(b.tiers.series.map((s) => s.color)).toEqual(["var(--bh-risk-1)", "var(--bh-risk-2)", "var(--bh-risk-3)", "var(--bh-risk-4)"]);
     expect(RISK_TIER_COLORS).toEqual({ low: "var(--bh-risk-1)", medium: "var(--bh-risk-2)", high: "var(--bh-risk-3)", critical: "var(--bh-risk-4)" });
     expect(flat(b.tiersTable)).toContain("Risk tiers|30|9|5|2|46");
-    expect(out).toContain("background:var(--bh-risk-4)");
-    expect(out).toContain("Employees by attrition risk tier: Risk tiers 46 (Low 30, Medium 9, High 5, Critical 2)");
-    for (const t of ["Attrition and retention", "Names are available in the process drill-down.", "7 people are flagged as top risk", "Model calibrated on 12 months of exits", "Expected exits (30 days)", "Absent streak", "New joiner risk", "Early exit share", "35.5%"]) expect(out).toContain(t);
+    expect(out).toContain("Employees by attrition risk tier: Low (Low 30); Medium (Medium 9); High (High 5); Critical (Critical 2)");
+    for (const t of ["Attrition and retention", "Top risk people", "2 of 7 flagged", "Neha Singh", "MAS2001", "Absent 3 days running", "Model calibrated on 12 months of exits", "Expected exits (30 days)", "Absent streak", "New joiner risk", "Early exit share", "35.5%"]) expect(out).toContain(t);
   });
   it("monthly exits line with a dashed expected point at the current month", () => {
     const b = buildAttrition(fx.attrition, "2026-10-15");
@@ -129,10 +130,10 @@ describe("AttritionVisual", () => {
     const b = buildAttrition(fx.attrition, "2026-10-15");
     expect(flat(b.byProcessTable)).toContain("Alpha Voice|4|60 headcount, 2 absent streak");
   });
-  it("no person names even when planted", () => {
+  it("names only from the top-risk list (allowed, as in the email); planted names elsewhere never show", () => {
     const leaky = { ...fx.attrition, topRisk: [{ name: "Paul Risky" }], byProcess: fx.attrition.byProcess.map((x) => ({ ...x, name: "Rita Risky" })) };
     const o = render(AttritionVisual, { attrition: fx.ok(leaky as never) });
-    expect(o).not.toContain("Paul Risky");
+    expect(o).toContain("Paul Risky");
     expect(o).not.toContain("Rita Risky");
   });
   it("empty and missing", () => {

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { BranchOverview } from "../../../../../../backend/src/modules/branch-head-health/types";
 import type { DrillTarget } from "../drill";
 import { BarList, StackedBar, divergingLayout } from "../viz";
+import { NavyTable } from "../look";
 import { PeopleVisual } from "../sections/PeopleVisual";
 import { AttendanceVisual } from "../sections/AttendanceVisual";
 import { FinanceVisual, buildFinance } from "../sections/FinanceVisual";
@@ -36,12 +37,13 @@ function findAll(node: ReactNode, type: unknown, acc: ReactElement[] = []): Reac
   }
   return acc;
 }
+/** Click the first row of the first clickable navy table in the visual (tables carry the process drill-down). */
 function clickFirstRow(V: Visual, type: unknown, ov: BranchOverview, payload = fx.payloadOf(ov)) {
   const seen: DrillTarget[] = [];
   const tree = expand(V({ overview: ov, payload, onSelect: (t) => seen.push(t) }));
-  const chart = findAll(tree, type).find((e) => typeof (e.props as { onSelect?: unknown }).onSelect === "function")!;
-  const p = chart.props as { onSelect: (id: string) => void; items?: Array<{ id: string }>; rows?: Array<{ id: string }> };
-  p.onSelect((p.items ?? p.rows ?? [])[0].id);
+  const table = findAll(tree, type).find((e) => typeof (e.props as { onRowClick?: unknown }).onRowClick === "function")!;
+  const p = table.props as { onRowClick: (row: unknown, i: number) => void; rows: unknown[] };
+  p.onRowClick(p.rows[0], 0);
   return seen;
 }
 
@@ -63,18 +65,18 @@ describe("branch-aware selection", () => {
     selectByName({ overview: other, payload: twoBranches(), onSelect: (t) => seen.push(t) }, "headcount")("Alpha Voice");
     expect(seen[1]).toEqual({ kind: "metric", id: "headcount" });
   });
-  it("people: clicking the first bar opens this branch's process", () => {
+  it("people: clicking the first headcount row opens this branch's process", () => {
     const ov = fx.overviewOf();
-    expect(clickFirstRow(PeopleVisual as Visual, BarList, ov, twoBranches())).toEqual([{ kind: "process", id: "this-branch", name: "alpha voice", branchId: "b1" }]);
+    expect(clickFirstRow(PeopleVisual as Visual, NavyTable, ov, twoBranches())).toEqual([{ kind: "process", id: "this-branch", name: "alpha voice", branchId: "b1" }]);
   });
   it("attendance: clicking the first by-process row opens this branch's process", () => {
     const ov = fx.overviewOf();
-    expect(clickFirstRow(AttendanceVisual as Visual, StackedBar, ov, twoBranches())).toEqual([{ kind: "process", id: "this-branch", name: "alpha voice", branchId: "b1" }]);
+    expect(clickFirstRow(AttendanceVisual as Visual, NavyTable, ov, twoBranches())).toEqual([{ kind: "process", id: "this-branch", name: "alpha voice", branchId: "b1" }]);
   });
   it("rows are keyed by index, so duplicate names cannot collide", () => {
     const d = { ...fx.people, byProcess: [fx.people.byProcess[0], fx.people.byProcess[0]] };
     const out = renderToStaticMarkup(<PeopleVisual overview={fx.overviewOf({ people: fx.ok(d) })} payload={fx.payloadOf()} onSelect={() => {}} />);
-    expect(out.split(">Alpha Voice<").length - 1).toBe(2);
+    expect(out.split('aria-label="Open Alpha Voice"').length - 1).toBe(2);
   });
 });
 
@@ -148,10 +150,11 @@ describe("finance reconciles with reversals; zero budget is shown", () => {
 describe("aria summaries carry real values", () => {
   const r = (V: Visual) => renderToStaticMarkup(<V overview={fx.overviewOf()} payload={fx.payloadOf()} onSelect={() => {}} />);
   it("people, P&L, hiring and finance", () => {
-    expect(r(PeopleVisual as Visual)).toContain('aria-label="Headcount versus mandate by process: Alpha Voice 60 of 50 Mandate seats');
+    expect(r(PeopleVisual as Visual)).toContain('aria-label="Headcount versus mandate by process: Alpha Voice 60 of 50, Beta Chat 40');
     expect(r(ProcessPnlVisual as Visual)).toContain("Operating profit by process, worst first: Process 0 -₹50,000 Loss");
     expect(r(HiringVisual as Visual)).toContain("Hiring funnel");
     expect(r(HiringVisual as Visual)).toMatch(/aria-label="Hiring funnel[^"]*Requested 20/);
-    expect(r(FinanceVisual as Visual)).toMatch(/aria-label="Running P&amp;L, revenue to operating profit: Revenue ₹60.2 L/);
+    const fin = renderToStaticMarkup(<FinanceVisual overview={fx.overviewOf()} payload={fx.payloadOf()} onSelect={() => {}} sub="pnl" />);
+    expect(fin).toMatch(/aria-label="Running P&amp;L, revenue to operating profit: Revenue ₹60.2 L, Salary -₹39 L/);
   });
 });

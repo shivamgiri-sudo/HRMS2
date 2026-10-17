@@ -9,7 +9,11 @@ const render = (active = "overview") => renderToStaticMarkup(
 describe("BranchHero", () => {
   it("shows eyebrow, title, branch, status chip and date in the banner", () => {
     const out = render();
-    for (const t of ["Branch Head", "Branch health", "Kolkata", "Watch", "2026-10-15", "from-sky-700 via-blue-700 to-indigo-800"]) expect(out).toContain(t);
+    for (const t of ["Branch Head", "Branch health", "Kolkata", "Report status", "Watch", "2026-10-15", 'class="bhl-hero"', "data-keep-gradient", "click any tile to drill in"]) expect(out).toContain(t);
+  });
+  it("holds the controls inside the banner", () => {
+    const out = renderToStaticMarkup(<BranchHero branchName="Kolkata" activeTab="overview" onTabChange={() => {}} controls={<button type="button">Refresh</button>} />);
+    expect(out.indexOf("Refresh")).toBeLessThan(out.indexOf('role="tablist"'));
   });
   it("keeps the title white over the dashboard reference stylesheet's dark heading rule", () => {
     // role-dashboard-reference.css forces h1 to the dark ink colour with !important; the title needs a stronger important rule.

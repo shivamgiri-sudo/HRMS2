@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import type { BranchOverview } from "../../../../../../backend/src/modules/branch-head-health/types";
-import { KpiStrip } from "../KpiStrip";
+import { KPI_HUE, kpiStatus, KpiStrip } from "../KpiStrip";
 import { buildKpis, KPI_IDS, KPI_TONES, mandateTone, toneFor } from "../kpiModel";
 import * as fx from "./fixtures";
 
@@ -75,18 +75,25 @@ describe("KpiStrip", () => {
     const noPrev = overview({ attendance: fx.ok({ ...fx.attendance, previousDay: null }) });
     expect(html(noPrev)).not.toContain("vs yesterday");
   });
-  it("status stays text: warning tiles lead their sub line with the status word, quiet tiles do not", () => {
+  it("status stays text + icon on the tile: Warning / Critical chips only where a tile needs a look", () => {
     const out = html(overview());
-    expect(out.split("Warning · ").length - 1).toBeGreaterThanOrEqual(3);
-    expect(out).toContain("Warning · +2.0 pts vs yesterday");
-    const calm = html(overview({ attendance: fx.ok({ ...fx.attendance, absent: 0, scheduled: 100, shrinkagePct: 1, totalLate: 0, previousDay: null }) }));
-    expect(calm).not.toContain("Warning · 0 absent");
+    expect(out.split('class="bhl-kpi-status"').length - 1).toBeGreaterThanOrEqual(3);
+    expect(out).toContain(">Warning<");
+    expect(out).toContain("+2.0 pts vs yesterday");
+    expect(kpiStatus({ id: "grn", label: "", value: "", tone: "serious" })).toBe("critical");
+    expect(kpiStatus({ id: "grn", label: "", value: "", tone: "good" })).toBeNull();
+    const calm = html(overview({ attendance: fx.ok({ ...fx.attendance, absent: 0, scheduled: 100, shrinkagePct: 1, totalLate: 0, previousDay: null }),
+      finance: fx.ok({ ...fx.finance, grn: null }), attrition: undefined, people: fx.ok({ ...fx.people, mandateSeatsTotal: 120 }) }));
+    expect(calm).not.toContain('class="bhl-kpi-status"');
   });
-  it("tiles are equal-height flex cells and use the kit's accent stripe and tinted badge", () => {
+  it("solid gradient tiles, a different hue per metric; a critical status turns the tile rose", () => {
     const out = html(overview());
-    expect(out.split('class="flex min-w-0').length - 1).toBe(8);
-    expect(out).toContain("bg-blue-100");
-    expect(out).toContain("bg-emerald-100");
+    expect(out.split('class="bhl-kpi bhl-hue-').length - 1).toBe(8);
+    expect(new Set(Object.values(KPI_HUE)).size).toBe(8);
+    expect(out).not.toContain('data-hue="rose"');
+    const crit = html(overview({ finance: fx.ok({ ...fx.finance, grn: { ...fx.finance.grn!, pending: 12 } }) }));
+    expect(crit).toContain('data-hue="rose"');
+    expect(crit).toContain(">Critical<");
   });
   it("degrades cleanly when sections are missing or errored", () => {
     const err = fx.err<never>("down");

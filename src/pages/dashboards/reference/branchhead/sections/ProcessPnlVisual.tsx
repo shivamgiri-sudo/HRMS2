@@ -1,11 +1,13 @@
-import { AlertOctagon, AlertTriangle, BarChart3, CheckCircle2 } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Banknote, BarChart3, CheckCircle2, Receipt, Users, Wallet } from "lucide-react";
+import { GradientKpi, KpiCell, KpiGrid } from "../look";
+import { PnlTable } from "./pnlTable";
 import type { BranchProcess } from "../../../../../../backend/src/modules/branch-head-health/processes";
 import type { ProcessPnlData, ProcessPnlRow } from "../../../../../../backend/src/modules/branch-head-health/types";
-import { ChartFrame, DivergingBars, StatTile, divergingBarsTable, divergingDomain, type DivergingBarsProps, type TableSpec } from "../viz";
+import { ChartFrame, DivergingBars, divergingBarsTable, divergingDomain, type DivergingBarsProps, type TableSpec } from "../viz";
 import { processTarget, type DrillTarget } from "../drill";
 import { formatInr, formatPct } from "../format";
 import { SectionShell } from "../ui";
-import { branchProcesses, extendTable, Fold, Foot, TileItem, Tiles, type VisualProps } from "./shared";
+import { branchProcesses, extendTable, Fold, Foot, type VisualProps } from "./shared";
 
 const VISIBLE = 8;
 const STATUS_WORD: Record<ProcessPnlRow["status"], string> = { "loss-making": "Loss-making", "at-risk": "At risk", profitable: "Profitable" };
@@ -87,12 +89,13 @@ export function ProcessPnlVisual({ overview, payload, onSelect }: VisualProps) {
         return (
           <div className="space-y-3">
             <Chips t={d.totals} />
-            <Tiles label="Process P&L totals">
-              <TileItem><StatTile label="Revenue" value={formatInr(b.totals.revenue)} /></TileItem>
-              <TileItem><StatTile label="People cost" value={formatInr(b.totals.people)} hint={`Total cost ${formatInr(b.totals.people + b.totals.other)}`} /></TileItem>
-              <TileItem><StatTile label="Other cost" value={formatInr(b.totals.other)} /></TileItem>
-              <TileItem><StatTile label="Operating profit" value={formatInr(b.totals.operatingProfit)} hint={`OP % ${formatPct(b.totals.opPct)}`} /></TileItem>
-            </Tiles>
+            <KpiGrid label="Process P&L totals">
+              <KpiCell><GradientKpi icon={Banknote} hue="navy" label="Revenue" value={formatInr(b.totals.revenue)} sub={`${b.active.length} active processes`} /></KpiCell>
+              <KpiCell><GradientKpi icon={Users} hue="orange" label="People cost" value={formatInr(b.totals.people)} sub={`Total cost ${formatInr(b.totals.people + b.totals.other)}`} /></KpiCell>
+              <KpiCell><GradientKpi icon={Receipt} hue="violet" label="Other cost" value={formatInr(b.totals.other)} sub={`Receivable ${formatInr(d.totals.outstandingReceivable)}`} /></KpiCell>
+              <KpiCell><GradientKpi icon={Wallet} hue="emerald" label="Operating profit" value={formatInr(b.totals.operatingProfit)} sub={`OP % ${formatPct(b.totals.opPct)}`}
+                status={d.totals.loss > 0 ? "warning" : null} /></KpiCell>
+            </KpiGrid>
             <ChartFrame title="Operating profit by process" subtitle={`${b.active.length} processes, worst first`} table={b.table} height={120}>
               <DivergingBars {...first} onSelect={select} />
               {rest.items.length > 0 ? (
@@ -101,6 +104,7 @@ export function ProcessPnlVisual({ overview, payload, onSelect }: VisualProps) {
                 </div>
               ) : null}
             </ChartFrame>
+            <PnlTable rows={b.active} onOpen={select} />
             {b.idleRows.length > 0 ? (
               <Fold title={`${b.idleRows.length} ${b.idleRows.length === 1 ? "process has" : "processes have"} no P&L activity this month`}>
                 <ul className="list-disc pl-6 text-[13px] text-slate-900">{b.idleRows.map((r) => <li key={r.processId}>{r.processName}</li>)}</ul>

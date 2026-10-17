@@ -6,6 +6,7 @@
  */
 import type { BranchHealthReport } from "./metrics.js";
 import { CHRONIC_DAYS } from "./history.js";
+import { BANDS, BAND_HINT, bandOf, lateNotOnRoster } from "./shifts.js";
 import type { PeerSummary } from "./rollup.js";
 
 const C = {
@@ -36,8 +37,7 @@ function inr(n: number): string {
   return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
-function statusBadge(status: string): string {
-  const map: Record<string, { bg: string; text: string; label: string }> = {
+const STATUS_BADGES: Record<string, { bg: string; text: string; label: string }> = {
     submitted: { bg: "#dbeafe", text: "#1d4ed8", label: "Submitted" },
     branch_head_approved: {
       bg: "#fef9c3",
@@ -69,7 +69,15 @@ function statusBadge(status: string): string {
       text: "#991b1b",
       label: "Returned",
     },
-  };
+};
+
+/** Display label of a GRN status, shared with the Branch Head page so both print the same words. */
+export function grnStatusLabel(status: string): string {
+  return STATUS_BADGES[status]?.label ?? status;
+}
+
+function statusBadge(status: string): string {
+  const map = STATUS_BADGES;
   const s = map[status] ?? {
     bg: "#f1f5f9",
     text: "#475569",
@@ -157,7 +165,7 @@ function kpiStrip(
   </table>`;
 }
 
-const CONSECUTIVE_ABSENCE_DAYS_LABEL = 3;
+export const CONSECUTIVE_ABSENCE_DAYS_LABEL = 3;
 
 function note(text: string, warn = false): string {
   return `<p style="${FONT}font-size:10px;color:${warn ? C.warn : C.muted};margin:4px 0 0 0;">${text}</p>`;
@@ -613,24 +621,6 @@ export function renderEmail(
     raw.prevShrinkage && raw.prevShrinkage.scheduled > 0
       ? raw.prevShrinkage
       : null;
-  const BANDS = ["Morning", "Afternoon", "Evening", "Night"] as const;
-  const BAND_HINT: Record<(typeof BANDS)[number], string> = {
-    Morning: "starts before 12:00",
-    Afternoon: "12:00–16:59",
-    Evening: "17:00–20:59",
-    Night: "21:00 onward",
-  };
-  const bandOf = (shift: string): (typeof BANDS)[number] => {
-    const hour = Number.parseInt(shift.slice(0, 2), 10);
-    if (!Number.isFinite(hour)) return "Morning";
-    return hour < 12
-      ? "Morning"
-      : hour < 17
-        ? "Afternoon"
-        : hour < 21
-          ? "Evening"
-          : "Night";
-  };
   const processNames = [
     ...new Set([
       ...sh.bySlot.map((x) => x.process),
@@ -666,10 +656,7 @@ export function renderEmail(
       .reduce((n, m) => n + m.count, 0);
     // Late-marked people who have no planned shift today (no roster row, week-off worked, on leave)
     // still count in the late headline, so they get their own column instead of vanishing.
-    const noRosterLate = Math.max(
-      0,
-      late - slots.reduce((n, x) => n + x.late, 0),
-    );
+    const noRosterLate = lateNotOnRoster(slots, late);
     const managers = raw.lateStats.byManager
       .filter((m) => m.process === name)
       .map((m) => `${esc(m.manager)} (${m.count})`)

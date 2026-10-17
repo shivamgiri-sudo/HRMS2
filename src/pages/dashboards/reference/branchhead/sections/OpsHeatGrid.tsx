@@ -53,7 +53,7 @@ export function OpsHeatGrid({ rows, onSelectProcess }: { rows: OpsProcessRow[]; 
   });
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] border-separate border-spacing-[2px] text-left text-[13px]">
+      <table className="bhl-heat w-full min-w-[720px] border-separate border-spacing-[2px] text-left text-[13px]">
         <caption className="sr-only">Latest operational metrics per process; cell shade shows size within each column</caption>
         <thead>
           <tr className="text-slate-700">

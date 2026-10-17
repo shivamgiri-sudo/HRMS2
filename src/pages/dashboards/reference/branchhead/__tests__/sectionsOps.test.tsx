@@ -20,7 +20,8 @@ describe("HiringVisual", () => {
     expect(b.funnel.stages.map((s) => [s.label, s.value])).toEqual([["Requested", 20], ["In pipeline", 9], ["Selected", 3], ["Fulfilled", 12]]);
     expect(b.offers.map((m) => m.label)).toEqual(["Offer conversion, last 30 days", "Offer conversion, month to date"]);
     expect(flat(b.offersTable)).toContain("Offer conversion, last 30 days|28|40|70%|Within limit|12|70.0%");
-    for (const t of ["Hiring", "Open positions", "Pending approval", "Joining in next 7 days", "Telecaller", "2026-10-25 (10 days)", "Walk-ins", "SLA breaches", "2 of 28", "3 GRNs awaiting approval"]) expect(out).toContain(t);
+    for (const t of ["Open positions", "1 pending approval", "Joining in next 7 days", "Telecaller", "2026-10-25 (10 d)", "Walk-ins", "SLA breaches today", "2 / 28",
+      "Open hiring batches", "Short by 1", "Closure pending", "No feedback", "Offers made and joined", "Hiring funnel: Requested 20, In pipeline 9, Selected 3, Fulfilled 12"]) expect(out).toContain(t);
     expect(flat(b.batchesTable)).toContain("Batch A");
   });
   it("ATS outcomes stack keeps every outcome count in its table", () => {
@@ -36,7 +37,8 @@ describe("HiringVisual", () => {
     expect(render(HiringVisual, { hiring: fx.emptySection() })).toContain("No hiring data for this date");
     const none = { ...fx.hiring, batches: [], offers: null, ats: null, pendingActions: [], requested: 0, inPipeline: 0, selected: 0, fulfilled: 0 };
     const z = render(HiringVisual, { hiring: ok(none) });
-    expect(z).toContain("No open batches.");
+    expect(z).toContain("No open batches");
+    expect(z).toContain("No ATS activity for this date");
     expect(z).not.toContain("NaN");
   });
 });

@@ -1,0 +1,138 @@
+/* Branch Health "Process Operations" look: navy hero, solid gradient KPI tiles, accent cards, navy tables.
+   Gradients live here (not in Tailwind bg-gradient-* classes) because role-dashboard-reference.css strips
+   bg-gradient-to-r inside its scope. Light surface only; hero and tiles are dark by design. */
+
+.bhl-hero { position: relative; overflow: hidden; border-radius: 18px; color: #fff; padding: 18px 16px 14px;
+  background: radial-gradient(circle at 88% 8%, rgba(79, 209, 255, 0.2), transparent 30%), linear-gradient(118deg, #0b1f44 0%, #0d3b66 52%, #0f6b8f 100%);
+  box-shadow: 0 14px 32px rgba(11, 31, 68, 0.22); }
+@media (min-width: 640px) { .bhl-hero { padding: 20px 22px 16px; } }
+.bhl-hero::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px;
+  background: linear-gradient(90deg, #2f6fed, #10b8d4, #1baf7a, #eda100, #eb6834, #8b5cf6); }
+.bhl-hero-orb { position: absolute; width: 300px; height: 300px; border-radius: 50%; right: -90px; top: -190px; pointer-events: none;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0)); }
+.bhl-eyebrow { color: #a5e3f2; font-size: 10px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+.bhl-hero-sub { color: #d5e5f2; font-size: 12px; font-weight: 600; }
+.bhl-ctl-label { display: block; margin-bottom: 4px; color: #d6e7f7; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.bhl-ctl { min-height: 44px; border-radius: 10px; border: 0; background: #fff; color: #0b1f44; padding: 0 12px; font-size: 13px; font-weight: 600; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); }
+.bhl-ctl:focus-visible, .bhl-ghost:focus-visible, .bhl-pill:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.bhl-ghost { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; border-radius: 10px; padding: 0 14px; font-size: 12px; font-weight: 800;
+  color: #fff; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.28); cursor: pointer; transition: background 0.18s ease; }
+.bhl-ghost:hover { background: rgba(255, 255, 255, 0.22); }
+.bhl-fresh { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; border-radius: 999px; padding: 0 12px; font-size: 11px; font-weight: 800;
+  color: #fde68a; background: rgba(120, 53, 15, 0.45); border: 1px solid rgba(253, 230, 138, 0.45); text-transform: uppercase; letter-spacing: 0.04em; }
+.bhl-fresh i { width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; display: inline-block; }
+.bhl-tabs { display: flex; gap: 4px; overflow-x: auto; max-width: 100%; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, 0.1); scrollbar-width: none; }
+.bhl-pill { min-height: 44px; flex: none; white-space: nowrap; border: 0; border-radius: 9px; padding: 0 14px; font-size: 12px; font-weight: 800; cursor: pointer;
+  color: #d0e8f5; background: transparent; transition: background 0.18s ease, color 0.18s ease; }
+.bhl-pill:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.bhl-pill[aria-selected="true"] { background: #fff; color: #183b59; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); }
+
+/* Secondary pills under the hero (Finance: Budget | GRNs | ...). */
+.bhl-subtabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.bhl-sub { min-height: 44px; border: 0; border-radius: 10px; padding: 0 14px; font-size: 12px; font-weight: 800; cursor: pointer; color: #334155; background: #e8eff7;
+  transition: background 0.18s ease, color 0.18s ease; }
+.bhl-sub:hover { background: #dbe6f2; }
+.bhl-sub[aria-pressed="true"] { color: #fff; background: linear-gradient(135deg, #153f69, #1e6fa8); box-shadow: 0 6px 14px rgba(21, 63, 105, 0.25); }
+.bhl-sub:focus-visible { outline: 2px solid #1e40af; outline-offset: 2px; }
+
+/* Solid gradient KPI tile */
+.bhl-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; list-style: none; margin: 0; padding: 0; }
+@media (min-width: 768px) { .bhl-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .bhl-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } .bhl-kpis[data-cols="5"] { grid-template-columns: repeat(5, minmax(0, 1fr)); } .bhl-kpis[data-cols="6"] { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.bhl-kpis > li { display: flex; min-width: 0; }
+.bhl-kpi { position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; min-height: 100px; padding: 13px 14px;
+  border: 0; border-radius: 16px; color: #fff; text-align: left; font: inherit; box-shadow: 0 10px 24px rgba(16, 35, 57, 0.12); }
+.bhl-kpi::after { content: ""; position: absolute; width: 78px; height: 78px; border-radius: 50%; right: -22px; top: -28px; background: rgba(255, 255, 255, 0.14); pointer-events: none; }
+button.bhl-kpi { cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+button.bhl-kpi:hover { transform: translateY(-3px); box-shadow: 0 16px 30px rgba(16, 35, 57, 0.2); }
+button.bhl-kpi:focus-visible { outline: 3px solid #f59e0b; outline-offset: 2px; }
+.bhl-kpi-label { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.bhl-kpi-value { font-size: 24px; font-weight: 900; line-height: 1.1; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.bhl-kpi-sub { font-size: 11px; font-weight: 600; line-height: 1.3; }
+.bhl-kpi-status { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 900;
+  text-transform: uppercase; letter-spacing: 0.04em; background: rgba(0, 0, 0, 0.28); border: 1px solid rgba(255, 255, 255, 0.45); }
+.bhl-hue-navy { background: linear-gradient(135deg, #153f69, #1e6fa8); }
+.bhl-hue-emerald { background: linear-gradient(135deg, #065f46, #047857); }
+.bhl-hue-violet { background: linear-gradient(135deg, #5b21b6, #7c3aed); }
+.bhl-hue-orange { background: linear-gradient(135deg, #9a3412, #c2410c); }
+.bhl-hue-cyan { background: linear-gradient(135deg, #155e75, #0e7490); }
+.bhl-hue-rose { background: linear-gradient(135deg, #9f1239, #be123c); }
+.bhl-hue-teal { background: linear-gradient(135deg, #134e4a, #0f766e); }
+.bhl-hue-indigo { background: linear-gradient(135deg, #312e81, #4338ca); }
+.bhl-hue-amber { background: linear-gradient(135deg, #78350f, #b45309); }
+.bhl-hue-slate { background: linear-gradient(135deg, #1e293b, #475569); }
+
+/* Accent card */
+.bhl-card { position: relative; min-width: 0; background: #fff; border: 1px solid #e3eaf2; border-radius: 16px; padding: 14px 14px 14px 18px; box-shadow: 0 8px 22px rgba(15, 35, 60, 0.06); }
+.bhl-card::before { content: ""; position: absolute; left: 0; top: 0; width: 4px; height: 56px; border-radius: 0 0 7px 0; background: var(--bhl-accent, linear-gradient(180deg, #2f6fed, #10b8d4)); }
+.bhl-card-head { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; min-height: 28px; flex-wrap: wrap; }
+.bhl-card-title { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0; font-size: 14px; font-weight: 800; color: #102f4b; }
+.bhl-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--bhl-accent, linear-gradient(135deg, #2f6fed, #10b8d4)); box-shadow: 0 0 0 4px rgba(47, 111, 237, 0.09); }
+.bhl-card-actions { display: flex; min-width: 0; max-width: 100%; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bhl-count { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; color: #075985; background: #e7f6fb; border: 1px solid #c8edf5; white-space: normal; max-width: 100%; overflow-wrap: anywhere; }
+.bhl-toggle { min-height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid #d6e0ea; background: #fff; color: #334155; font-size: 11px; font-weight: 800; cursor: pointer; transition: background 0.18s ease; }
+@media (pointer: coarse) { .bhl-toggle { min-height: 44px; } }
+.bhl-toggle:hover { background: #f1f5f9; }
+.bhl-toggle[aria-pressed="true"] { background: #153f69; color: #fff; border-color: #153f69; }
+.bhl-toggle:focus-visible { outline: 2px solid #1e40af; outline-offset: 2px; }
+.bhl-empty { display: flex; align-items: center; gap: 8px; padding: 18px 8px; color: #475569; font-size: 13px; }
+.bhl-grid { display: grid; gap: 14px; min-width: 0; }
+@media (min-width: 1024px) { .bhl-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .bhl-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .bhl-span-2 { grid-column: span 2; } }
+.bhl-note { font-size: 12px; color: #475569; margin-top: 8px; }
+.bhl-chart { width: 100%; min-width: 0; }
+.bhl-chart .recharts-text { font-size: 11px; fill: #52514e; }
+.bhl-chart .recharts-legend-item-text { color: #334155 !important; font-size: 12px; }
+
+/* Navy table */
+.bhl-tw { overflow: auto; max-width: 100%; border: 1px solid #dce4ed; border-radius: 11px; background: #fff; }
+.bhl-t { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.bhl-t caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.bhl-t th { position: sticky; top: 0; z-index: 1; padding: 10px 9px; background: linear-gradient(180deg, #15365e, #102550); color: #fff; font-size: 11px; font-weight: 800;
+  letter-spacing: 0.04em; text-transform: uppercase; text-align: left; white-space: nowrap; }
+.bhl-t td { padding: 8px 9px; border-bottom: 1px solid #e8eef5; color: #0f2236; white-space: nowrap; }
+.bhl-t tbody tr:nth-child(even) td { background: #f8fafc; }
+.bhl-t tbody tr:hover td { background: #eef5fc; }
+.bhl-t td.bhl-wrap { white-space: normal; min-width: 140px; }
+.bhl-t td.bhl-wrap .bhl-chip { white-space: normal; }
+.bhl-t .bhl-r { text-align: right; font-variant-numeric: tabular-nums; }
+.bhl-t tr.bhl-click { cursor: pointer; }
+.bhl-t tr.bhl-click:focus-visible td { outline: 2px solid #1e40af; outline-offset: -2px; }
+.bhl-more { margin-top: 8px; min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid #d6e0ea; background: #f8fafc; color: #153f69; font-size: 12px; font-weight: 800; cursor: pointer; }
+.bhl-more:hover { background: #eef5fc; }
+.bhl-more:focus-visible { outline: 2px solid #1e40af; outline-offset: 2px; }
+.bhl-bar { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 120px; width: 100%; }
+.bhl-bar > span:first-child { position: relative; flex: 1; height: 8px; border-radius: 4px; background: #e2e8f0; overflow: hidden; min-width: 50px; }
+.bhl-bar > span:first-child > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+.bhl-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; border: 1px solid; white-space: nowrap; }
+.bhl-chip-crit { color: #881337; background: #fff1f2; border-color: #fda4af; }
+.bhl-chip-warn { color: #78350f; background: #fffbeb; border-color: #fcd34d; }
+.bhl-chip-ok { color: #064e3b; background: #ecfdf5; border-color: #6ee7b7; }
+.bhl-chip-info { color: #1e3a8a; background: #eff6ff; border-color: #bfdbfe; }
+.bhl-chip-mute { color: #334155; background: #f1f5f9; border-color: #cbd5e1; }
+
+/* Report coverage strip */
+.bhl-cover { display: grid; grid-template-columns: repeat(1, minmax(0, 1fr)); gap: 8px; list-style: none; margin: 0; padding: 0; }
+@media (min-width: 640px) { .bhl-cover { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .bhl-cover { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.bhl-cover-btn { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 10px; border-radius: 12px; border: 1px solid #e3eaf2; background: #f8fafc;
+  text-align: left; cursor: pointer; transition: background 0.18s ease, border-color 0.18s ease; font: inherit; color: #0f2236; }
+.bhl-cover-btn:hover { background: #eef5fc; border-color: #bfd3ea; }
+.bhl-cover-btn:focus-visible { outline: 2px solid #1e40af; outline-offset: 2px; }
+.bhl-cover-n { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; border-radius: 8px; color: #fff; font-size: 12px; font-weight: 900;
+  background: linear-gradient(135deg, #153f69, #1e6fa8); }
+
+@media (prefers-reduced-motion: reduce) {
+  button.bhl-kpi, .bhl-pill, .bhl-sub, .bhl-cover-btn, .bhl-ghost { transition: none; }
+  button.bhl-kpi:hover { transform: none; }
+}
+
+/* Existing primitives inside the new cards: lighter frames, navy table twins. */
+.bhl-card .bh-frame { background: #fff; border-color: #e8eef5; }
+.bh-table thead th { background: #15365e; color: #fff; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; }
+.bh-table tbody tr:nth-child(even) td { background: #f8fafc; }
+.bh-tile { background: #f8fbff; border-color: #e1eaf4; }
+
+/* Ops heat grid header in the navy table look. */
+.bhl-heat thead th { background: #15365e; color: #fff; padding: 9px 8px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; }
+.bhl-heat thead th:first-child { border-radius: 9px 0 0 0; }
+.bhl-heat thead th:last-child { border-radius: 0 9px 0 0; }

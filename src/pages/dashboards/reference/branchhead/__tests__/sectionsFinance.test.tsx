@@ -13,8 +13,20 @@ const render = (C: typeof FinanceVisual, o: Partial<BranchOverview> = {}) => {
 };
 const flat = (t: { rows: Array<Array<string | number | null>> }) => t.rows.map((r) => r.join("|")).join("\n");
 
+const fin = (sub: string, o: Partial<BranchOverview> = {}) => {
+  const ov = fx.overviewOf(o);
+  return renderToStaticMarkup(<FinanceVisual overview={ov} payload={fx.payloadOf(ov)} onSelect={() => {}} sub={sub} />);
+};
+
 describe("FinanceVisual", () => {
-  const out = render(FinanceVisual);
+  const pnlOut = fin("pnl");
+  const budgetOut = fin("budget");
+  const grnOut = fin("grn");
+  it("four sub-tabs for email sections 1, 2, 3 and 9; budget is the default", () => {
+    for (const t of ["Budget vs consumption", "GRN summary", "Recent GRNs", "Running P&amp;L"]) expect(budgetOut).toContain(t);
+    expect(budgetOut.split('aria-pressed="true"').length - 1).toBe(1);
+    expect(render(FinanceVisual)).toContain("Total budget");
+  });
   it("waterfall from revenue through salary and GRN to operating profit", () => {
     const b = buildFinance(fx.finance);
     expect(b.waterfall.steps.map((s) => [s.label, s.kind])).toEqual([
@@ -22,9 +34,9 @@ describe("FinanceVisual", () => {
     ]);
     expect(b.waterfall.steps.slice(1, 4).every((s) => s.value <= 0)).toBe(true);
     expect(flat(b.waterfallTable)).toContain(`Operating profit|Total|${formatInr(816216.8)}`);
-    for (const t of ["Running P&amp;L - month to date (as in the emailed report)", "Live, month to date", "day 15 of 31", "13.6%"]) expect(out).toContain(t);
+    for (const t of ["Revenue to operating profit", "Live, month to date", "day 15 of 31", "13.6%"]) expect(pnlOut).toContain(t);
   });
-  it("budget meter, heads with marker and over-budget text, GRN stages", () => {
+  it("budget tiles, heads with % used bars and over-budget text, history and open sub-heads", () => {
     const b = buildFinance(fx.finance);
     expect(b.meter.value).toBe(1250000);
     expect(b.meter.limit).toBe(2000000);
@@ -32,34 +44,44 @@ describe("FinanceVisual", () => {
     expect(flat(b.headsTable)).toContain("Utilities|₹2.6 L|₹2 L|Over budget, 130.0% used");
     expect(b.stages?.items[0]).toMatchObject({ label: "Branch Head", value: 3 });
     expect(flat(b.stagesTable!)).toContain("Branch Head|3|oldest 6 days, ₹3 L");
-    for (const t of ["Budget used", "Over budget", "Open GRNs by approval stage", "Available ₹7.5 L"]) expect(out).toContain(t);
+    for (const t of ["Total budget", "Consumed", "Reserved", "Available", "₹7.5 L", "Utilization", "62.5%", "Over budget", "130.0%",
+      "Budget history and after closure", "Still-open sub-heads", "Office", "₹20,000"]) expect(budgetOut).toContain(t);
   });
-  it("projection tiles with the basis footnote; hidden without P&L data", () => {
-    expect(out).toContain("Projection basis: linear on days elapsed");
-    expect(out).toContain(formatInr(12433000));
-    const o = render(FinanceVisual, { finance: fx.ok({ ...fx.finance, pnl: { ...fx.finance.pnl, dataAvailable: false } }) });
+  it("GRN summary: tiles, stage chart, types and the bridge to the budget", () => {
+    for (const t of ["GRNs raised this month", "Approved", "Pending", "Unbudgeted", "Open GRNs by approval stage", "Branch Head (GRNs waiting 3",
+      "GRNs by type", "Vendor GRN", "Bridge: GRNs raised to budget charged", "charged to this month&#x27;s budget", "₹7.2 L"]) expect(grnOut).toContain(t);
+  });
+  it("recent GRNs table as the email lists them", () => {
+    const o = fin("recent");
+    for (const t of ["Recent GRNs (latest 15, excluding drafts)", "GRN-2210-0042", "Sai Facility Services", "Housekeeping", "Consumables", "₹18,500", "Submitted", "2026-10-14"]) expect(o).toContain(t);
+  });
+  it("projection with the basis footnote; hidden without P&L data", () => {
+    expect(pnlOut).toContain("Projection basis: linear on days elapsed");
+    expect(pnlOut).toContain(formatInr(12433000));
+    const o = fin("pnl", { finance: fx.ok({ ...fx.finance, pnl: { ...fx.finance.pnl, dataAvailable: false } }) });
     expect(o).toContain("No P&amp;L data yet for this month");
     expect(o).not.toContain("linear on days elapsed");
   });
-  it("components, GRN types, tie-out and payroll readiness stay reachable in soft disclosure rows", () => {
-    for (const t of ["Invoice", "Accrual", "Credit notes", "Salary (110 staff paid)", "Vendor GRN", "Unbudgeted", "Reconciliation and payroll readiness", "Imprest reserved with no cost centre", "Pending regularization", "Oldest 3 days"]) expect(out).toContain(t);
-    expect(out).toMatch(/<details[^>]*\bopen\b[^>]*>\s*<summary[^>]*><span>Reconciliation and payroll readiness/);
+  it("components, tie-out and payroll readiness sit with the running P&L", () => {
+    for (const t of ["Invoice", "Accrual", "Credit notes", "Salary (110 staff paid)", "Tie-out between budget and P&amp;L", "Imprest reserved with no cost centre", "Pending regularization", "Oldest 3 days"]) expect(pnlOut).toContain(t);
   });
   it("mode labels, missing budget note and error", () => {
-    const o = (m: string) => render(FinanceVisual, { finance: fx.ok({ ...fx.finance, pnl: { ...fx.finance.pnl, mode: m } }) });
+    const o = (m: string) => fin("pnl", { finance: fx.ok({ ...fx.finance, pnl: { ...fx.finance.pnl, mode: m } }) });
     expect(o("FINAL")).toContain("Final, month closed");
     expect(o("SOME_MODE")).toContain("some mode");
-    const nb = render(FinanceVisual, { finance: fx.ok({ ...fx.finance, budget: { ...fx.finance.budget, headerMissing: true, totalBudget: 0 } }) });
+    const nb = fin("budget", { finance: fx.ok({ ...fx.finance, budget: { ...fx.finance.budget, headerMissing: true, totalBudget: 0 } }) });
     expect(nb).toContain("No budget has been created for this month.");
     expect(render(FinanceVisual, { finance: fx.err("P&L source timed out") })).toContain("P&amp;L source timed out");
     expect(render(FinanceVisual, { finance: fx.err("x") })).toContain("Finance could not be loaded.");
   });
-  it("zero revenue never renders NaN", () => {
-    const z = { ...fx.finance, grn: null, tieOut: null, payrollReadiness: null, byHead: { top: [], overBudget: [] },
+  it("zero revenue never renders NaN; no GRN data says so", () => {
+    const z = { ...fx.finance, grn: null, tieOut: null, payrollReadiness: null, byHead: { top: [], overBudget: [] }, recentGrns: [], history: [], openSubheads: [],
       pnl: { ...fx.finance.pnl, revenueRunning: 0, salaryRunning: 0, grnConsumed: 0, grnReserved: 0, operatingProfit: 0, opPct: null } };
-    const o = render(FinanceVisual, { finance: fx.ok(z) });
-    expect(o).not.toContain("NaN");
-    expect(o).not.toContain("Reconciliation and payroll readiness");
+    for (const sub of ["budget", "grn", "recent", "pnl"]) expect(fin(sub, { finance: fx.ok(z) })).not.toContain("NaN");
+    expect(fin("pnl", { finance: fx.ok(z) })).not.toContain("Tie-out between");
+    expect(fin("grn", { finance: fx.ok(z) })).toContain("No GRN data for this month");
+    expect(fin("recent", { finance: fx.ok(z) })).toContain("No GRNs raised yet");
+    expect(fin("budget", { finance: fx.ok(z) })).toContain("No earlier budget months");
   });
 });
 

@@ -51,13 +51,24 @@ export interface BranchHeadLayoutProps {
   stale?: boolean;
   /** Tab shown first; defaults to the overview. */
   initialTab?: string;
+  /** Finance sub-tab shown first (budget, grn, recent, pnl). */
+  initialSub?: string;
 }
 
-export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchId = "", onBranchChange, date, onDateChange, onRefresh, stale, initialTab = "overview" }: BranchHeadLayoutProps) {
+/** "Generated 10:30" from the payload timestamp; empty when it does not parse. */
+export function freshnessText(generatedAt: string | undefined): string {
+  const t = generatedAt ? Date.parse(generatedAt) : Number.NaN;
+  if (!Number.isFinite(t)) return "";
+  return `Generated ${new Date(t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+}
+
+export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchId = "", onBranchChange, date, onDateChange, onRefresh, stale, initialTab = "overview", initialSub }: BranchHeadLayoutProps) {
   const options = branchOptions ?? data.branches.map((b) => b.branch);
   const branchNames = Object.fromEntries(options.map((o) => [o.branchId, o.branchName]));
   const single = data.branches.length === 1;
   const [tab, setTab] = useState(BH_SECTIONS.some((t) => t.id === initialTab) ? initialTab : "overview");
+  const [sub, setSub] = useState(initialSub ?? "budget");
+  const go = (t: string, s?: string) => { setTab(t); if (s) setSub(s); };
   const host = useDrillHost();
   const { close } = host;
   // Another branch, date or branch list closes the drawer (its view would belong to the old data).
@@ -71,10 +82,9 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
   return (
     <div className="space-y-4">
       <BranchHero branchName={heroName} status={single ? first.overview.status : undefined} date={first?.overview.date ?? date}
-        homeFallback={data.scope.viaHomeFallback} activeTab={tab} onTabChange={setTab} />
-      <div className="flex flex-wrap items-end justify-end gap-3">
-        <BranchHeadControls options={options} selectedBranchId={selectedBranchId} onBranchChange={onBranchChange} date={date} onDateChange={onDateChange} onRefresh={onRefresh} stale={stale} />
-      </div>
+        homeFallback={data.scope.viaHomeFallback} activeTab={tab} onTabChange={setTab}
+        controls={<BranchHeadControls variant="hero" options={options} selectedBranchId={selectedBranchId} onBranchChange={onBranchChange} date={date ?? first?.overview.date}
+          onDateChange={onDateChange} onRefresh={onRefresh} stale={stale} freshness={freshnessText(data.generatedAt)} />} />
 
       {data.scope.emptyReason ? (
         <BhCard title="Nothing to show" icon={Inbox}><p className="text-[14px] text-slate-800">{data.scope.emptyReason}</p></BhCard>
@@ -94,11 +104,11 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
           return (
             <section key={branch.branchId} aria-label={`${branch.branchName} health`} className="space-y-4">
               {!single && tab !== "overview" ? (
-                <h2 className="flex items-center gap-2 text-[15px] font-bold text-slate-900">{branch.branchName}<StatusChip status={overview.status} /></h2>
+                <h2 className="flex items-center gap-2 border-b border-slate-200 pb-1 text-[16px] font-extrabold text-slate-900">{branch.branchName}<StatusChip status={overview.status} /></h2>
               ) : null}
               {tab === "overview" ? (
-                <BranchOverviewTop branch={branch} overview={overview} score={score} onOpenKpi={onOpenKpi} />
-              ) : Visual ? <Visual overview={overview} payload={data} onSelect={onSelect} /> : null}
+                <BranchOverviewTop branch={branch} overview={overview} score={score} onOpenKpi={onOpenKpi} onGo={go} />
+              ) : Visual ? <Visual overview={overview} payload={data} onSelect={onSelect} sub={sub} onSubChange={setSub} /> : null}
             </section>
           );
         })}

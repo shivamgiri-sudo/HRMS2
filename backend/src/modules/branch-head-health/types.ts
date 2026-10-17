@@ -18,6 +18,11 @@ export interface LeaderboardRow {
   shrinkagePct: number | null;
 }
 
+export interface AttritionRiskPerson {
+  code: string; name: string; process: string | null; aonDays: number; score: number; tier: string;
+  reasons: string[]; absentStreak: number;
+}
+
 export interface AttritionData {
   critical: number; high: number; medium: number; low: number;
   expectedExits30: number | null; absentStreak: number; newJoinerRisk: number;
@@ -25,6 +30,8 @@ export interface AttritionData {
   monthlyExits: Array<{ month: string; exits: number }>;
   byProcess: Array<{ process: string; headcount: number; highRisk: number; absentStreak: number }>;
   topRiskCount: number;
+  /** Highest-risk people as the emailed report lists them (max 8). Names allowed; no contact or pay data. */
+  topRisk: AttritionRiskPerson[];
   calibrationNote: string | null;
 }
 

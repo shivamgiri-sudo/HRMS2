@@ -10,6 +10,9 @@ export interface VisualProps {
   overview: BranchOverview;
   payload: BranchHeadHealthPayload;
   onSelect: (target: DrillTarget) => void;
+  /** Sub-tab of a tab with parts (Finance), owned by the layout so the coverage strip can jump to it. */
+  sub?: string;
+  onSubChange?: (sub: string) => void;
 }
 
 /** Active processes reachable from this branch (a process name can repeat across branches). */

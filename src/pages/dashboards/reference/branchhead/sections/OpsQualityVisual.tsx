@@ -43,33 +43,38 @@ export function OpsQualityVisual(props: VisualProps) {
   if (!operations && !quality && !callmaster) return <SectionShell icon={Activity} tone="teal" title={TITLE} section={undefined} emptyText="">{() => null}</SectionShell>;
   const pick = selectByName(props, "ops");
   return (
-    <BhCard icon={Activity} tone="teal" title={TITLE} subtitle={operations?.status === "ok" ? `As of ${operations.asOf}` : undefined}>
-      <div className="space-y-4">
-        <Part<OpsProcessRow> name="Operations" section={operations} emptyText="No operational metrics for this branch">
-          {(rows) => (
-            <ChartFrame title="Operations by process" subtitle="Shade = size within each column, not good or bad" table={opsTable(rows)} height={120}>
-              <OpsHeatGrid rows={rows} onSelectProcess={pick} />
-            </ChartFrame>
-          )}
-        </Part>
-        <Part<QualityRow> name="Lowest quality processes" section={quality} emptyText="No quality scores for this branch">
-          {(rows) => {
-            const bars = qualityBars(rows);
-            return (
-              <ChartFrame title="Lowest quality processes" subtitle={`QA quality %, lowest first${quality?.status === "ok" ? ` · As of ${quality.asOf}` : ""}`} table={barListTable(bars)} height={96}>
-                <BarList {...bars} />
+    <div className="space-y-4">
+      <h2 className="sr-only">{TITLE}</h2>
+      {operations ? (
+        <BhCard title="Operations by process" tone="teal" subtitle={operations.status === "ok" ? `As of ${operations.asOf}` : undefined}>
+          <Part<OpsProcessRow> name="Operations" section={operations} emptyText="No operational metrics for this branch">
+            {(rows) => (
+              <ChartFrame title="Latest metrics per process" subtitle="Shade = size within each column, not good or bad" table={opsTable(rows)} height={120}>
+                <OpsHeatGrid rows={rows} onSelectProcess={pick} />
               </ChartFrame>
-            );
-          }}
-        </Part>
-        {callmaster ? (
-          <div>
-            <h3 className="text-[14px] font-bold text-slate-900">Callmaster</h3>
-            {callmaster.status === "ok" ? <p className="text-[12px] text-slate-700">As of {callmaster.asOf}</p> : null}
-            <CallmasterBlock section={callmaster} />
-          </div>
-        ) : null}
-      </div>
-    </BhCard>
+            )}
+          </Part>
+        </BhCard>
+      ) : null}
+      {quality ? (
+        <BhCard title="Lowest quality processes" tone="violet">
+          <Part<QualityRow> name="Lowest quality processes" section={quality} emptyText="No quality scores for this branch">
+            {(rows) => {
+              const bars = qualityBars(rows);
+              return (
+                <ChartFrame title="QA quality by process" subtitle={`QA quality %, lowest first${quality?.status === "ok" ? ` · As of ${quality.asOf}` : ""}`} table={barListTable(bars)} height={96}>
+                  <BarList {...bars} />
+                </ChartFrame>
+              );
+            }}
+          </Part>
+        </BhCard>
+      ) : null}
+      {callmaster ? (
+        <BhCard title="Callmaster" tone="cyan" subtitle={callmaster.status === "ok" ? `As of ${callmaster.asOf}` : undefined}>
+          <CallmasterBlock section={callmaster} />
+        </BhCard>
+      ) : null}
+    </div>
   );
 }

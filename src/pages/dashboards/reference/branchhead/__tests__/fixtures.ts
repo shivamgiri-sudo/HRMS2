@@ -9,10 +9,19 @@ export const emptySection = <T,>(): SectionResult<T> => ({ status: "empty", data
 
 export const people: PeopleData = {
   totalActive: 120, joinedToday: 2, leftToday: 1, joinedMtd: 14, leftMtd: 6, upcomingExits: 4, exitsNotClosed: 3, mandateSeatsTotal: 130,
+  netMtd: 8, attritionMtdPct: 5.1,
+  joinedNames: [{ name: "Priya Sharma" }, { name: "Rahul Verma" }], leftNames: [{ name: "Old Leaver" }],
+  absence: {
+    total: 12, days: 3,
+    rows: [
+      { name: "Asha Rao", code: "MAS1001", process: "Alpha Voice", manager: "Vikram Nair" },
+      { name: "Imran Khan", code: "MAS1002", process: "Beta Chat", manager: "Not mapped" },
+    ],
+  },
   byProcess: [
-    { process: "Alpha Voice", active: 60, joinedMtd: 8, leftMtd: 3, mandateSeats: 50 },
-    { process: "Beta Chat", active: 40, joinedMtd: 4, leftMtd: 2, mandateSeats: 0 },
-    { process: "Gamma Back Office", active: 20, joinedMtd: 2, leftMtd: 1, mandateSeats: null },
+    { process: "Alpha Voice", active: 60, joinedMtd: 8, leftMtd: 3, mandateSeats: 50, joinedToday: 1, leftToday: 0, netMtd: 5, attritionMtdPct: 5.1, mandateGap: 10 },
+    { process: "Beta Chat", active: 40, joinedMtd: 4, leftMtd: 2, mandateSeats: 0, joinedToday: 1, leftToday: 1, netMtd: 2, attritionMtdPct: 5.1, mandateGap: 40 },
+    { process: "Gamma Back Office", active: 20, joinedMtd: 2, leftMtd: 1, mandateSeats: null, joinedToday: 0, leftToday: 0, netMtd: 1, attritionMtdPct: 5.1, mandateGap: null },
   ],
   byLob: [{ lob: "Banking", active: 70 }, { lob: "Telecom", active: 50 }],
 };
@@ -22,15 +31,34 @@ export const attendance: AttendanceData = {
   processWise: [{ process: "Alpha Voice", late: 9 }, { process: "Beta Chat", late: 3 }],
   previousDay: { shrinkagePct: 10, absent: 6, scheduled: 98 },
   weekOffWorked: 2,
+  bands: [
+    { band: "Morning", planned: 60, absent: 4, late: 5 }, { band: "Afternoon", planned: 25, absent: 2, late: 1 },
+    { band: "Evening", planned: 10, absent: 1, late: 0 }, { band: "Night", planned: 5, absent: 1, late: 0 },
+  ],
+  lateNotOnRoster: 6,
 };
 export const hiring: HiringData = {
   openPositions: 4, inPipeline: 9, selected: 3, requested: 20, fulfilled: 12, pendingApproval: 1,
   batches: [{ process: "Alpha Voice", designation: "Telecaller", priority: "high", requested: 10, fulfilled: 4, openPositions: 6, inPipeline: 5, selected: 2, deliveryDate: "2026-10-25", daysToDelivery: 10, plannedBatch: "Batch A" }],
   offers: { last30: { offered: 40, joined: 28, notJoined: 12, conversionPct: 70 }, mtd: { offered: 15, joined: 9, notJoined: 6, conversionPct: 60 }, joiningNext7Days: 5 },
   ats: { walkins: 30, tokens: 28, tokensClosed: 20, selected: 8, rejected: 9, noShow: 3, clientRound: 2, hold: 1, otherClosed: 0, open: 8, noFeedback: 4, openQueueCompleted: 1, slaBreaches: 2, slaTotal: 28 },
-  pendingActions: [{ type: "grn_pending", count: 3, label: "GRNs awaiting approval" }],
+  pendingActions: [
+    { type: "grn_pending", count: 3, label: "GRNs awaiting approval", age: "oldest 6d · 2 over 3d", oldestDays: 6, over3Days: 2, over7Days: null },
+    { type: "leave_pending", count: 5, label: "Leave requests pending", age: "oldest 4d · 2 over 3d", oldestDays: 4, over3Days: 2, over7Days: 0 },
+    { type: "regularization_pending", count: 14, label: "Attendance regularizations pending", age: "oldest 9d · 2 over 7d · 1 escalated", oldestDays: 9, over3Days: 6, over7Days: 2 },
+    { type: "exit_pending", count: 2, label: "Exit clearances pending", age: null, oldestDays: null, over3Days: null, over7Days: null },
+  ],
 };
 export const finance: FinanceData = {
+  recentGrns: [
+    { grnNo: "GRN-2210-0042", vendor: "Sai Facility Services", head: "Housekeeping", subHead: "Consumables", amountInclGst: 18500, status: "submitted", stageLabel: "Submitted", raisedOn: "2026-10-14", ageDays: 1 },
+    { grnNo: "GRN-2210-0039", vendor: null, head: "Rent", subHead: null, amountInclGst: 450000, status: "approved", stageLabel: "Approved", raisedOn: "2026-10-09", ageDays: 6 },
+  ],
+  history: [{
+    periodCode: "2026-09", headerStatus: "active", declared: 1800000, used: 1650000, effective: 1700000, afterClosure: 1700000, usedPct: 91.7,
+    headsTotal: 12, headsClosed: 9, openRows: [{ head: "Rent", subHead: "Office", budget: 400000, used: 380000 }],
+  }],
+  openSubheads: [{ periodCode: "2026-09", head: "Rent", subhead: "Office", budgetHeld: 400000, spent: 380000 }],
   periodCode: "2026-10", revenueRunning: 6016216.8, totalCostRunning: 5200000, operatingProfit: 816216.8, opPct: 13.6, budgetUtilizationPct: 62.5,
   pnl: {
     periodCode: "2026-10", daysInMonth: 31, daysElapsed: 15, mode: "LIVE_MTD", revenueInvoice: 4000000, revenueAccrual: 1500000, revenueEstimated: 600000,
@@ -76,7 +104,12 @@ export const attrition: AttritionData = {
   exits30: 11, exitsPrev30: 9, exits90: 30, earlyExitSharePct: 35.5,
   monthlyExits: [{ month: "2026-08", exits: 8 }, { month: "2026-09", exits: 10 }],
   byProcess: [{ process: "Alpha Voice", headcount: 60, highRisk: 4, absentStreak: 2 }],
-  topRiskCount: 7, calibrationNote: "Model calibrated on 12 months of exits",
+  topRiskCount: 7,
+  topRisk: [
+    { code: "MAS2001", name: "Neha Singh", process: "Alpha Voice", aonDays: 45, score: 88, tier: "CRITICAL", reasons: ["Absent 3 days running", "Low attendance"], absentStreak: 3 },
+    { code: "MAS2002", name: "Ravi Das", process: null, aonDays: 210, score: 71, tier: "HIGH", reasons: [], absentStreak: 0 },
+  ],
+  calibrationNote: "Model calibrated on 12 months of exits",
 };
 export const backlogs: BacklogsData = {
   regularization: { pending: 14, oldestDays: 9, over3Days: 6, over7Days: 2, escalated: 1 },

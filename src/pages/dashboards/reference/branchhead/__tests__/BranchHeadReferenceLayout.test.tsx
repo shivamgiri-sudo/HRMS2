@@ -153,9 +153,9 @@ describe("BranchHeadReferenceLayout", () => {
     const ids = ["overview", "people", "attendance", "attrition", "finance", "pnl", "hiring", "backlog", "ops", "processes"];
     expect(BH_SECTIONS.map((s) => s.id)).toEqual(ids);
     const key: Record<string, string> = {
-      overview: "Attention and wins", people: ">Headcount<", attendance: "Attendance today", attrition: "Attrition and retention",
-      finance: "Running P&amp;L - month to date", pnl: "Process P&amp;L - P&amp;L pages basis", hiring: "slate-700\">Hiring<", backlog: "slate-700\">Backlogs<",
-      ops: "Operations and quality", processes: ">Process coverage<",
+      overview: "Attention and wins", people: ">Headcount by process<", attendance: 'aria-label="Attendance counts"', attrition: ">Attrition and retention<",
+      finance: 'aria-label="Finance sections"', pnl: "Process P&amp;L - P&amp;L pages basis", hiring: 'aria-label="Hiring summary"', backlog: 'aria-label="Backlogs"',
+      ops: ">Operations and quality<", processes: ">Process coverage<",
     };
     for (const id of ids) {
       const out = htmlTab(payload(), id);
@@ -183,7 +183,8 @@ describe("BranchHeadReferenceLayout", () => {
     b.overview.backlogs = fx.ok({ ...fx.backlogs, regularization: leak(fx.backlogs.regularization, "oldestBy", "Ivy Oldest") }) as any;
     b.overview.operations = ok([{ processCode: "P1", processName: "Alpha Ops", tier: "full", metrics: { AHT: 300 }, latestDate: "2026-10-14", stale: false, agentName: "Jon Agent" }]);
     const out = html(payload({ branches: [b] }));
-    for (const n of ["Secret Manager", "Zed Candidate", "Qasim Requester", "Nita Joiner", "Olga Manager", "Paul Risky", "Rita Risky", "Lata Late", "Sam Supervisor", "Fay Approver", "Gus Approver", "Hal Owner", "Ivy Oldest", "Jon Agent"]) expect(out).not.toContain(n);
+    // Joined/left names and the top-risk list are allowed (the email prints them); every other planted name must not show.
+    for (const n of ["Secret Manager", "Zed Candidate", "Qasim Requester", "Olga Manager", "Rita Risky", "Lata Late", "Sam Supervisor", "Fay Approver", "Gus Approver", "Hal Owner", "Ivy Oldest", "Jon Agent"]) expect(out).not.toContain(n);
   });
   it("missing optional sections render an honest placeholder", () => {
     const b = branch("b1", "Kolkata");
