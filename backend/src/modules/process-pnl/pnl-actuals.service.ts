@@ -521,7 +521,9 @@ export async function readGrnSpend(
   // Applied for ALL periods (historical and live). Allows Finance to correct the computed GRN
   // when the automatic calculation diverges from the approved P&L figure.
   // These are company-level corrections not tied to a specific cost centre or process.
-  if (kind === "consumed" && (await tableExists("pnl_monthly_correction"))) {
+  // Not for a Finance-sheet month: the sheet is Finance's final figure and leg 5 already brings the P&L to it, so a correction
+  // would count on top of it (Aug-26 CEO Overview read Rs 0.32 L above the sheet).
+  if (kind === "consumed" && !isHistoricalPeriod && (await tableExists("pnl_monthly_correction"))) {
     const [corrections] = await db.execute<RowDataPacket[]>(
       `SELECT pmc.amount FROM pnl_monthly_correction pmc
         WHERE pmc.period_code = ? AND pmc.line_item = 'grn'

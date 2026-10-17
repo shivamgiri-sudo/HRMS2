@@ -492,8 +492,17 @@ async function readBudgets(period: string) {
  */
 async function readPayroll(period: string): Promise<Map<string, { cost: number; staff: number }>> {
   // Months Finance closed in db_bill: the salary of Finance's P&L sheet, on each process's cost centre (pnl-finance-sheet.ts).
+  // Headcount stays HRMS's: the sheet has amounts, not people, and "0 paid staff" read as nobody being paid.
   const sheet = await readFinanceSheetPayroll(period);
-  if (sheet) return sheet.byCostCentre;
+  const hrms = await readHrmsPayroll(period);
+  if (!sheet) return hrms;
+  const out = new Map<string, { cost: number; staff: number }>();
+  for (const [cc, v] of hrms) out.set(cc, { cost: 0, staff: v.staff });
+  for (const [cc, v] of sheet.byCostCentre) out.set(cc, { cost: v.cost, staff: out.get(cc)?.staff ?? 0 });
+  return out;
+}
+
+async function readHrmsPayroll(period: string): Promise<Map<string, { cost: number; staff: number }>> {
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
   const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
@@ -1059,7 +1068,9 @@ async function buildPnlReconciliation(
   }
   // Open headroom of branch-pooled budget lines with no cost-centre allocation: branch and company
   // cost, never a row — same treatment as unallocated payroll. Only branches in this view.
-  const viewBranches = filters.branchIds ? new Set(filters.branchIds) : null;
+  // An empty list is "no branch filter" (the route sends [] for an unscoped user), never "no branches": read as the latter it
+  // dropped every branch-only amount from the company total (Aug-26: Rs 8.73 L of Finance revenue adjustment, Rs 4.41 L of GRN).
+  const viewBranches = filters.branchIds?.length ? new Set(filters.branchIds) : null;
   let unallocatedBudgetReserve = 0;
   for (const [branchId, amount] of openBudget.unallocatedByBranch) {
     if (viewBranches && !viewBranches.has(branchId)) continue;

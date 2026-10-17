@@ -469,16 +469,24 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   // Months Finance closed in db_bill: the salary of Finance's P&L sheet (pnl-finance-sheet.ts), same as Live P&L and the Statement.
   const sheetLines = await readFinanceSheetLines(period);
   if (sheetLines.length) {
+    // Headcount stays HRMS's (the sheet has amounts, not people); the cost is the sheet's.
+    const hrms = await peopleByBranchFromPayroll(period, s);
+    for (const [branchId, v] of hrms) out.set(branchId, { cost: 0, staff: v.staff });
     const ccOf = s.costCentreIds.length ? await financeSheetCostCentres(sheetLines.map((l) => l.processId ?? "")) : null;
     for (const l of sheetLines) {
       if (!l.branchId) continue;
       if (s.processIds.length && (!l.processId || !s.processIds.includes(l.processId))) continue;
       if (ccOf && (!l.processId || !s.costCentreIds.includes(ccOf.get(l.processId) ?? ""))) continue;
       const cur = out.get(l.branchId) ?? { cost: 0, staff: 0 };
-      out.set(l.branchId, { cost: cur.cost + l.agentSalary + l.dscSalary + l.bmcSalary, staff: 0 });
+      out.set(l.branchId, { cost: cur.cost + l.agentSalary + l.dscSalary + l.bmcSalary, staff: cur.staff });
     }
     return out;
   }
+  return peopleByBranchFromPayroll(period, s);
+}
+
+async function peopleByBranchFromPayroll(period: string, s: CeoScope): Promise<Map<string, { cost: number; staff: number }>> {
+  const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
   await idcContaminationCheck(period);
   // Cost-centre scope filters on the EFFECTIVE cost centre (post-override), so selecting 576 also
