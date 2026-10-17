@@ -21,6 +21,7 @@
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=billing_ledger
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=opening_balance
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=bill_no_master
+ *   ... --no-prune   upsert only; never delete mirror rows missing at source
  *
  * Budget, GRN and invoice lines mirror the CURRENT financial year from April by default.
  * Override with --from=YYYY-MM to pull further back.
@@ -360,6 +361,9 @@ async function insertBatch(hrms, table, rows, keys, updateCols) {
  * simply because it did not look at them.
  */
 async function pruneOrphans(hrms, table, keptSourceIds, scopeSql, scopeParams = []) {
+  // --no-prune: upsert only. For a targeted catch-up that must not touch rows other writers put
+  // in the mirror (e.g. the negative-id rows in grn_entry_snapshot, which no db_bill table holds).
+  if (process.argv.includes('--no-prune')) { log(`  ${table}: prune skipped (--no-prune)`); return 0; }
   // Hygiene, not critical path. A prune that cannot run must never take the sync down with it:
   // on 2026-08-05 a wrong scope column (period_code on grn_entry_line_snapshot, which has none)
   // killed sync 10 outright AFTER its rows had been written, and the reconciler still passed

@@ -31,16 +31,15 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
     return fn.slice(0, fn.indexOf("\n}\n"));
   }
 
-  it("readGrnSpend has ONE legacy source, the db_bill mirror, read by a helper with guards applied in code (owner decision 2026-10-12)", () => {
+  it("readGrnSpend has ONE legacy source, the db_bill mirror, read for periods before 2026-10 only (owner rules 2026-10-12, 2026-10-16)", () => {
     const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
     const mirror = service.slice(service.indexOf("async function readLegacyMirrorSpend("), service.indexOf("export async function readGrnSpend("));
-    expect(mirror.split("FROM grn_entry_line_snapshot").length - 1).toBe(1);
-    expect(mirror, "no correlated guard inside the mirror query: it made the consumed read take 33-46 s on prod").not.toContain("NOT EXISTS");
-    expect(mirror).toContain("UPPER(TRIM(gr.grn_number)) IN");
-    expect(mirror, "the voucher-number guard only matches HRMS-raised, countable GRNs").toContain("${HRMS_RAISED_GRN_SQL} AND ${HRMS_COUNTED_SQL}");
-    expect(mirror).toContain("LEGACY_TWIN_MIN_AMOUNT");
+    expect(mirror.split("FROM grn_entry_snapshot").length - 1).toBe(1);
+    expect(mirror.split("LEFT JOIN grn_entry_line_snapshot").length - 1).toBe(1);
+    expect(mirror, "no correlated subquery inside the mirror query: it made the consumed read take 33-46 s on prod").not.toContain("NOT EXISTS");
     const body = readerBody();
-    expect(body, "billed history is consumed, never reserved: reading it for both kinds counted every line twice").toContain('kind === "consumed" && (await tableExists("grn_entry_line_snapshot"))');
+    expect(body, "billed history is consumed, never reserved: reading it for both kinds counted every line twice").toContain('kind === "consumed" && isHistoricalPeriod && (await tableExists("grn_entry_line_snapshot"))');
+    expect(body, "HRMS-raised legs are skipped for historical periods, so the mirror cannot be counted twice").toContain("if (!isHistoricalPeriod) {");
     // Imported / migration-script grn_request rows are never read as legacy themselves: the mirror is the one legacy source.
     expect(body.split("${HRMS_RAISED_GRN_SQL}").length - 1).toBe(2);
   });
@@ -110,15 +109,14 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
   });
 });
 
-describe("legacy mirror leg defers only to an HRMS GRN the P&L actually counts", () => {
-  it("the voucher-number guard requires the HRMS twin to be countable (allocation rows, or budget line plus a consumed/reserved status)", () => {
+describe("legacy mirror leg is on the MAS Callnet P&L sheet's basis (owner rule 2026-10-17)", () => {
+  it("reads particulars ex-GST, db_bill's RejectDate, MAS Callnet only, no negative-id rows", () => {
     const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
-    expect(service).toContain("const HRMS_COUNTED_SQL");
-    expect(service).toContain("gr.budget_line_id IS NOT NULL AND gr.status IN (");
-    const body = service.slice(service.indexOf("export async function readGrnSpend("));
-    const mirrorHelper = service.slice(service.indexOf("async function readLegacyMirrorSpend("), service.indexOf("export async function readGrnSpend("));
-    expect(mirrorHelper).toContain("${HRMS_RAISED_GRN_SQL} AND ${HRMS_COUNTED_SQL}");
-    // The module-level constants must be defined before HRMS_COUNTED_SQL reads them (temporal dead zone).
-    expect(service.indexOf("const ORDINARY_GRN_RESERVED_SQL")).toBeLessThan(service.indexOf("const HRMS_COUNTED_SQL"));
+    const mirror = service.slice(service.indexOf("async function readLegacyMirrorSpend("), service.indexOf("export async function readGrnSpend("));
+    expect(mirror).toContain("COALESCE(CASE WHEN l.entry_type = 'Imprest' THEN l.total ELSE l.amount END, ge.amount) AS amount");
+    expect(mirror).toContain("ge.rejected_at IS NULL");
+    expect(mirror).not.toContain("ge.is_rejected = 0");
+    expect(mirror).toContain("ge.bill_source_id > 0");
+    expect(mirror).toContain("(ge.comp_id IS NULL OR ge.comp_id = 1)");
   });
 });

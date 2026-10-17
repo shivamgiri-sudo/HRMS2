@@ -273,19 +273,6 @@ function grnScope(opts: GrnSpendOptions): { sql: string; params: unknown[] } {
  */
 const HRMS_RAISED_GRN_SQL = `gr.bill_source_id IS NULL AND COALESCE(gr.created_by, '') NOT LIKE '00000000-%'`;
 
-/**
- * Owner decision 2026-10-12 (supersedes the 2026-09-26 "no legacy bill" ruling for what db_bill billed): the P&L must tie to
- * what was billed. April-July 2026 were billed in db_bill and almost none of it exists as an HRMS GRN, so a closed month showed
- * about Rs 0 non-people cost against Rs 50-70 lakh and branch profit was overstated. Leg 3 below reads the db_bill mirror
- * (grn_entry_line_snapshot) again, for a voucher HRMS does not already carry. Three guards keep a voucher from counting twice:
- * the same GRN number on an HRMS-RAISED GRN (an imported copy of the same bill must not hide the mirror line), and the amount-twin guard for the same invoice keyed
- * under another number in both systems (measured 2026-09-25: 22 NOIDA-2 bills, Rs 9.14 lakh). Imported / migration-script
- * grn_request rows are still not read themselves: the mirror is the one legacy source, so they cannot be counted twice.
- */
-const LEGACY_TWIN_MIN_AMOUNT = 1000;
-
-
-
 /** grn_request statuses at which an ordinary (allocation-less) GRN's budget is consumed —
  *  Finance Head approval and everything after it (same set as grn-report's fully_approved). */
 const ORDINARY_GRN_CONSUMED_SQL =
@@ -294,15 +281,18 @@ const ORDINARY_GRN_CONSUMED_SQL =
 const ORDINARY_GRN_RESERVED_SQL = "'branch_head_approved','accounts_head_approved'";
 
 /**
- * Leg 3 of readGrnSpend: db_bill vouchers (the mirror, grn_entry_snapshot) that HRMS does not carry. Header level, because
- * grn_entry_line_snapshot is incomplete — for Sep-26 it covers only 156 of 285 headers and under-represents amounts by ~17L.
- * Branch is resolved via branch_master.branch_name = grn_entry_snapshot.branch_name (exact match; all 4 active branches resolve).
- * Reconciliation entries (entry_status='reconciliation') are excluded — they are Finance manual corrections handled by Leg 4.
+ * Leg 3 of readGrnSpend: the db_bill mirror. Only read for periods before 2026-10, when db_bill was Finance's GRN book and the
+ * MAS Callnet P&L sheet was built from it; legs 1-2 (HRMS-raised GRNs) are not read for those periods, so nothing here can count twice.
  *
- * The two duplicate guards (see LEGACY_TWIN_MIN_AMOUNT) used to be correlated NOT EXISTS subqueries inside one UNION. On production that
- * made the consumed read take 33-46 s for every month that has mirror lines (Oct 2026, with none, took 3 s): every line re-scanned
- * grn_request. They are now three plain queries (the period's mirror lines, the HRMS-raised GRNs that carry those numbers, the period's
- * HRMS-raised GRN totals) and the same two rules are applied here, in code. Same results, a fraction of the work.
+ * Same basis as the sheet (owner rule 2026-10-17, checked sub-head by sub-head against P&L-Ahmedabad Apr-26):
+ *  - the GRN's particulars (grn_entry_line_snapshot): a Vendor GRN at its amount EXCLUDING GST (rent of Rs 2,61,979 with GST is
+ *    Rs 2,22,016 in the sheet), an Imprest at its total (owner rule 2026-10-17);
+ *    each particular carries its cost centre, which gives the process. A header with no particulars falls back to its own amount.
+ *  - rejection is db_bill's RejectDate (rejected_at), not is_rejected: 297 MAS GRNs (Rs 40.48 lakh, mostly Aug-26) had is_rejected=1
+ *    with no RejectDate because an HRMS copy of them existed — with legs 1-2 off they were counted nowhere.
+ *  - MAS Callnet only (db_bill CompId=1; IDC/ and Pikquick/ numbers are other companies). Asset purchases stay in (owner, 2026-10-17:
+ *    MAS Callnet's own asset purchases count, though the sheet leaves them out). No negative-id rows (budget reopen amounts some import wrote into the mirror — AGENT/DSC/BMC budgets, not spend), and no
+ *    'reconciliation' rows (Finance corrections, leg 4).
  */
 export async function readLegacyMirrorSpend(
   periodCode: string,
@@ -312,60 +302,31 @@ export async function readLegacyMirrorSpend(
   processCol: (first: string | null, alias: string) => string,
   withDetail: boolean,
 ): Promise<RowDataPacket[]> {
-  // Owner rule 2026-10-17: only MAS Callnet India Pvt Ltd (db_bill CompId=1) in P&L. comp_id
-  // catches IDC/Pikquick rows that carry no GrnNo; the prefix test covers rows mirrored before
-  // comp_id existed (NULL until the next sync). NULL NOT LIKE is NULL, hence the IS NULL guards.
   const [lines] = await db.execute<RowDataPacket[]>(
-    `SELECT bm.id AS branch_id, NULL AS cost_centre_id, NULL AS process_id, ge.amount AS amount,
-            COALESCE(ge.grn_no, CAST(ge.bill_source_id AS CHAR)) AS grn_ref, ge.vendor AS vendor, ge.description AS particular
+    `SELECT COALESCE(bm.id, ccm.branch_id) AS branch_id, ccm.id AS cost_centre_id, ${processCol(null, "pc3")} AS process_id,
+            COALESCE(CASE WHEN l.entry_type = 'Imprest' THEN l.total ELSE l.amount END, ge.amount) AS amount,
+            COALESCE(ge.grn_no, CAST(ge.bill_source_id AS CHAR)) AS grn_ref, ge.vendor AS vendor,
+            COALESCE(l.particular, ge.description) AS particular
        FROM grn_entry_snapshot ge
-       LEFT JOIN branch_master bm ON UPPER(TRIM(bm.branch_name)) = UPPER(TRIM(ge.branch_name)) COLLATE utf8mb4_unicode_ci
-      WHERE ge.period_code = ? AND ge.is_rejected = 0
+       LEFT JOIN grn_entry_line_snapshot l ON l.grn_source_id = ge.bill_source_id
+       LEFT JOIN cost_centre_master ccm ON ccm.bill_source_id = l.cost_centre_source_id
+       ${processJoin("pc3")}
+       -- One branch per name: three branch_master rows are called HEAD OFFICE (two inactive), and joining on the name alone
+       -- counted every Head Office GRN three times.
+       LEFT JOIN (SELECT UPPER(TRIM(branch_name)) AS name_key, COALESCE(MAX(CASE WHEN active_status = 1 THEN id END), MAX(id)) AS id
+                    FROM branch_master GROUP BY UPPER(TRIM(branch_name))) bm
+              ON bm.name_key = UPPER(TRIM(ge.branch_name)) COLLATE utf8mb4_unicode_ci
+      WHERE ge.period_code = ? AND ge.bill_source_id > 0 AND ge.rejected_at IS NULL
         AND (ge.entry_status IS NULL OR ge.entry_status != 'reconciliation')
         AND (ge.comp_id IS NULL OR ge.comp_id = 1)
         AND (ge.grn_no IS NULL OR (ge.grn_no NOT LIKE 'IDC/%' AND ge.grn_no NOT LIKE 'Pikquick/%'))`,
     [periodCode],
   );
-  if (!lines.length) return [];
-
-  // Guard 1: an HRMS-raised GRN the P&L actually counts carries the same GRN number.
-  const numbers = [...new Set(lines.map((l) => String(l.grn_ref ?? "").trim().toUpperCase()).filter(Boolean))];
-  const counted = new Set<string>();
-  for (let i = 0; i < numbers.length; i += 500) {
-    const part = numbers.slice(i, i + 500);
-    const [found] = await db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT UPPER(TRIM(gr.grn_number)) AS g FROM grn_request gr
-        WHERE UPPER(TRIM(gr.grn_number)) IN (${part.map(() => "?").join(",")}) AND ${HRMS_RAISED_GRN_SQL} AND ${HRMS_COUNTED_SQL}`,
-      part,
-    );
-    for (const r of found) counted.add(String(r.g));
-  }
-
-  // Guard 2: the same invoice keyed under another number in both systems (amount twin, same branch and period).
-  const [twins] = await db.execute<RowDataPacket[]>(
-    `SELECT gr.branch_id AS branch_id,
-            (SELECT SUM(${grnAllocationExGstSql("a3")}) FROM grn_cost_allocation a3 WHERE a3.grn_request_id = gr.id AND a3.lifecycle_status IN ('consumed', 'reserved')) AS ex_total,
-            (SELECT SUM(COALESCE(a4.amount_with_tax, 0)) FROM grn_cost_allocation a4 WHERE a4.grn_request_id = gr.id AND a4.lifecycle_status IN ('consumed', 'reserved')) AS gross_total
-       FROM grn_request gr WHERE gr.accounting_period = ? AND ${HRMS_RAISED_GRN_SQL}`,
-    [periodCode],
-  );
-  const twinsByBranch = new Map<string, Array<{ ex: number | null; gross: number | null }>>();
-  for (const t of twins) {
-    const key = String(t.branch_id ?? "");
-    const list = twinsByBranch.get(key) ?? [];
-    list.push({ ex: t.ex_total == null ? null : Number(t.ex_total), gross: t.gross_total == null ? null : Number(t.gross_total) });
-    twinsByBranch.set(key, list);
-  }
 
   const kept = new Map<string, RowDataPacket>();
   for (const l of lines) {
     const ref = String(l.grn_ref ?? "").trim();
-    if (ref && counted.has(ref.toUpperCase())) continue;
     const amount = Number(l.amount ?? 0);
-    if (amount >= LEGACY_TWIN_MIN_AMOUNT && l.branch_id) {
-      const candidates = twinsByBranch.get(String(l.branch_id)) ?? [];
-      if (candidates.some((c) => (c.ex !== null && Math.abs(c.ex - amount) <= 1) || (c.gross !== null && Math.abs(c.gross - amount) <= 1))) continue;
-    }
     const label = [l.vendor, l.particular].map((v) => String(v ?? "").trim()).filter(Boolean).join(" — ") || null;
     const key = withDetail
       ? `${l.branch_id}|${l.cost_centre_id}|${l.process_id}|${ref}|${label}`
@@ -379,15 +340,6 @@ export async function readLegacyMirrorSpend(
   }
   return [...kept.values()];
 }
-
-/**
- * An HRMS-raised GRN that the P&L actually counts (legs 1 and 2): it has consumed or reserved allocation rows, or it is an ordinary GRN with a
- * budget line in a consumed / reserved status. The mirror leg's voucher-number guard may only defer to such a GRN. Deferring to an HRMS GRN that
- * is not counted (no budget line, e.g. an imprest, or a status outside both sets) dropped the voucher from the P&L altogether (found 2026-10-13:
- * MAS/8/26/222, Rs 1,544).
- */
-const HRMS_COUNTED_SQL = `(EXISTS (SELECT 1 FROM grn_cost_allocation ax WHERE ax.grn_request_id = gr.id AND ax.lifecycle_status IN ('consumed','reserved'))
-   OR (gr.budget_line_id IS NOT NULL AND gr.status IN (${ORDINARY_GRN_CONSUMED_SQL}, ${ORDINARY_GRN_RESERVED_SQL})))`;
 
 export async function readGrnSpend(
   periodCode: string,
