@@ -1398,6 +1398,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2221_pnl_monthly_correction.sql", // Registered 2026-10-16. Additive: new table pnl_monthly_correction stores Finance team manual reconciliation adjustments against P&L line items (revenue, salary, grn, ebitda) by period and company; each row carries the rupee amount, reason, and author for auditability. Revert: DROP TABLE.
   "migrations/2226_pnl_grn_new_tables_collation.sql", // Registered 2026-10-17. Converts the two 2220/2221 tables from utf8mb4_0900_ai_ci to utf8mb4_unicode_ci so joins with auth_user/employees do not throw.
   "migrations/2227_db_lock_incident.sql", // Registered 2026-10-17. Additive: new table db_lock_incident (deadlock telemetry + lock-watchdog actions), explicit utf8mb4_unicode_ci.
+  "migrations/2228_grn_entry_snapshot_comp_id.sql", // Registered 2026-10-17. Additive ALTER: comp_id INT NULL on grn_entry_snapshot (db_bill CompId) so P&L keeps only MAS Callnet (CompId=1) GRNs. Revert: DROP COLUMN.
 ];
 
 export type MigrationHealth = {

@@ -55,4 +55,13 @@ describe("legacy mirror leg: duplicate guards applied in code", () => {
     expect(await run()).toEqual([]);
     expect(execute).toHaveBeenCalledTimes(1);
   });
+  it("reads only MAS Callnet mirror lines: db_bill company 1, and no IDC/ or Pikquick/ GRN numbers (owner rule 2026-10-17)", async () => {
+    replay([], [], []);
+    await run();
+    const sql = String(execute.mock.calls[0][0]);
+    expect(sql).toContain("(ge.comp_id IS NULL OR ge.comp_id = 1)");
+    expect(sql).toContain("ge.grn_no NOT LIKE 'IDC/%'");
+    expect(sql).toContain("ge.grn_no NOT LIKE 'Pikquick/%'");
+    expect(sql).toMatch(/ge\.grn_no IS NULL OR/);
+  });
 });

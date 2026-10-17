@@ -942,12 +942,16 @@ async function syncGrnEntries(hrms, bill) {
   log('Sync 7: populating grn_entry_snapshot from db_bill.expense_entry_master ...');
   const now = new Date();
 
+  // CompId: 1 = MAS Callnet India Pvt Ltd, 2 = IDC (iSpark Dataconnect), 3 = Pikquick. Carried
+  // into comp_id rather than filtered here: pruneOrphans would otherwise delete every non-MAS
+  // row already mirrored. Owner rule 2026-10-17 — only MAS Callnet in P&L — is applied by the
+  // P&L reader (readLegacyMirrorSpend).
   const [src] = await bill.query(
     `SELECT e.Id, e.GrnNo, e.BranchId, bm.branch_name, e.Vendor, e.FinanceYear, e.FinanceMonth,
             e.HeadId, e.SubHeadId, e.Amount, e.CGST, e.SGST, e.IGST,
             e.ExpenseDate, e.bill_no, e.bill_date, e.EntryStatus, e.grn_status,
             e.Reject, e.RejectDate, e.ApprovalDate, e.approved_by_ph_date, e.approved_by_fh_date,
-            e.Description, e.createdate
+            e.Description, e.createdate, e.CompId
        FROM expense_entry_master e
        LEFT JOIN branch_master bm ON bm.id = e.BranchId
       WHERE e.FinanceYear >= ? ORDER BY e.Id`, [FROM_FINANCE_YEAR]);
@@ -989,6 +993,7 @@ async function syncGrnEntries(hrms, bill) {
     approved_by_fh_at: safeDateTime(r.approved_by_fh_date),
     description: trim(r.Description),
     source_created_at: safeDateTime(r.createdate),
+    comp_id: r.CompId ?? null,
     synced_at: now,
   }));
 
@@ -996,7 +1001,7 @@ async function syncGrnEntries(hrms, bill) {
     'finance_month','period_code','head_id','sub_head_id','amount','cgst','sgst','igst',
     'expense_date','bill_no','bill_date','entry_status','grn_status','reject_flag_raw',
     'is_rejected','rejected_at','approved_at','approved_by_ph_at','approved_by_fh_at',
-    'description','source_created_at','synced_at'];
+    'description','source_created_at','comp_id','synced_at'];
   const scoped = rows.filter(r => inScope(r.period_code));
   const n = await insertBatch(hrms, 'grn_entry_snapshot', scoped, cols, cols.slice(1));
   await pruneOrphans(hrms, 'grn_entry_snapshot', scoped.map(r => r.bill_source_id),

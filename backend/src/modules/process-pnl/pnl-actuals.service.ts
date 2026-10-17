@@ -312,15 +312,18 @@ export async function readLegacyMirrorSpend(
   processCol: (first: string | null, alias: string) => string,
   withDetail: boolean,
 ): Promise<RowDataPacket[]> {
-  // grn_entry_snapshot is already company-scoped (MAS Callnet mirror only) and has no
-  // cost_centre_master join, so the ccm-based scope predicates do not apply here.
+  // Owner rule 2026-10-17: only MAS Callnet India Pvt Ltd (db_bill CompId=1) in P&L. comp_id
+  // catches IDC/Pikquick rows that carry no GrnNo; the prefix test covers rows mirrored before
+  // comp_id existed (NULL until the next sync). NULL NOT LIKE is NULL, hence the IS NULL guards.
   const [lines] = await db.execute<RowDataPacket[]>(
     `SELECT bm.id AS branch_id, NULL AS cost_centre_id, NULL AS process_id, ge.amount AS amount,
             COALESCE(ge.grn_no, CAST(ge.bill_source_id AS CHAR)) AS grn_ref, ge.vendor AS vendor, ge.description AS particular
        FROM grn_entry_snapshot ge
        LEFT JOIN branch_master bm ON UPPER(TRIM(bm.branch_name)) = UPPER(TRIM(ge.branch_name)) COLLATE utf8mb4_unicode_ci
       WHERE ge.period_code = ? AND ge.is_rejected = 0
-        AND (ge.entry_status IS NULL OR ge.entry_status != 'reconciliation')`,
+        AND (ge.entry_status IS NULL OR ge.entry_status != 'reconciliation')
+        AND (ge.comp_id IS NULL OR ge.comp_id = 1)
+        AND (ge.grn_no IS NULL OR (ge.grn_no NOT LIKE 'IDC/%' AND ge.grn_no NOT LIKE 'Pikquick/%'))`,
     [periodCode],
   );
   if (!lines.length) return [];
