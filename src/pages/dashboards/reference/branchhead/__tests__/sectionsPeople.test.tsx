@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { BranchOverview } from "../../../../../../backend/src/modules/branch-head-health/types";
 import { PeopleVisual, buildPeople } from "../sections/PeopleVisual";
-import { AttendanceVisual, buildAttendance, shrinkageChange } from "../sections/AttendanceVisual";
+import { AttendanceVisual, buildAttendance, noPresentNote, shrinkageChange } from "../sections/AttendanceVisual";
 import { AttritionVisual, RISK_TIER_COLORS, buildAttrition } from "../sections/AttritionVisual";
 import * as fx from "./fixtures";
 
@@ -49,6 +49,17 @@ describe("PeopleVisual", () => {
     expect(render(PeopleVisual, { people: undefined as never })).toContain("Not available yet");
     const zero = { ...fx.people, byProcess: [], byLob: [], totalActive: 0, mandateSeatsTotal: null };
     expect(render(PeopleVisual, { people: fx.ok(zero) })).toContain("No data");
+  });
+});
+
+describe("noPresentNote", () => {
+  it("warns when a real roster has nobody present, and stays quiet otherwise", () => {
+    expect(noPresentNote({ present: 0, scheduled: 160 })).toContain("may not have synced");
+    expect(noPresentNote({ present: 0, scheduled: 4 })).toBeNull();
+    expect(noPresentNote({ present: 88, scheduled: 100 })).toBeNull();
+  });
+  it("the attendance donut pins present 0, absent 1, on leave 3 so absent matches the by-process bars", () => {
+    expect(buildAttendance(fx.attendance, []).donut.slices.map((x) => x.slot)).toEqual([0, 1, 3]);
   });
 });
 

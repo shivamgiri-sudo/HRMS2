@@ -3,7 +3,8 @@ import { EmptyState, TipBody } from "./parts";
 import { isNum, r1, scale, seriesColor, type TableSpec } from "./scale";
 import { useChartTooltip } from "./useChartTooltip";
 
-export interface DonutSlice { key: string; label: string; value: number }
+/** `slot` pins the colour to the entity (so "Absent" stays one colour whatever else is zero); without it the drawn position decides. */
+export interface DonutSlice { key: string; label: string; value: number; slot?: number }
 export interface DonutProps {
   slices: DonutSlice[];
   centerLabel: string;
@@ -33,7 +34,7 @@ export function donutLayout(slices: DonutSlice[]) {
     slices: folded.map((s, i) => {
       const a0 = a;
       a += total > 0 ? (s.value / total) * TAU : 0;
-      return { ...s, pct: r1(scale.pct(s.value, total)), a0, a1: a, slot: i };
+      return { ...s, pct: r1(scale.pct(s.value, total)), a0, a1: a, slot: s.slot ?? i };
     }),
   };
 }

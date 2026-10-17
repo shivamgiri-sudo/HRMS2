@@ -33,4 +33,13 @@ describe("Donut", () => {
     const html = renderToStaticMarkup(<Donut slices={[{ key: "a", label: "A", value: 0 }]} centerLabel="x" centerValue="0" />);
     expect(html).toContain("No data");
   });
+
+  it("keeps a slice's colour slot when another slice is zero (colour follows the entity, not its rank)", () => {
+    const l = donutLayout([
+      { key: "present", label: "Present", value: 0, slot: 0 },
+      { key: "absent", label: "Absent", value: 160, slot: 1 },
+      { key: "onLeave", label: "On leave", value: 4, slot: 3 },
+    ]);
+    expect(l.slices.map((x) => [x.key, x.slot])).toEqual([["absent", 1], ["onLeave", 3]]);
+  });
 });

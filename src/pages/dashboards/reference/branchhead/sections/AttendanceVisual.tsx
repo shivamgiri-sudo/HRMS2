@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, CalendarCheck, Clock3, Minus } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, CalendarCheck, Clock3, Minus } from "lucide-react";
 import type { LeaderboardRow, SectionResult } from "../../../../../../backend/src/modules/branch-head-health/types";
 import { BarList, ChartFrame, DataTable, Donut, StackedBar, StatTile, barListTable, donutTable, stackedBarTable, type BarListProps, type DonutProps, type StackedBarProps } from "../viz";
 import type { AttendanceData } from "../panelTypes";
@@ -31,9 +31,10 @@ export function buildAttendance(d: AttendanceData, teams: LeaderboardRow[]) {
     centerLabel: "Shrinkage",
     centerValue: formatPct(d.shrinkagePct),
     slices: [
-      { key: "present", label: "Present", value: nn(d.present) },
-      { key: "absent", label: "Absent", value: nn(d.absent) },
-      { key: "onLeave", label: "On leave", value: nn(d.onLeave) },
+      // Slots match the by-process bars (present 0, absent 1) so a status keeps its colour across both charts.
+      { key: "present", label: "Present", value: nn(d.present), slot: 0 },
+      { key: "absent", label: "Absent", value: nn(d.absent), slot: 1 },
+      { key: "onLeave", label: "On leave", value: nn(d.onLeave), slot: 3 },
     ],
   };
   const byName = new Map<string, { planned: number; present: number; absent: number }>();
@@ -75,6 +76,14 @@ function Change({ text }: { text: string }) {
   return <span className="inline-flex items-center gap-1"><Icon className="h-3.5 w-3.5" aria-hidden="true" />{text}</span>;
 }
 
+/** Nobody marked present out of a real roster almost always means attendance has not synced yet, not 100% absence. */
+export function noPresentNote(d: Pick<AttendanceData, "present" | "scheduled">): string | null {
+  if (nn(d.scheduled) >= 10 && nn(d.present) === 0) {
+    return "No one is marked present yet for this date. Attendance may not have synced, so the shrinkage shown could be overstated.";
+  }
+  return null;
+}
+
 const SLOT_COLUMNS = ["Process", "Shift", "Planned", "Present", "Absent", "Late"];
 
 /** Late arrivals by team, from the leaderboard section (its own "As of"); independent of attendance. */
@@ -101,6 +110,11 @@ export function AttendanceVisual(props: VisualProps) {
           const slots = d.bySlot ?? [];
           return (
             <div className="space-y-3">
+              {noPresentNote(d) ? (
+                <p role="note" className="flex items-start gap-2 rounded-lg border border-amber-400 bg-amber-50 p-3 text-[13px] text-amber-950">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />{noPresentNote(d)}
+                </p>
+              ) : null}
               <Tiles label="Attendance counts">
                 <TileItem><StatTile label="Scheduled" value={formatCount(d.scheduled)} /></TileItem>
                 <TileItem><StatTile label="Yet to start" value={formatCount(d.yetToStart)} /></TileItem>
