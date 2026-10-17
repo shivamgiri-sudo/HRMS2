@@ -24,6 +24,8 @@ export interface PeopleData {
     joinedToday: number; leftToday: number; netMtd: number; attritionMtdPct: number | null;
     /** active - mandateSeats; null without a mandate. */
     mandateGap: number | null;
+    /** Active headcount of the process split by line of business, largest first; sums to active. */
+    lobs?: Array<{ lob: string; active: number }>;
   }>;
   byLob: Array<{ lob: string; active: number }>;
 }

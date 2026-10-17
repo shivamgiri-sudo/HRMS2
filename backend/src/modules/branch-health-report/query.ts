@@ -906,6 +906,11 @@ export interface HeadcountProcessRow {
   mandateSeats: number | null;
   /** Where the mandate came from: the HRMS workforce mandate, or the db_bill seat history. */
   mandateSource: "workforce" | "db_bill" | null;
+  /**
+   * Active headcount of this process split by Line of Business (employees.lob_id -> lob_master),
+   * largest first; employees with no LOB are "Unassigned". Sums to `active`.
+   */
+  lobs?: HeadcountLobRow[];
 }
 
 export interface HeadcountLobRow {
@@ -1031,12 +1036,13 @@ export async function fetchHeadcountMovement(
                                                        WHERE canon.lob_code IN (${onfidoPh})))))
                 THEN CONCAT(pm.process_name, ' (other LOBs)')
               ELSE COALESCE(pm.process_name, NULLIF(TRIM(ccm.cost_centre_name), ''), 'Unassigned')
-            END AS process, COUNT(*) AS cnt
+            END AS process,
+            COALESCE(lm.lob_name, 'Unassigned') AS lob, COUNT(*) AS cnt
        FROM employees e LEFT JOIN process_master pm ON pm.id = e.process_id
        LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
        LEFT JOIN lob_master lm ON lm.id = e.lob_id
       WHERE e.branch_id = ? AND e.active_status = 1
-      GROUP BY process`,
+      GROUP BY process, lob`,
     [...onfidoLobs, ...onfidoLobs, branchId],
   );
   const [activeRowsByLob] = await db.execute<RowDataPacket[]>(
@@ -1095,6 +1101,7 @@ export async function fetchHeadcountMovement(
       leftMtd: 0,
       mandateSeats: null,
       mandateSource: null,
+      lobs: [],
     };
     perProcess.set(process, fresh);
     return fresh;
@@ -1116,8 +1123,14 @@ export async function fetchHeadcountMovement(
   }
   let totalActive = 0;
   for (const r of activeRows as any[]) {
-    row(String(r.process)).active = Number(r.cnt);
-    totalActive += Number(r.cnt);
+    const b = row(String(r.process));
+    const cnt = Number(r.cnt);
+    b.active += cnt;
+    b.lobs = [...(b.lobs ?? []), { lob: String(r.lob), active: cnt }];
+    totalActive += cnt;
+  }
+  for (const b of perProcess.values()) {
+    b.lobs = [...(b.lobs ?? [])].sort((x, y) => y.active - x.active || x.lob.localeCompare(y.lob));
   }
   const joined = joinRows as any[];
   const left = leaveRows as any[];

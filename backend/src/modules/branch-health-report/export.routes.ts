@@ -84,6 +84,10 @@ branchHealthExportRouter.get(
         leftMtd: r.leftMtd,
         netMtd: signed(r.joinedMtd - r.leftMtd),
       });
+      // The process's active headcount split by LOB, indented under it.
+      for (const l of r.lobs ?? []) {
+        byProcess.addRow({ process: `    LOB: ${l.lob}`, active: l.active }).font = { italic: true, color: { argb: "FF64748B" } };
+      }
     }
     byProcess.addRow({
       process: "Total",

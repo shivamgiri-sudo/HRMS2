@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { HiringData, OfferWindow, PeopleData, PersonRef } from "../panelTypes";
 import { formatCount, formatPct } from "../format";
 import { AccentCard, BarCell, Chip, EmptyLine, NavyTable, PAL } from "../look";
@@ -7,29 +8,50 @@ import { nn } from "./shared";
 type ProcRow = PeopleData["byProcess"][number];
 const signed = (n: number) => `${n > 0 ? "+" : ""}${formatCount(n)}`;
 
-/** Email section 6 headcount table: every process with mandate, movement today and MTD, net and attrition MTD %. */
+/** A process row, or one of its line-of-business rows shown indented under it. */
+export type HeadcountRow = { kind: "process"; r: ProcRow } | { kind: "lob"; process: string; lob: string; active: number };
+
+/** Process rows in order, each followed by its LOB split when `withLobs` is on. */
+export function headcountRows(rows: ProcRow[], withLobs: boolean): HeadcountRow[] {
+  return rows.flatMap((r): HeadcountRow[] => [
+    { kind: "process", r },
+    ...(withLobs ? (r.lobs ?? []).map((l): HeadcountRow => ({ kind: "lob", process: r.process, lob: l.lob, active: nn(l.active) })) : []),
+  ]);
+}
+
+const procCell = (x: HeadcountRow, f: (r: ProcRow) => ReactNode) => (x.kind === "process" ? f(x.r) : null);
+
+/** Email section 6 headcount table: every process with mandate, movement today and MTD, net and attrition MTD %, and its LOB split. */
 export function HeadcountTable({ d, onProcess }: { d: PeopleData; onProcess: (name: string) => void }) {
   const rows = d.byProcess ?? [];
+  // Stateless on purpose (the section tests walk this tree without a renderer): the LOB split is always shown,
+  // every row at once so a process is never cut off from its LOB rows; the table scrolls inside its box.
+  const withLobs = rows.some((r) => (r.lobs ?? []).length > 0);
+  const shown = headcountRows(rows, withLobs);
   const maxAttr = Math.max(10, ...rows.map((r) => nn(r.attritionMtdPct)));
   return (
-    <AccentCard title="Headcount by process" chip={`${rows.length} processes · ${formatCount(d.totalActive)} active`} accent="blue">
-      <NavyTable<ProcRow> caption="Headcount versus mandate by process with joiners, leavers and attrition month to date" rows={rows} limit={10} empty="No processes"
-        onRowClick={(r) => onProcess(r.process)} rowLabel={(r) => r.process}
+    <AccentCard title="Headcount by process" chip={`${rows.length} processes · ${formatCount(d.totalActive)} active${withLobs ? " · LOB split" : ""}`} accent="blue">
+      <NavyTable<HeadcountRow> caption="Headcount versus mandate by process with joiners, leavers and attrition month to date; indented rows split each process's active headcount by line of business"
+        rows={shown} limit={withLobs ? 0 : 10} empty="No processes"
+        onRowClick={(x) => onProcess(x.kind === "process" ? x.r.process : x.process)}
+        rowLabel={(x) => (x.kind === "process" ? x.r.process : `${x.process}, ${x.lob}`)}
         columns={[
-          { key: "p", label: "Process", render: (r) => <span className="font-semibold">{r.process}</span> },
-          { key: "a", label: "Active", num: true, render: (r) => formatCount(r.active) },
-          { key: "m", label: "Mandate", num: true, render: (r) => (r.mandateSeats != null && r.mandateSeats > 0 ? formatCount(r.mandateSeats) : "—") },
-          { key: "g", label: "Vs mandate", render: (r) => {
+          { key: "p", label: "Process / LOB", render: (x) => (x.kind === "process"
+            ? <span className="font-semibold">{x.r.process}</span>
+            : <span className="pl-4 text-slate-600"><span aria-hidden="true">&#8627; </span>LOB: {x.lob}</span>) },
+          { key: "a", label: "Active", num: true, render: (x) => (x.kind === "process" ? formatCount(x.r.active) : <span className="text-slate-600">{formatCount(x.active)}</span>) },
+          { key: "m", label: "Mandate", num: true, render: (x) => procCell(x, (r) => (r.mandateSeats != null && r.mandateSeats > 0 ? formatCount(r.mandateSeats) : "—")) },
+          { key: "g", label: "Vs mandate", render: (x) => procCell(x, (r) => {
             const note = mandateNote(nn(r.active), r.mandateSeats);
             if (r.mandateGap === 0) return <Chip tone="ok">At mandate</Chip>;
             return <Chip tone={note === "No mandate" ? "mute" : note.startsWith("Over") ? "warn" : r.mandateGap != null && r.mandateGap < 0 ? "info" : "ok"}>{note}</Chip>;
-          } },
-          { key: "jt", label: "Joined today", num: true, render: (r) => formatCount(r.joinedToday) },
-          { key: "jm", label: "Joined MTD", num: true, render: (r) => formatCount(r.joinedMtd) },
-          { key: "lt", label: "Left today", num: true, render: (r) => formatCount(r.leftToday) },
-          { key: "lm", label: "Left MTD", num: true, render: (r) => formatCount(r.leftMtd) },
-          { key: "n", label: "Net MTD", num: true, render: (r) => signed(r.netMtd) },
-          { key: "at", label: "Attrition MTD", num: true, render: (r) => <BarCell pct={r.attritionMtdPct == null ? null : (r.attritionMtdPct / maxAttr) * 100} text={formatPct(r.attritionMtdPct)} color={PAL.s2} /> },
+          }) },
+          { key: "jt", label: "Joined today", num: true, render: (x) => procCell(x, (r) => formatCount(r.joinedToday)) },
+          { key: "jm", label: "Joined MTD", num: true, render: (x) => procCell(x, (r) => formatCount(r.joinedMtd)) },
+          { key: "lt", label: "Left today", num: true, render: (x) => procCell(x, (r) => formatCount(r.leftToday)) },
+          { key: "lm", label: "Left MTD", num: true, render: (x) => procCell(x, (r) => formatCount(r.leftMtd)) },
+          { key: "n", label: "Net MTD", num: true, render: (x) => procCell(x, (r) => signed(r.netMtd)) },
+          { key: "at", label: "Attrition MTD", num: true, render: (x) => procCell(x, (r) => <BarCell pct={r.attritionMtdPct == null ? null : (r.attritionMtdPct / maxAttr) * 100} text={formatPct(r.attritionMtdPct)} color={PAL.s2} />) },
         ]} />
     </AccentCard>
   );

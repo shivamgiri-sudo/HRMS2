@@ -1,4 +1,4 @@
-import { Loader2, RefreshCw } from "lucide-react";
+import { FileDown, Loader2, RefreshCw } from "lucide-react";
 import type { HeadBranch } from "../../../../../backend/src/modules/branch-head-health/scope";
 import "./look/look.css";
 
@@ -6,13 +6,17 @@ import "./look/look.css";
  * Date input and branch switcher. Rendered outside loading/error states so a bad date always has a way back.
  * `variant="hero"` is the white-on-navy form used inside the banner (labels above, white controls).
  */
-export function BranchHeadControls({ options, selectedBranchId = "", onBranchChange, date, onDateChange, onRefresh, stale, variant = "light", freshness }: {
+export function BranchHeadControls({ options, selectedBranchId = "", onBranchChange, date, onDateChange, onRefresh, onDownload, downloadHint, stale, variant = "light", freshness }: {
   options: HeadBranch[];
   selectedBranchId?: string;
   onBranchChange?: (branchId: string) => void;
   date?: string;
   onDateChange?: (date: string) => void;
   onRefresh?: () => void;
+  /** Download the shown branch's report as Excel; the button is disabled (with `downloadHint`) when absent. */
+  onDownload?: () => void;
+  /** Why download is unavailable, e.g. "Pick one branch"; the button is hidden when both are absent. */
+  downloadHint?: string;
   stale?: boolean;
   variant?: "light" | "hero";
   /** Data-freshness chip text (hero only), e.g. "Data as of 10:30". */
@@ -36,6 +40,10 @@ export function BranchHeadControls({ options, selectedBranchId = "", onBranchCha
         </label>
         {onRefresh ? (
           <button type="button" onClick={onRefresh} className="bhl-ghost"><RefreshCw className="h-4 w-4" aria-hidden="true" />Refresh</button>
+        ) : null}
+        {onDownload || downloadHint ? (
+          <button type="button" onClick={onDownload} disabled={!onDownload} title={onDownload ? "Download this branch's health report as Excel" : downloadHint}
+            className="bhl-ghost disabled:cursor-not-allowed disabled:opacity-60"><FileDown className="h-4 w-4" aria-hidden="true" />Download Excel</button>
         ) : null}
         {stale ? (
           <span role="status" className="bhl-fresh"><Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />Updating, showing previous results</span>

@@ -177,6 +177,7 @@ export async function buildOverview(
           joinedToday: r.joinedToday ?? 0, leftToday: r.leftToday ?? 0, netMtd: r.joinedMtd - r.leftMtd,
           attritionMtdPct: mtdPct(r.active, r.joinedMtd, r.leftMtd),
           mandateGap: r.mandateSeats == null ? null : r.active - r.mandateSeats,
+          lobs: (r.lobs ?? []).map((l) => ({ lob: l.lob, active: l.active })),
         })),
         byLob: (h.byLob ?? []).map((r) => ({ lob: r.lob, active: r.active })),
       };

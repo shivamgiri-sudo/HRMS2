@@ -21,6 +21,8 @@ import { BranchOverviewTop } from "./BranchOverviewTop";
 import { BH_SECTIONS, BranchHero, panelDomId, tabDomId } from "./BranchHero";
 import { StatusChip } from "./StatusChip";
 import { BhCard } from "./ui";
+import { downloadBranchHealthExcel } from "./excelExport";
+import { toast } from "sonner";
 
 /** Section clicks and KPI tiles of one branch overview open the drill host for that branch. */
 export function drillHandlers(open: DrillHostApi["open"], branchId: string) {
@@ -78,13 +80,17 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
   const first = data.branches[0];
   const heroName = single ? first.branch.branchName : data.branches.length === 0 ? "No branch" : `${data.branches.length} branches`;
   const showProcesses = data.branches.length > 0 || Boolean(data.processesError);
+  const onDownload = single ? () => {
+    try { downloadBranchHealthExcel(first); } catch (e) { toast.error(e instanceof Error ? e.message : "Could not build the Excel file"); }
+  } : undefined;
+  const downloadHint = single ? undefined : data.branches.length > 1 ? "Pick one branch to download its report" : undefined;
 
   return (
     <div className="space-y-4">
       <BranchHero branchName={heroName} status={single ? first.overview.status : undefined} date={first?.overview.date ?? date}
         homeFallback={data.scope.viaHomeFallback} activeTab={tab} onTabChange={setTab}
         controls={<BranchHeadControls variant="hero" options={options} selectedBranchId={selectedBranchId} onBranchChange={onBranchChange} date={date ?? first?.overview.date}
-          onDateChange={onDateChange} onRefresh={onRefresh} stale={stale} freshness={freshnessText(data.generatedAt)} />} />
+          onDateChange={onDateChange} onRefresh={onRefresh} onDownload={onDownload} downloadHint={downloadHint} stale={stale} freshness={freshnessText(data.generatedAt)} />} />
 
       {data.scope.emptyReason ? (
         <BhCard title="Nothing to show" icon={Inbox}><p className="text-[14px] text-slate-800">{data.scope.emptyReason}</p></BhCard>
