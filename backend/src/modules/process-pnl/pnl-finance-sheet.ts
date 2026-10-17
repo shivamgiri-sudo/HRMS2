@@ -17,7 +17,10 @@ import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.serv
  *    shared-building rent and CAM split across Onfido and NOD, monthly accruals. It is the sheet's
  *    IDC minus the db_bill GRNs without asset sub-heads, so with MAS Callnet asset purchases kept in
  *    (owner) the P&L reads sheet IDC + asset purchases.
- *  - REVENUE is not taken from the sheet; it stays db_bill's invoices.
+ *  - REVENUE is db_bill's invoices plus a "Finance revenue adjustment": the sheet's revenue minus the invoices, per
+ *    process. Finance books some lines differently from the invoice (Onfido labelling FTEs at delivered, not billed;
+ *    Viega, invoiced on a DialDesk-coded cost centre HRMS keeps out; ALTRX, SCPT, Wedding Invitation, which db_bill has
+ *    no MAS Callnet invoice for), so the P&L reads the sheet's revenue with the invoice as its visible base.
  *
  * From 2026-10 Finance works in HRMS and none of this applies.
  */
@@ -31,6 +34,7 @@ export interface FinanceSheetLine {
   sheetProcess: string;
   branchId: string | null;
   processId: string | null;
+  revenue: number;
   agentSalary: number;
   dscSalary: number;
   bmcSalary: number;
@@ -42,7 +46,7 @@ const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 export async function readFinanceSheetLines(period: string): Promise<FinanceSheetLine[]> {
   if (!isFinanceSheetPeriod(period) || !(await tableExists("pnl_finance_sheet_line"))) return [];
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT sheet_branch, sheet_process, branch_id, process_id, agent_salary, dsc_salary, bmc_salary, idc_total
+    `SELECT sheet_branch, sheet_process, branch_id, process_id, revenue, agent_salary, dsc_salary, bmc_salary, idc_total
        FROM pnl_finance_sheet_line WHERE period_code = ?`,
     [period],
   );
@@ -51,6 +55,7 @@ export async function readFinanceSheetLines(period: string): Promise<FinanceShee
     sheetProcess: String(r.sheet_process),
     branchId: r.branch_id ? String(r.branch_id) : null,
     processId: r.process_id ? String(r.process_id) : null,
+    revenue: n(r.revenue),
     agentSalary: n(r.agent_salary),
     dscSalary: n(r.dsc_salary),
     bmcSalary: n(r.bmc_salary),
@@ -107,13 +112,32 @@ export function financeAllocationRows(
   lines: FinanceSheetLine[],
   operatingSpend: Map<string, number>,
 ): FinanceAllocationRow[] {
+  return sheetLessBookRows(lines, (line) => line.idcTotal, operatingSpend);
+}
+
+/**
+ * The Finance revenue adjustment: per branch and process, the sheet's revenue minus what HRMS books from db_bill's
+ * invoices (`invoiced`, keyed "branch|process", "" for no process). Same shape and rules as financeAllocationRows.
+ */
+export function financeRevenueAdjustmentRows(
+  lines: FinanceSheetLine[],
+  invoiced: Map<string, number>,
+): FinanceAllocationRow[] {
+  return sheetLessBookRows(lines, (line) => line.revenue, invoiced);
+}
+
+function sheetLessBookRows(
+  lines: FinanceSheetLine[],
+  pick: (line: FinanceSheetLine) => number,
+  operatingSpend: Map<string, number>,
+): FinanceAllocationRow[] {
   const sheetByKey = new Map<string, number>();
   const branches = new Set<string>();
   for (const line of lines) {
     if (!line.branchId) continue;
     branches.add(line.branchId);
     const key = `${line.branchId}|${line.processId ?? ""}`;
-    sheetByKey.set(key, (sheetByKey.get(key) ?? 0) + line.idcTotal);
+    sheetByKey.set(key, (sheetByKey.get(key) ?? 0) + pick(line));
   }
   const out: FinanceAllocationRow[] = [];
   for (const branchId of branches) {

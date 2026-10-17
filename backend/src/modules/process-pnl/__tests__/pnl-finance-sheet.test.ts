@@ -6,13 +6,14 @@ vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists, queryRows: vi.fn()
 
 import {
   financeAllocationRows,
+  financeRevenueAdjustmentRows,
   isFinanceSheetPeriod,
   readFinanceSheetPeopleCost,
   type FinanceSheetLine,
 } from "../pnl-finance-sheet.js";
 
 const line = (o: Partial<FinanceSheetLine>): FinanceSheetLine => ({
-  sheetBranch: "Noida", sheetProcess: "P", branchId: "B1", processId: "P1",
+  sheetBranch: "Noida", sheetProcess: "P", branchId: "B1", processId: "P1", revenue: 0,
   agentSalary: 0, dscSalary: 0, bmcSalary: 0, idcTotal: 0, ...o,
 });
 
@@ -73,5 +74,18 @@ describe("Finance allocation = sheet IDC - db_bill operating GRNs", () => {
 
   it("ignores branches the sheet does not carry", () => {
     expect(financeAllocationRows([line({ idcTotal: 100 })], new Map([["B1|P1", 100], ["B9|", 5000]]))).toEqual([]);
+  });
+});
+
+describe("Finance revenue adjustment = sheet revenue - db_bill invoices", () => {
+  it("brings each mapped process and the branch to the sheet; invoices on unnamed processes are offset at branch level", () => {
+    const lines = [line({ processId: "ONF", revenue: 9920 }), line({ processId: null, sheetProcess: "Management", revenue: 240 })];
+    const invoiced = new Map([["B1|ONF", 10037], ["B1|FIN", 240]]);
+    const rows = financeRevenueAdjustmentRows(lines, invoiced);
+    expect(rows).toEqual([
+      { branchId: "B1", processId: "ONF", amount: -117 },
+      { branchId: "B1", processId: null, amount: 0 },
+    ].filter((r) => r.amount !== 0));
+    expect(10037 + 240 + rows.reduce((t, r) => t + r.amount, 0)).toBe(9920 + 240);
   });
 });

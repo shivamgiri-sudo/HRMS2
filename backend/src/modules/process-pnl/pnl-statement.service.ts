@@ -1,4 +1,4 @@
-import { readFinanceSheetPeopleCost } from "./pnl-finance-sheet.js";
+import { financeRevenueAdjustmentRows, readFinanceSheetLines, readFinanceSheetPeopleCost, type FinanceSheetLine } from "./pnl-finance-sheet.js";
 import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { getCachedAllocationSummary, normalizePeriod } from "./canonical-pnl.service.js";
@@ -161,6 +161,34 @@ function revenueBranchByProcess(src: ActualsByKey, rows: BpoPnlRow[]): ActualsBy
     if (branch) byBranch.set(branch, (byBranch.get(branch) ?? 0) + amount);
   }
   return { ...src, byBranch };
+}
+
+/** Revenue plus the Finance revenue adjustment (pnl-finance-sheet.ts): every mapped process reads the sheet's revenue, every
+ *  branch the sheet's total. Invoices are attributed the way revenueBranchByProcess attributes them. */
+function withFinanceRevenueAdjustment(src: ActualsByKey, rows: BpoPnlRow[], lines: FinanceSheetLine[]): ActualsByKey {
+  if (!lines.length) return src;
+  const processBranch = new Map<string, string>();
+  for (const row of rows) if (row.processId && row.branchId) processBranch.set(String(row.processId), String(row.branchId));
+  const book = new Map<string, number>();
+  if (src.ccKeys && src.byCostCentre.size) {
+    for (const [cc, amount] of src.byCostCentre) {
+      const key = src.ccKeys.get(cc);
+      const processId = key?.processId ?? null;
+      const branch = (processId ? processBranch.get(processId) : undefined) ?? key?.branchId ?? null;
+      if (!branch) continue;
+      const k = `${branch}|${processId ?? ""}`;
+      book.set(k, (book.get(k) ?? 0) + amount);
+    }
+  } else {
+    for (const [branch, amount] of src.byBranch) book.set(`${branch}|`, amount);
+  }
+  const byBranch = new Map(src.byBranch);
+  const byProcess = new Map(src.byProcess);
+  for (const a of financeRevenueAdjustmentRows(lines, book)) {
+    byBranch.set(a.branchId, (byBranch.get(a.branchId) ?? 0) + a.amount);
+    if (a.processId) byProcess.set(a.processId, (byProcess.get(a.processId) ?? 0) + a.amount);
+  }
+  return { ...src, byBranch, byProcess };
 }
 
 /** Branch columns for a Finance-sheet month that the process engine has no row for (AHMEDABAD-NEELAKANTH, closed in June 2026,
@@ -1034,7 +1062,9 @@ export async function getStatement(
   const invoicedRevenueNoForecast = forecastCcs.length ? withoutCostCentres(invoicedRevenueAll, forecastCcs) : invoicedRevenueAll;
   // A month Finance closed in db_bill (pnl-finance-sheet.ts) reads its branch revenue the way its process columns read it, so a
   // branch is the sum of its processes, as on Finance's sheet.
-  const invoicedRevenue = people.fromFinanceSheet ? revenueBranchByProcess(invoicedRevenueNoForecast, rows) : invoicedRevenueNoForecast;
+  const invoicedRevenue = people.fromFinanceSheet
+    ? withFinanceRevenueAdjustment(revenueBranchByProcess(invoicedRevenueNoForecast, rows), rows, await readFinanceSheetLines(periodCode))
+    : invoicedRevenueNoForecast;
   if (viewBy === "branch" && people.fromFinanceSheet) {
     columnData = [...columnData, ...(await financeSheetOnlyBranchColumns(columnData, people, idc, filters))];
   }

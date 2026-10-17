@@ -1,8 +1,8 @@
-import { isFinanceSheetPeriod, readFinanceSheetPayroll, type FinanceSheetPayroll } from "./pnl-finance-sheet.js";
+import { financeRevenueAdjustmentRows, financeSheetCostCentres, isFinanceSheetPeriod, readFinanceSheetLines, readFinanceSheetPayroll, type FinanceSheetPayroll } from "./pnl-finance-sheet.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
-import { OWN_COMPANY_SQL, readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
+import { OWN_COMPANY_SQL, getCostCentreProcessIds, readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
 import { getSeatBillingEstimate, isEstimateWindow, shiftPeriod, type CostCentreSeatBilling } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
@@ -565,6 +565,45 @@ function processClause(col: string, processIds: string[] | undefined): { sql: st
   return { sql: `AND ${col} IN (${marks(processIds)})`, params: processIds };
 }
 
+/**
+ * The Finance revenue adjustment on Live P&L rows (pnl-finance-sheet.ts): per mapped process, sheet revenue minus the rows'
+ * recognised revenue, added to the process's MAS Callnet cost centre row (else its first row in view). Returns what no row
+ * can carry, per branch. Rows are replaced with new row objects.
+ */
+async function applyFinanceRevenueAdjustment(
+  period: string,
+  rows: PnlReconciliationRow[],
+  filters: PnlReconciliationFilters,
+): Promise<Map<string, number>> {
+  const remainder = new Map<string, number>();
+  const lines = await readFinanceSheetLines(period);
+  if (!lines.length) return remainder;
+  const processOf = await getCostCentreProcessIds(rows.map((row) => row.costCentreId));
+  const book = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.branchId) continue;
+    const key = `${row.branchId}|${processOf.get(row.costCentreId) ?? ""}`;
+    book.set(key, (book.get(key) ?? 0) + row.recognisedRevenue);
+  }
+  const adjustments = financeRevenueAdjustmentRows(lines, book);
+  const homeCc = await financeSheetCostCentres(adjustments.map((a) => a.processId ?? ""));
+  for (const a of adjustments) {
+    if (filters.processIds && (!a.processId || !filters.processIds.includes(a.processId))) continue;
+    const processId = a.processId;
+    let index = processId ? rows.findIndex((row) => row.costCentreId === homeCc.get(processId)) : -1;
+    if (index < 0 && processId) index = rows.findIndex((row) => processOf.get(row.costCentreId) === processId);
+    if (index < 0) {
+      remainder.set(a.branchId, (remainder.get(a.branchId) ?? 0) + a.amount);
+      continue;
+    }
+    const row = rows[index];
+    const recognisedRevenue = row.recognisedRevenue + a.amount;
+    const operatingProfit = row.operatingProfit + a.amount;
+    rows[index] = { ...row, recognisedRevenue, operatingProfit, marginPct: pct(operatingProfit, recognisedRevenue) };
+  }
+  return remainder;
+}
+
 /** The sheet salary with no HRMS cost centre, per branch, in the shape readUnallocatedPayroll returns. A process view keeps
  *  only the sheet lines of its processes; lines with no process belong to no process view. */
 async function sheetUnallocated(
@@ -958,6 +997,12 @@ async function buildPnlReconciliation(
     };
   });
 
+  // A Finance-sheet month: each mapped process reads the sheet's revenue (pnl-finance-sheet.ts). The adjustment lands on the
+  // process's cost centre row; what has no row in this view stays at branch level (below, with the other branch-only amounts).
+  const revenueRemainder = isFinanceSheetPeriod(period)
+    ? await applyFinanceRevenueAdjustment(period, rows, filters)
+    : new Map<string, number>();
+
   const branchMap = new Map<string, PnlBranchRollup>();
   for (const row of rows) {
     const key = row.branchId ?? "";
@@ -1046,6 +1091,17 @@ async function buildPnlReconciliation(
     current.marginPct = pct(current.operatingProfit, current.revenue);
     unallocatedGrn += amount;
   }
+  let revenueAdjustmentUnallocated = 0;
+  for (const [branchId, amount] of revenueRemainder) {
+    if (viewBranches && !viewBranches.has(branchId)) continue;
+    if (filters.processIds) continue;
+    const current = branchMap.get(branchId);
+    if (!current) continue;
+    current.revenue += amount;
+    current.operatingProfit += amount;
+    current.marginPct = pct(current.operatingProfit, current.revenue);
+    revenueAdjustmentUnallocated += amount;
+  }
   const unallocatedCost = unallocatedPayroll.reduce((t, u) => t + u.cost, 0);
   const unallocatedStaff = unallocatedPayroll.reduce((t, u) => t + u.staff, 0);
 
@@ -1054,7 +1110,7 @@ async function buildPnlReconciliation(
     activeCostCentres: rows.filter((row) => row.active).length,
     unallocatedPayroll: unallocatedCost,
     unallocatedStaff,
-    revenue: sum((row) => row.recognisedRevenue),
+    revenue: sum((row) => row.recognisedRevenue) + revenueAdjustmentUnallocated,
     revenueInvoice: sum((row) => row.revenueInvoice),
     revenueAccrual: sum((row) => row.revenueAccrual),
     creditNote: sum((row) => row.creditNote),
@@ -1070,7 +1126,7 @@ async function buildPnlReconciliation(
     branchBudget: Array.from(branchMap.values()).reduce((total, row) => total + row.branchBudget, 0),
     payrollCost: sum((row) => row.payrollCost) + unallocatedCost,
     staffPaid: sum((row) => row.staffPaid) + unallocatedStaff,
-    operatingProfit: sum((row) => row.operatingProfit) - unallocatedCost - unallocatedBudgetReserve - unallocatedGrn,
+    operatingProfit: sum((row) => row.operatingProfit) - unallocatedCost - unallocatedBudgetReserve - unallocatedGrn + revenueAdjustmentUnallocated,
     marginPct: null,
     depreciation: belowTheLine.depreciation,
     financeCost: belowTheLine.financeCost,

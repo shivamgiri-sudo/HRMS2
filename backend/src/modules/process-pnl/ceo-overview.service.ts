@@ -284,6 +284,18 @@ const OWN_COMPANY_SQL = `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name
  */
 async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   const out = new Map<string, number>();
+  // Months Finance closed in db_bill: the revenue of Finance's P&L sheet (pnl-finance-sheet.ts), same as Live P&L and the Statement.
+  const sheetLines = await readFinanceSheetLines(period);
+  if (sheetLines.length) {
+    const ccOf = s.costCentreIds.length ? await financeSheetCostCentres(sheetLines.map((l) => l.processId ?? "")) : null;
+    for (const l of sheetLines) {
+      if (!l.branchId) continue;
+      if (s.processIds.length && (!l.processId || !s.processIds.includes(l.processId))) continue;
+      if (ccOf && (!l.processId || !s.costCentreIds.includes(ccOf.get(l.processId) ?? ""))) continue;
+      out.set(l.branchId, (out.get(l.branchId) ?? 0) + l.revenue);
+    }
+    return out;
+  }
   if (!(await tableExists("billing_invoice_particular_snapshot"))) return out;
   const hasProvision = await tableExists("billing_provision_snapshot");
   const hasCreditNote = await tableExists("billing_credit_note_snapshot");
