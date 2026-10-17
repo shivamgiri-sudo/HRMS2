@@ -326,7 +326,8 @@ const envSchema = z.object({
   MASMIS_DB_NAME: z.string().default("db_masmis"),
 
   // Cross-DB source credentials — used by sourceDb.ts for db_audit, db_external, dialer_db queries
-  // Falls back to DB_USER/DB_PASSWORD if not set
+  // Falls back to DB_HOST/DB_USER/DB_PASSWORD if not set
+  SOURCE_DB_HOST: z.string().default(""),
   SOURCE_DB_USER: z.string().default(""),
   SOURCE_DB_PASSWORD: z.string().default(""),
 

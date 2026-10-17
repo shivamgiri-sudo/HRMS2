@@ -6,9 +6,9 @@ let pool: mysql.Pool | null = null;
 export function getSourcePool(): mysql.Pool {
   if (!pool) {
     pool = mysql.createPool({
-      host: env.DB_HOST,
+      host: env.SOURCE_DB_HOST || env.DB_HOST,
       port: env.DB_PORT,
-      // Prefer SOURCE_DB_USER/PASSWORD (root-level cross-DB grants) over the app user
+      // Prefer SOURCE_DB_* (root-level cross-DB grants) over the app user/host
       user:     env.SOURCE_DB_USER     || env.DB_USER,
       password: env.SOURCE_DB_PASSWORD || env.DB_PASSWORD,
       // No database — allows qualified cross-DB refs like db_audit.call_quality_assessment
