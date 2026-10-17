@@ -24,6 +24,14 @@ function versionUpdatePlugin(): Plugin {
 }
 
 export default defineConfig(({ mode }) => ({
+  // Branch Head Health route is compiled in only when this flag is "true". CI sets it, but a frontend built by hand
+  // (e.g. while the deploy runner is offline) did not, and the dashboard 404'd in production on 2026-10-16.
+  // Production builds therefore default to on; an explicit VITE_BRANCH_HEAD_HEALTH_ENABLED=false still wins.
+  define: {
+    "import.meta.env.VITE_BRANCH_HEAD_HEALTH_ENABLED": JSON.stringify(
+      process.env.VITE_BRANCH_HEAD_HEALTH_ENABLED ?? (mode === "production" ? "true" : "false"),
+    ),
+  },
   server: {
     host: "0.0.0.0",
     port: 8080,
