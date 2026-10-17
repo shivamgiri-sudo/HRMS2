@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Inbox } from "lucide-react";
 import type { BranchHeadHealthPayload } from "../../../../../backend/src/modules/branch-head-health/types";
 import type { HeadBranch } from "../../../../../backend/src/modules/branch-head-health/scope";
-import { ProcessCoveragePanel } from "./ProcessCoveragePanel";
+import { defaultDrillBranch } from "./ProcessCoveragePanel";
 import { PeopleVisual } from "./sections/PeopleVisual";
 import { AttendanceVisual } from "./sections/AttendanceVisual";
 import { AttritionVisual } from "./sections/AttritionVisual";
@@ -11,7 +11,7 @@ import { ProcessPnlVisual } from "./sections/ProcessPnlVisual";
 import { HiringVisual } from "./sections/HiringVisual";
 import { BacklogVisual } from "./sections/BacklogVisual";
 import { OpsQualityVisual } from "./sections/OpsQualityVisual";
-import { DataHealthChips } from "./sections/DataHealthChips";
+import { ProcessesTab } from "./sections/ProcessesVisual";
 import type { VisualProps } from "./sections/shared";
 import type { DrillTarget, KpiId } from "./drill";
 import { DrillHost, useDrillHost, type DrillHostApi } from "./drill/DrillHost";
@@ -99,10 +99,8 @@ export function BranchHeadReferenceLayout({ data, branchOptions, selectedBranchI
       <div role="tabpanel" id={panelDomId(tab)} aria-labelledby={tabDomId(tab)} tabIndex={-1} className="space-y-4 focus:outline-none">
         {tab === "processes" ? (
           showProcesses ? (
-            <div className="space-y-4">
-              <DataHealthChips section={data.dataHealth} />
-              <ProcessCoveragePanel active={data.processes.active} unmapped={data.processes.unmapped} selectedBranchId={selectedBranchId} branchNames={branchNames} error={data.processesError} />
-            </div>
+            <ProcessesTab data={data} selectedBranchId={selectedBranchId} branchNames={branchNames}
+              onOpenProcess={(p) => { const b = defaultDrillBranch(p, selectedBranchId); host.open({ kind: "process", id: p.processId, name: p.processName, branchId: b }, b); }} />
           ) : null
         ) : data.branches.map(({ branch, overview, score }) => {
           const { onSelect, onOpenKpi } = drillHandlers(host.open, branch.branchId);

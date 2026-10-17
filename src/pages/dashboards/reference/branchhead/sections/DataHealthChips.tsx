@@ -1,52 +1,44 @@
-import { CircleSlash, Clock3, HeartPulse, Unlink } from "lucide-react";
-import { BhCard } from "../ui";
+import { CheckCircle2 } from "lucide-react";
 import type { BranchHeadHealthPayload } from "../../../../../../backend/src/modules/branch-head-health/types";
-import { BarList, ChartFrame, barListTable, type BarListProps } from "../viz";
 import { formatCount } from "../format";
 import { isStillCalculating } from "../pending";
 import { SectionCalculating } from "../SectionPanels";
+import { AccentCard, BarsChart, ChartCard, EmptyLine, PAL } from "../look";
 
-const SUBTITLE = "Across the selected branches";
+export const OVER_MANDATE_ID = "bh-over-mandate";
 
-/** Data-quality counts across the selected branches as chips; cost centres over mandate as bars + table. */
+/** Cost centres over mandate (across the selected branches) as bars with seats beside headcount, plus the table twin. */
 export function DataHealthChips({ section }: { section: BranchHeadHealthPayload["dataHealth"] }) {
   if (section?.status === "error" && isStillCalculating(section.message)) {
-    return <BhCard icon={HeartPulse} tone="rose" title="Data health" subtitle={SUBTITLE}><SectionCalculating name="Data health" /></BhCard>;
+    return <AccentCard title="Data health" accent="rose"><SectionCalculating name="Data health" /></AccentCard>;
   }
   if (!section || section.status === "error") {
-    return <BhCard icon={HeartPulse} tone="rose" title="Data health" subtitle={SUBTITLE}><p className="text-[13px] text-slate-700">Data health could not be loaded.</p></BhCard>;
+    return <AccentCard title="Data health" accent="rose"><EmptyLine text="Data health could not be loaded." /></AccentCard>;
   }
   const d = section.data;
   if (section.status === "empty" || !d) {
-    return <BhCard icon={HeartPulse} tone="rose" title="Data health" subtitle={SUBTITLE}><p className="text-[13px] text-slate-700">No data health information for these branches.</p></BhCard>;
+    return <AccentCard title="Data health" accent="rose"><EmptyLine text="No data health information for these branches." /></AccentCard>;
   }
-  const chips = [
-    { label: "Unmapped processes", n: d.unmappedProcesses, Icon: Unlink },
-    { label: "Cost centres without a process", n: d.costCentresWithoutProcess, Icon: CircleSlash },
-    { label: "Stale processes", n: d.staleProcesses, Icon: Clock3 },
-  ];
-  const over: BarListProps = {
-    label: "Cost centres over mandate",
-    markerLabel: "Seats",
-    format: formatCount,
-    items: d.overMandate.map((r) => ({ id: r.costCentre, label: r.costCentre, value: r.headcount, marker: r.seats, note: `Over by ${formatCount(r.headcount - r.seats)}` })),
+  const rows = [...d.overMandate].sort((a, b) => (b.headcount - b.seats) - (a.headcount - a.seats));
+  const table = {
+    caption: "Cost centres over mandate across the selected branches",
+    columns: ["Cost centre", "Headcount", "Mandated seats", "Over by"],
+    rows: rows.map((r) => [r.costCentre, formatCount(r.headcount), formatCount(r.seats), `Over by ${formatCount(r.headcount - r.seats)}`]),
   };
   return (
-    <BhCard icon={HeartPulse} tone="rose" title="Data health" subtitle={SUBTITLE}>
-      <ul aria-label="Data health counts" className="flex list-none flex-wrap gap-2 p-0">
-        {chips.map(({ label, n, Icon }) => (
-          <li key={label} className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-slate-300 bg-slate-50 px-3 text-[12px] text-slate-900">
-            <Icon className="h-3.5 w-3.5" aria-hidden="true" /><span className="font-bold tabular-nums">{formatCount(n)}</span> {label}
-          </li>
-        ))}
-      </ul>
-      {over.items.length > 0 ? (
-        <div className="mt-3">
-          <ChartFrame title="Cost centres over mandate" subtitle="Headcount; marker = mandated seats" table={barListTable(over)} height={72}>
-            <BarList {...over} />
-          </ChartFrame>
-        </div>
-      ) : null}
-    </BhCard>
+    <div id={OVER_MANDATE_ID} className="scroll-mt-4">
+      {rows.length ? (
+        <ChartCard title="Cost centres over mandate" accent="rose" table={table} chip={`${formatCount(rows.length)} over · across the selected branches`}>
+          <BarsChart label={`Cost centres over mandate: ${rows.map((r) => `${r.costCentre} ${formatCount(r.headcount)} of ${formatCount(r.seats)} seats, Over by ${formatCount(r.headcount - r.seats)}`).join("; ")}`}
+            xKey="cc" horizontal height={Math.max(150, rows.length * 44 + 60)} format={formatCount}
+            data={rows.map((r) => ({ cc: r.costCentre, headcount: r.headcount, seats: r.seats }))}
+            series={[{ key: "headcount", label: "Headcount", color: PAL.s2 }, { key: "seats", label: "Mandated seats", color: PAL.other }]} />
+        </ChartCard>
+      ) : (
+        <AccentCard title="Cost centres over mandate" accent="rose" chip="0 over">
+          <EmptyLine icon={CheckCircle2} text="No cost centre is over its mandated seats." />
+        </AccentCard>
+      )}
+    </div>
   );
 }

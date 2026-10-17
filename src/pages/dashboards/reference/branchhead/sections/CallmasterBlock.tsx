@@ -1,107 +1,105 @@
-import { AlertTriangle, Inbox } from "lucide-react";
+import type { ReactNode } from "react";
+import { AlertOctagon, AlertTriangle, Headphones, PhoneIncoming, PhoneOff, PhoneOutgoing, Users } from "lucide-react";
 import type { SectionResult } from "../../../../../../backend/src/modules/branch-head-health/types";
-import { GradientKpi, KpiCell, KpiGrid, type KpiHue } from "../look";
-import { BarList, ChartFrame, DataTable, barListTable, type BarListProps, type TableSpec } from "../viz";
+import { AccentCard, BarsChart, ChartCard, Chip, EmptyLine, GradientKpi, KpiCell, KpiGrid, NavyTable, PAL, type Accent, type KpiHue } from "../look";
 import { SectionError } from "../SectionPanels";
-import { Fold } from "./shared";
-
-const HUES: KpiHue[] = ["navy", "emerald", "violet", "cyan", "orange", "teal", "indigo"];
+import { formatCount } from "../format";
+import { cellText, cxItems, humanLabel, okObj, rowsTable, scalars, trendChart, type CallmasterParts, type Part } from "./callmasterParts";
 import { num } from "./OpsHeatGrid";
 
-type Part = SectionResult<unknown> | undefined;
-interface Parts { kpis?: Part; qualityTrend?: Part; cx?: Part; fatal?: SectionResult<{ totalFatalCalls: number; agentsWithFatals: number; truncated: boolean }> }
+export { humanLabel } from "./callmasterParts";
 
-/** Column keys that could carry a person or agent identity are never rendered. */
-const IDENTITY_WORDS = ["agent", "name", "user", "employee", "code", "email", "manager"];
-const hidden = (k: string): boolean => IDENTITY_WORDS.some((w) => k.toLowerCase().includes(w));
+const HUES: KpiHue[] = ["navy", "emerald", "violet", "cyan", "orange", "teal", "indigo"];
 
-export function humanLabel(k: string): string {
-  let out = "";
-  for (const ch of k) {
-    if (ch === "_") out += " ";
-    else out += ch >= "A" && ch <= "Z" && out.length > 0 ? ` ${ch}` : ch;
-  }
-  return out.length > 0 ? out[0].toUpperCase() + out.slice(1) : out;
-}
-const cellText = (v: unknown): string => (v == null ? "—" : typeof v === "number" ? num(v) : String(v));
-
-function scalars(o: unknown): Array<[string, unknown]> {
-  if (o == null || typeof o !== "object" || Array.isArray(o)) return [];
-  return Object.entries(o as Record<string, unknown>).filter(([k, v]) => (typeof v !== "object" || v === null) && !hidden(k));
+/** One Callmaster sub-part in an accent card: error inline, honest empty line, else the body. */
+function PartCard({ title, part, chip, accent, children }: { title: string; part: Part; chip?: ReactNode; accent: Accent; children: ReactNode | null }) {
+  const body = !part || part.status === "error" ? <SectionError name={title} message={part?.message} /> : children ?? <EmptyLine text="No data for this period" />;
+  return <AccentCard title={title} accent={accent} chip={part?.status === "ok" ? chip : undefined}>{body}</AccentCard>;
 }
 
-function rowsTable(caption: string, data: unknown): TableSpec | null {
-  const rows = (Array.isArray(data) ? data : []).filter((r) => r && typeof r === "object") as Array<Record<string, unknown>>;
-  const cols = rows.length ? scalars(rows[0]).map(([k]) => k) : [];
-  if (!cols.length) return null;
-  return { caption, columns: cols.map(humanLabel), rows: rows.slice(0, 31).map((r) => cols.map((c) => cellText(r[c]))) };
-}
-
-function Sub({ title, part, children }: { title: string; part: Part; children: JSX.Element | null }) {
+/** No client mapped: icon, one line and what to do about it. */
+export function CallmasterUnmapped() {
   return (
-    <div className="mt-3">
-      <h4 className="text-[13px] font-bold text-slate-900">{title}</h4>
-      {!part || part.status === "error" ? <SectionError name={title} message={part?.message} />
-        : children ?? <p className="text-[13px] text-slate-700">No data for this period</p>}
-    </div>
+    <AccentCard title="Callmaster" accent="cyan">
+      <div className="flex items-start gap-3 px-1 py-3">
+        <PhoneOff className="mt-0.5 h-5 w-5 shrink-0 text-slate-600" aria-hidden="true" />
+        <div>
+          <p className="text-[14px] font-semibold text-slate-900">No Callmaster client is mapped to this branch&apos;s processes</p>
+          <p className="mt-1 text-[13px] text-slate-700">Ask the Callmaster admin to map a client to these processes; call quality, CX and fatal calls then appear here.</p>
+        </div>
+      </div>
+    </AccentCard>
   );
 }
 
-const okObj = (p: Part) => (p?.status === "ok" && p.data && typeof p.data === "object" ? p.data : null);
-
-/** Callmaster: KPI tiles, CX parameters as bars, quality trend in a fold, fatal-call tiles and the truncation notice. */
-export function CallmasterBlock({ section }: { section?: SectionResult<unknown> }) {
+/** Callmaster: KPI tiles, CX parameters as bars, the quality trend as a line chart, fatal-call tiles with a count table. */
+export function CallmasterBlock({ section, compact }: { section?: SectionResult<unknown>; compact?: boolean }) {
   if (!section) return null;
-  if (section.status === "error") return <SectionError name="Callmaster" message={section.message} />;
-  if (section.status === "empty" || !section.data) {
-    return <p className="flex items-center gap-2 text-[13px] text-slate-700"><Inbox className="h-4 w-4" aria-hidden="true" />No Callmaster client is mapped to this branch&apos;s processes</p>;
-  }
-  const p = section.data as Parts;
+  if (section.status === "error") return <AccentCard title="Callmaster" accent="cyan"><SectionError name="Callmaster" message={section.message} /></AccentCard>;
+  if (section.status === "empty" || !section.data) return <CallmasterUnmapped />;
+  const p = section.data as CallmasterParts;
   const kd = (okObj(p.kpis) ?? {}) as Record<string, unknown>;
-  const groups = ([["Inbound", scalars(kd.inbound)], ["Outbound", scalars(kd.outbound)]] as Array<[string, Array<[string, unknown]>]>).filter(([, f]) => f.length > 0);
-  const cxd = okObj(p.cx) as { params?: Record<string, unknown>; definitions?: Array<{ key: string; label?: string }> } | null;
-  const cx: BarListProps = {
-    label: "CX parameter scores", format: num, max: 100,
-    items: Object.entries(cxd?.params ?? {}).filter(([k, v]) => typeof v === "number" && !hidden(k))
-      .map(([k, v]) => ({ id: k, label: cxd?.definitions?.find((d) => d.key === k)?.label ?? humanLabel(k), value: v as number })),
-  };
-  const trend = rowsTable("Quality trend by day", p.qualityTrend?.data);
+  const groups = ([["Inbound", PhoneIncoming, scalars(kd.inbound)], ["Outbound", PhoneOutgoing, scalars(kd.outbound)]] as const).filter(([, , f]) => f.length > 0);
+  const cx = cxItems(p.cx);
+  const trendTable = rowsTable("Quality trend by day", p.qualityTrend?.data);
+  const trend = trendChart(p.qualityTrend?.data);
   const fatal = p.fatal?.status === "ok" ? p.fatal.data : null;
+  const perAgent = fatal && fatal.agentsWithFatals > 0 ? fatal.totalFatalCalls / fatal.agentsWithFatals : null;
+  const calls = groups.map(([g, , f]) => `${g} ${cellText(f.find(([k]) => k.toLowerCase() === "total")?.[1])}`).join(" · ");
   return (
-    <div>
-      <Sub title="KPIs" part={p.kpis}>
+    <div className="space-y-4">
+      <PartCard title="Callmaster KPIs" part={p.kpis} accent="cyan" chip={groups.length ? calls : undefined}>
         {groups.length ? (
-          <div className="space-y-2">
-            {groups.map(([g, fields]) => (
+          <div className="space-y-3">
+            {groups.map(([g, Icon, fields]) => (
               <div key={g}>
-                <h5 className="mb-1 text-[12px] font-semibold uppercase text-slate-700">{g}</h5>
+                <h4 className="mb-1.5 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-slate-700"><Icon className="h-3.5 w-3.5" aria-hidden="true" />{g}</h4>
                 <KpiGrid label={`${g} KPIs`} cols={5}>{fields.map(([k, v], i) => <KpiCell key={k}><GradientKpi hue={HUES[i % HUES.length]} label={humanLabel(k)} value={cellText(v)} /></KpiCell>)}</KpiGrid>
               </div>
             ))}
           </div>
         ) : null}
-      </Sub>
-      <Sub title="CX parameters" part={p.cx}>
-        {cx.items.length ? <ChartFrame title="CX parameters" subtitle="Score %" table={barListTable(cx)} height={96}><BarList {...cx} /></ChartFrame> : null}
-      </Sub>
-      <Sub title="Quality trend" part={p.qualityTrend}>
-        {trend ? <Fold title="Quality trend by day"><DataTable table={trend} /></Fold> : null}
-      </Sub>
-      <Sub title="Fatal calls" part={p.fatal}>
+      </PartCard>
+      <div className={compact ? "bhl-grid" : "bhl-grid bhl-grid-2"}>
+        {p.cx?.status === "ok" && cx.length ? (
+          <ChartCard title="CX parameters" accent="emerald" chip={`${cx.length} parameters · score %`}
+            table={{ caption: "CX parameter scores", columns: ["Parameter", "Score %"], rows: cx.map((c) => [c.label, num(c.value)]) }}>
+            <BarsChart label={`CX parameter scores: ${cx.map((c) => `${c.label} ${num(c.value)}`).join(", ")}`} xKey="label" horizontal height={Math.max(160, cx.length * 34 + 50)}
+              format={num} data={cx.map((c) => ({ label: c.label, score: c.value }))} series={[{ key: "score", label: "Score %", color: PAL.s3 }]} />
+          </ChartCard>
+        ) : <PartCard title="CX parameters" part={p.cx} accent="emerald">{null}</PartCard>}
+        {p.qualityTrend?.status === "ok" && trend && trendTable ? (
+          <ChartCard title="Quality trend" accent="blue" chip={`${trend.rows.length} days`} table={trendTable}>
+            <BarsChart label={`Quality trend by day: ${trend.rows.map((r) => `${r[trend.xKey]} ${trend.series.map((s) => `${s.label} ${cellText(r[s.key])}`).join(", ")}`).join("; ")}`}
+              xKey={trend.xKey} height={260} format={num} data={trend.rows} series={trend.series} />
+          </ChartCard>
+        ) : <PartCard title="Quality trend" part={p.qualityTrend} accent="blue">{null}</PartCard>}
+      </div>
+      <PartCard title="Fatal calls" part={p.fatal} accent="rose" chip={fatal ? `${formatCount(fatal.totalFatalCalls)} fatal calls` : undefined}>
         {fatal ? (
           <div>
-            <KpiGrid label="Fatal calls">
-              <KpiCell><GradientKpi hue="rose" label="Total fatal calls" value={cellText(fatal.totalFatalCalls)} /></KpiCell>
-              <KpiCell><GradientKpi hue="slate" label="Agents with fatals" value={cellText(fatal.agentsWithFatals)} /></KpiCell>
-            </KpiGrid>
+            <div className={compact ? "bhl-grid" : "bhl-grid bhl-grid-2"}>
+              <ul aria-label="Fatal calls" className="grid list-none grid-cols-2 gap-2.5 p-0">
+                <li className="flex min-w-0"><GradientKpi icon={AlertOctagon} hue="rose" label="Total fatal calls" value={formatCount(fatal.totalFatalCalls)} sub="Audited calls marked fatal"
+                  status={fatal.totalFatalCalls > 0 ? "warning" : null} /></li>
+                <li className="flex min-w-0"><GradientKpi icon={Users} hue="slate" label="Agents with fatals" value={formatCount(fatal.agentsWithFatals)} sub="Names are in the process drill-down" /></li>
+              </ul>
+              <NavyTable caption="Fatal call counts" limit={0} rows={[
+                ["Total fatal calls", formatCount(fatal.totalFatalCalls)], ["Agents with fatals", formatCount(fatal.agentsWithFatals)],
+                ["Fatal calls per agent", perAgent == null ? "—" : perAgent.toFixed(1)],
+              ]} columns={[
+                { key: "m", label: "Measure", render: (r) => <span className="font-semibold">{r[0]}</span> },
+                { key: "v", label: "Count", num: true, render: (r) => r[1] },
+              ]} />
+            </div>
             {fatal.truncated ? (
-              <p role="status" className="mt-2 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-[13px] text-amber-900">
+              <p role="status" className="mt-3 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-[13px] text-amber-900">
                 <AlertTriangle className="h-4 w-4" aria-hidden="true" />Showing the most recent 5,000 audit rows - counts are partial
               </p>
-            ) : null}
+            ) : <p className="bhl-note"><Chip tone="mute"><Headphones className="h-3 w-3" aria-hidden="true" />Counts only</Chip> Agent names are never shown at branch level.</p>}
           </div>
         ) : null}
-      </Sub>
+      </PartCard>
     </div>
   );
 }

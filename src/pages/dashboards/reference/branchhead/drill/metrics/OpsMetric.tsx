@@ -33,7 +33,7 @@ export function OpsMetric(props: MetricProps) {
         }}
       </SectionGate>
       <Block title="Callmaster">
-        {callmaster ? <CallmasterBlock section={callmaster} /> : <EmptyLine>No Callmaster data for this branch</EmptyLine>}
+        {callmaster ? <CallmasterBlock section={callmaster} compact /> : <EmptyLine>No Callmaster data for this branch</EmptyLine>}
       </Block>
     </div>
   );
