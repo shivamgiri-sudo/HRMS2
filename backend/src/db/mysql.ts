@@ -1,4 +1,5 @@
 import { inlineLimitPlaceholders } from "./limit-placeholders.js";
+import { installLockTelemetry, trackLockConflicts } from "./lock-telemetry.js";
 import mysql, {
   type RowDataPacket,
   type FieldPacket,
@@ -48,6 +49,7 @@ const _pool: Pool = mysql.createPool({
   maxIdle: env.DB_POOL_MAX_IDLE,
   idleTimeout: env.DB_POOL_IDLE_TIMEOUT_MS,
 });
+installLockTelemetry(_pool); // counts deadlocks / lock-wait timeouts by statement (db_lock_incident)
 
 // 0 = no limit (MySQL default). Only the API process sets one: without it a SELECT keeps running
 // on the server long after nginx (120s) has dropped the request, and repeat requests stack copies.
@@ -312,7 +314,8 @@ function patchConnectionExecute(conn: PoolConnection): void {
   const original = conn.execute.bind(conn) as (sql: string, params?: unknown) => Promise<unknown>;
   (conn as unknown as { execute: unknown }).execute = (sql: string, params?: unknown[]) => {
     const q = inlineLimitPlaceholders(sql, params);
-    return original(q.sql, q.params);
+    // Statements inside a transaction bypass db.execute's error path, so deadlocks there are counted here.
+    return trackLockConflicts(q.sql, original(q.sql, q.params) as Promise<unknown>);
   };
 }
 
@@ -324,18 +327,18 @@ export const db = {
     // A bound numeric LIMIT/OFFSET is rejected by this server ("Incorrect arguments to mysqld_stmt_execute");
     // turn it into the literal integer first. See limit-placeholders.ts.
     const q = inlineLimitPlaceholders(sql, params);
-    return withTransientRetry(() =>
+    return trackLockConflicts(q.sql, withTransientRetry(() =>
       _pool.execute<T>(q.sql, q.params as ExecuteParams),
-    );
+    ));
   },
   executeRun(
     sql: string,
     params?: unknown[],
   ): Promise<[QueryResult, FieldPacket[]]> {
     const q = inlineLimitPlaceholders(sql, params);
-    return withTransientRetry(() =>
+    return trackLockConflicts(q.sql, withTransientRetry(() =>
       _pool.execute(q.sql, q.params as ExecuteParams),
-    );
+    ));
   },
   async getConnection(): Promise<
     PoolConnection & {
@@ -358,9 +361,9 @@ export const db = {
     sql: string,
     params?: unknown[],
   ): Promise<[T, FieldPacket[]]> {
-    return withTransientRetry(() =>
+    return trackLockConflicts(sql, withTransientRetry(() =>
       _pool.query<T>(sql, params as ExecuteParams),
-    );
+    ));
   },
   end: _pool.end.bind(_pool),
   // Safe literal-escaping for the rare case a value must be interpolated into SQL text

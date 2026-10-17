@@ -1211,6 +1211,7 @@ app.use("/api/process-live", processLiveDashboardRouter);
 // Added after 2026-09-30 outage so a stuck-open breaker can be cleared
 // in seconds without a PM2 restart.
 import { resetCircuitBreaker, getCircuitBreakerStatus } from "./db/mysql.js";
+import { dbLocksRouter } from "./db/lock-admin.routes.js";
 
 app.post(
   "/api/admin/db/circuit-breaker/reset",
@@ -1234,6 +1235,9 @@ app.get(
     res.json({ success: true, status: getCircuitBreakerStatus() });
   },
 );
+
+// Lock trouble in one view: live blockers, deadlock/lock-wait statements ranked, watchdog kills and alerts.
+app.use("/api/admin/db/locks", requireAuth, requireRole("super_admin", "admin"), dbLocksRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1368,
-  "columnCount": 19991,
+  "tableCount": 1369,
+  "columnCount": 20005,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -7097,6 +7097,22 @@
       "rule_id",
       "dimension",
       "value_id"
+    ],
+    "db_lock_incident": [
+      "id",
+      "detected_at",
+      "kind",
+      "action",
+      "statement_shape",
+      "occurrences",
+      "blocker_thread",
+      "blocker_user",
+      "blocker_age_s",
+      "blocker_state",
+      "blocker_query",
+      "waiters",
+      "max_wait_s",
+      "reason"
     ],
     "department_master": [
       "id",

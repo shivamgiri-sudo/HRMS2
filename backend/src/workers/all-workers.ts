@@ -70,6 +70,7 @@ import { startMetaCampaignSyncScheduler, stopMetaCampaignSyncScheduler } from ".
 import { startRetentionCron } from "./privacy-retention.worker.js";
 import { startUploadBatchRetentionCron } from "./upload-batch-retention.worker.js";
 import { startDbHealthCron, stopDbHealthCron } from "../cron/db-health.cron.js";
+import { startDbLockWatchdogCron, stopDbLockWatchdogCron } from "../cron/db-lock-watchdog.cron.js";
 import { startAtsRemindersScheduler } from "../modules/ats/ats-reminders.cron.js";
 import { startOpsNudgeScheduler } from "../modules/ops-control-tower/ops-nudge.cron.js";
 import { startHiringEngineScheduler } from "../modules/hiring-engine/he-engine.cron.js";
@@ -382,6 +383,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // Kills sleeping connections idle ≥5 min, logs Threads_running spikes. Every 5 min.
     name: "db-health",
     start: () => { startDbHealthCron(); return Promise.resolve(); },
+  },
+  {
+    // Every 15 s: finds the transaction other writers are queued behind and kills it when it is idle in a transaction
+    // (nobody running anything). Active queries are alerted on, DDL is never killed. DB_LOCK_WATCHDOG_MODE=observe|off.
+    name: "db-lock-watchdog",
+    start: () => { startDbLockWatchdogCron(); return Promise.resolve(); },
   },
   {
     name: "business-action-sync",
@@ -724,6 +731,7 @@ function shutdown(): void {
   stopPayrollRecalcDrainerWorker();
   stopCostCentreProcessResolverWorker();
   stopDbHealthCron();
+  stopDbLockWatchdogCron();
   stopPnlRunningSalaryRefreshWorker();
   stopGstExportAutoWorker();
   stopPayrollPrepReminderWorker();
