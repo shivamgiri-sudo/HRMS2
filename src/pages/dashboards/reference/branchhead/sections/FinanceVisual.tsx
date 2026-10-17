@@ -1,11 +1,14 @@
-import { Wallet } from "lucide-react";
-import { BarList, ChartFrame, DataTable, Meter, StatTile, Waterfall, barListTable, meterTable, waterfallTable, type BarListProps, type MeterProps, type TableSpec, type WaterfallProps } from "../viz";
+import { useState } from "react";
+import { Banknote, Receipt, TrendingUp, Wallet } from "lucide-react";
+import { barListTable, meterTable, waterfallTable, type BarListProps, type MeterProps, type TableSpec, type WaterfallProps } from "../viz";
 import type { FinanceData, HeadRow } from "../panelTypes";
 import { formatInr, formatPct } from "../format";
 import { KPI_TONES, toneFor } from "../kpiModel";
-import { SectionShell } from "../ui";
+import { AccentCard, ChartCard, GradientKpi, KpiCell, KpiGrid, SectionGate, SpecTable, SubTabs, WaterfallChart } from "../look";
 import { FinanceGrn, Reconciliation, grnStages } from "./financeParts";
-import { Fold, Foot, Grid, nn, TileItem, Tiles, type VisualProps } from "./shared";
+import { FinanceBudget } from "./financeBudget";
+import { FinanceRecent } from "./financeRecent";
+import { nn, type VisualProps } from "./shared";
 
 export function modeLabel(m: string): string {
   if (m === "LIVE_MTD") return "Live, month to date";
@@ -59,7 +62,7 @@ export function buildFinance(d: FinanceData) {
   };
 }
 
-function componentsTable(p: FinanceData["pnl"]): TableSpec {
+export function componentsTable(p: FinanceData["pnl"]): TableSpec {
   return {
     caption: "Running revenue and cost components",
     columns: ["Component", "Amount"],
@@ -71,54 +74,67 @@ function componentsTable(p: FinanceData["pnl"]): TableSpec {
   };
 }
 
-export function FinanceVisual({ overview }: VisualProps) {
+export const FINANCE_SUBS = [
+  { id: "budget", label: "Budget vs consumption" }, { id: "grn", label: "GRN summary" }, { id: "recent", label: "Recent GRNs" }, { id: "pnl", label: "Running P&L" },
+];
+
+/** Email section 9: running P&L waterfall, components, projection and the tie-out. */
+function FinancePnl({ d }: { d: FinanceData }) {
+  const p = d.pnl;
+  const b = buildFinance(d);
+  const pr = d.projection;
+  const opTone = toneFor(p.opPct, KPI_TONES.opPct);
   return (
-    <SectionShell<FinanceData> icon={Wallet} tone="emerald" title="Running P&L - month to date (as in the emailed report)" section={overview.finance} emptyText="No finance data for this date" errorName="Finance">
-      {(d) => {
-        const p = d.pnl;
-        const b = buildFinance(d);
-        const bud = d.budget;
-        const pr = d.projection;
-        return (
-          <div className="space-y-3">
-            <ChartFrame title="Revenue to operating profit" table={b.waterfallTable} height={200}
-              subtitle={`Period ${p.periodCode}, day ${p.daysElapsed} of ${p.daysInMonth} (${modeLabel(p.mode)}) · OP ${formatPct(p.opPct)}`}>
-              <Waterfall {...b.waterfall} />
-              <div className="mt-3">
-                <Fold title="Revenue and cost components">
-                  <DataTable table={componentsTable(p)} />
-                  <Foot>Cost centres: {p.costCentres}, estimated: {p.estimatedCostCentres}.</Foot>
-                </Fold>
-              </div>
-            </ChartFrame>
-            <div>
-              <h3 className="mb-1 text-[13px] font-bold text-slate-900">Projection for the full month</h3>
-              {p.dataAvailable && pr ? (
-                <>
-                  <Tiles label="Projection">
-                    <TileItem><StatTile label="Projected revenue" value={formatInr(pr.revenue)} /></TileItem>
-                    <TileItem><StatTile label="Projected cost" value={formatInr(pr.cost)} /></TileItem>
-                    <TileItem><StatTile label="Projected operating profit" value={formatInr(pr.operatingProfit)} hint={`OP ${formatPct(pr.opPct)}`} /></TileItem>
-                  </Tiles>
-                  <Foot>Projection basis: {pr.basis}</Foot>
-                </>
-              ) : <p className="text-[13px] text-slate-700">No P&amp;L data yet for this month</p>}
-            </div>
-            <Grid>
-              <ChartFrame title="Budget used" table={b.meterTable} height={72}
-                subtitle={`Available ${formatInr(bud.available)} · consumed ${formatInr(bud.consumed)} · reserved ${formatInr(bud.reserved)}${bud.headerStatus ? ` · status ${bud.headerStatus}` : ""}`}>
-                {bud.headerMissing ? <p className="mb-2 text-[12px] text-slate-700">No budget has been created for this month.</p> : null}
-                <Meter {...b.meter} />
-              </ChartFrame>
-              <ChartFrame title="Budget by head" subtitle="Charged, with the budget as a marker" table={b.headsTable} height={96}>
-                <BarList {...b.heads} />
-              </ChartFrame>
-            </Grid>
-            <FinanceGrn d={d} stages={b.stages} />
-            <Reconciliation d={d} />
-          </div>
-        );
-      }}
-    </SectionShell>
+    <div className="space-y-4">
+      <KpiGrid label="Running P&L">
+        <KpiCell><GradientKpi icon={Banknote} hue="navy" label="Revenue (running)" value={formatInr(p.revenueRunning)} sub={`Day ${p.daysElapsed} of ${p.daysInMonth} · ${modeLabel(p.mode)}`} /></KpiCell>
+        <KpiCell><GradientKpi icon={Receipt} hue="orange" label="Total cost" value={formatInr(p.totalCostRunning)} sub={`Salary ${formatInr(p.salaryRunning)} · GRN ${formatInr(nn(p.grnConsumed) + nn(p.grnReserved))}`} /></KpiCell>
+        <KpiCell><GradientKpi icon={Wallet} hue="emerald" label="Operating profit" value={formatInr(p.operatingProfit)} sub={`OP ${formatPct(p.opPct)}`}
+          status={opTone === "warning" ? "warning" : opTone === "critical" ? "critical" : null} /></KpiCell>
+        <KpiCell><GradientKpi icon={TrendingUp} hue="violet" label="Projected OP (month)" value={p.dataAvailable && pr ? formatInr(pr.operatingProfit) : "—"}
+          sub={p.dataAvailable && pr ? `OP ${formatPct(pr.opPct)} · revenue ${formatInr(pr.revenue)}` : "No projection yet"} /></KpiCell>
+      </KpiGrid>
+      <div className="bhl-grid bhl-grid-2">
+        <ChartCard title="Revenue to operating profit" chip={`Period ${p.periodCode} · OP ${formatPct(p.opPct)}`} accent="emerald" table={b.waterfallTable}>
+          <p className="mb-2 text-[12px] text-slate-700">Period {p.periodCode}, day {p.daysElapsed} of {p.daysInMonth} ({modeLabel(p.mode)})</p>
+          <WaterfallChart label={b.waterfall.label} format={formatInr} steps={b.waterfall.steps} />
+        </ChartCard>
+        <AccentCard title="Revenue and cost components" chip={`${p.costCentres} cost centres · ${p.estimatedCostCentres} estimated`} accent="blue">
+          <SpecTable table={componentsTable(p)} />
+        </AccentCard>
+      </div>
+      <AccentCard title="Projection for the full month" accent="violet" chip={p.dataAvailable && pr ? pr.basis : undefined}>
+        {p.dataAvailable && pr ? (
+          <>
+            <SpecTable table={{ caption: "Projection for the full month", columns: ["Measure", "Month to date", "Projected full month"], rows: [
+              ["Revenue", formatInr(p.revenueRunning), formatInr(pr.revenue)], ["Cost", formatInr(p.totalCostRunning), formatInr(pr.cost)],
+              ["Operating profit", formatInr(p.operatingProfit), formatInr(pr.operatingProfit)], ["OP %", formatPct(p.opPct), formatPct(pr.opPct)],
+            ] }} />
+            <p className="bhl-note">Projection basis: {pr.basis}</p>
+          </>
+        ) : <p className="text-[13px] text-slate-700">No P&amp;L data yet for this month</p>}
+      </AccentCard>
+      <Reconciliation d={d} />
+    </div>
+  );
+}
+
+/** Finance tab: the four finance sections of the email (1, 2, 3, 9) as sub-tabs. */
+export function FinanceVisual({ overview, sub, onSubChange }: VisualProps) {
+  const [own, setOwn] = useState("budget");
+  const active = FINANCE_SUBS.some((s) => s.id === sub) ? (sub as string) : own;
+  const change = (id: string) => (onSubChange ? onSubChange(id) : setOwn(id));
+  return (
+    <SectionGate<FinanceData> title="Finance" section={overview.finance} emptyText="No finance data for this date" errorName="Finance" accent="emerald">
+      {(d) => (
+        <div className="space-y-4">
+          <SubTabs label="Finance sections" items={FINANCE_SUBS} value={active} onChange={change} />
+          {active === "budget" ? <FinanceBudget d={d} /> : null}
+          {active === "grn" ? <FinanceGrn d={d} stages={grnStages(d)} /> : null}
+          {active === "recent" ? <FinanceRecent d={d} /> : null}
+          {active === "pnl" ? <FinancePnl d={d} /> : null}
+        </div>
+      )}
+    </SectionGate>
   );
 }

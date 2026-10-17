@@ -1,11 +1,13 @@
-import { AlertTriangle, ArrowDown, ArrowUp, CalendarCheck, Clock3, Minus } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, CalendarCheck, CalendarClock, Clock3, Minus, UserCheck, UserX, Users } from "lucide-react";
 import type { LeaderboardRow, SectionResult } from "../../../../../../backend/src/modules/branch-head-health/types";
-import { BarList, ChartFrame, DataTable, Donut, StackedBar, StatTile, barListTable, donutTable, stackedBarTable, type BarListProps, type DonutProps, type StackedBarProps } from "../viz";
+import { barListTable, donutTable, stackedBarTable, type BarListProps, type DonutProps, type StackedBarProps } from "../viz";
 import type { AttendanceData } from "../panelTypes";
 import { formatCount, formatPct } from "../format";
-import { SectionShell } from "../ui";
+import { KPI_TONES, toneFor } from "../kpiModel";
 import { SectionError } from "../SectionPanels";
-import { byLabel, Fold, Grid, nn, selectByName, SMALL_TABLE_ROWS, TileItem, Tiles, type VisualProps } from "./shared";
+import { BarsChart, ChartCard, DonutChart, EmptyLine, GradientKpi, KpiCell, KpiGrid, PAL, SectionGate } from "../look";
+import { LateTable, SlotTable } from "./attendanceParts";
+import { nn, selectByName, type VisualProps } from "./shared";
 
 /** Signed change in shrinkage vs the previous day, in words; zero scheduled yesterday counts as no data. */
 export function shrinkageChange(now: number, prev: AttendanceData["previousDay"]): string {
@@ -71,7 +73,7 @@ export function buildAttendance(d: AttendanceData, teams: LeaderboardRow[]) {
   };
 }
 
-function Change({ text }: { text: string }) {
+export function Change({ text }: { text: string }) {
   const Icon = text.includes(" up ") ? ArrowUp : text.includes(" down ") ? ArrowDown : Minus;
   return <span className="inline-flex items-center gap-1"><Icon className="h-3.5 w-3.5" aria-hidden="true" />{text}</span>;
 }
@@ -84,16 +86,18 @@ export function noPresentNote(d: Pick<AttendanceData, "present" | "scheduled">):
   return null;
 }
 
-const SLOT_COLUMNS = ["Process", "Shift", "Planned", "Present", "Absent", "Late"];
-
 /** Late arrivals by team, from the leaderboard section (its own "As of"); independent of attendance. */
-function TeamLate({ lb }: { lb: SectionResult<LeaderboardRow[]> }) {
+export function TeamLate({ lb }: { lb: SectionResult<LeaderboardRow[]> }) {
   const team = teamBars(lb.status === "ok" && Array.isArray(lb.data) ? lb.data : []);
   return (
-    <ChartFrame title="Late arrivals by team" table={barListTable(team)} height={96}
-      subtitle={`Teams are ranked; names are in the process drill-down${lb.status === "ok" ? ` · As of ${lb.asOf}` : ""}`}>
-      {lb.status === "error" ? <SectionError name="Late arrivals by team" message={lb.message} /> : <BarList {...team} />}
-    </ChartFrame>
+    <ChartCard title="Late arrivals by team" accent="orange" table={barListTable(team)}
+      chip={`Teams are ranked; names are in the process drill-down${lb.status === "ok" ? ` · As of ${lb.asOf}` : ""}`}>
+      {lb.status === "error" ? <SectionError name="Late arrivals by team" message={lb.message} />
+        : team.items.length ? (
+          <BarsChart label="Late arrivals by team" xKey="team" horizontal height={Math.max(150, team.items.length * 32 + 50)} format={formatCount}
+            data={team.items.map((t) => ({ team: t.label, late: t.value }))} series={[{ key: "late", label: "Late", color: PAL.s4 }]} />
+        ) : <EmptyLine text="No late arrivals by team" />}
+    </ChartCard>
   );
 }
 
@@ -103,53 +107,62 @@ export function AttendanceVisual(props: VisualProps) {
   const att = overview.attendance;
   const attendanceOk = att?.status === "ok" && att.data != null;
   return (
-    <div className="space-y-3">
-      <SectionShell<AttendanceData> icon={CalendarCheck} tone="sky" title="Attendance today" section={att} emptyText="No attendance data for this date" errorName="Attendance">
-        {(d) => {
+    <div className="space-y-4">
+      <SectionGate<AttendanceData> title="Attendance today" section={att} emptyText="No attendance data for this date" errorName="Attendance" accent="cyan">
+        {(d, asOf) => {
           const b = buildAttendance(d, []);
-          const slots = d.bySlot ?? [];
+          const shrink = toneFor(d.shrinkagePct, KPI_TONES.shrinkagePct);
+          const pick = selectByName(props, "attendance");
           return (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {noPresentNote(d) ? (
                 <p role="note" className="flex items-start gap-2 rounded-lg border border-amber-400 bg-amber-50 p-3 text-[13px] text-amber-950">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />{noPresentNote(d)}
                 </p>
               ) : null}
-              <Tiles label="Attendance counts">
-                <TileItem><StatTile label="Scheduled" value={formatCount(d.scheduled)} /></TileItem>
-                <TileItem><StatTile label="Yet to start" value={formatCount(d.yetToStart)} /></TileItem>
-                <TileItem><StatTile label="Late today" value={formatCount(d.totalLate)} /></TileItem>
-                <TileItem><StatTile label="Week-off worked" value={formatCount(d.weekOffWorked)} /></TileItem>
-              </Tiles>
-              <Grid>
-                <ChartFrame title="Present, absent and on leave" subtitle="Centre: shrinkage today" table={b.donutTable} height={180}>
-                  <Donut {...b.donut} />
-                  <p className="mt-2 text-[12px] text-slate-700"><Change text={shrinkageChange(d.shrinkagePct, d.previousDay)} /></p>
-                </ChartFrame>
-                <ChartFrame title="By process" subtitle="Shift slots summed, most absent first" table={b.byProcessTable} height={120}>
-                  <StackedBar {...b.byProcess} onSelect={byLabel(b.byProcess.rows, selectByName(props, "attendance"))} />
-                  <div className="mt-3">
-                    {slots.length === 0 ? <p className="text-[12px] text-slate-700">No shift slots for this date.</p> : (
-                      <Fold title="Shift-slot detail" open={slots.length <= SMALL_TABLE_ROWS}>
-                        <DataTable table={{ caption: "Attendance by process and shift slot", columns: SLOT_COLUMNS,
-                          rows: slots.map((r) => [r.process, r.shift, formatCount(r.planned), formatCount(r.present), formatCount(r.absent), formatCount(r.late)]) }} />
-                      </Fold>
-                    )}
-                  </div>
-                </ChartFrame>
-                <ChartFrame title="Late arrivals by process" table={b.lateTable} height={96}>
-                  <BarList {...b.late} onSelect={byLabel(b.late.items, selectByName(props, "late"))} />
-                </ChartFrame>
+              <KpiGrid label="Attendance counts">
+                <KpiCell><GradientKpi icon={Users} hue="navy" label="Scheduled" value={formatCount(d.scheduled)} sub={`As of ${asOf}`} /></KpiCell>
+                <KpiCell><GradientKpi icon={UserCheck} hue="emerald" label="Present" value={formatCount(d.present)} sub={`${formatCount(d.yetToStart)} yet to start`} /></KpiCell>
+                <KpiCell><GradientKpi icon={UserX} hue="violet" label="Absent / on leave" value={`${formatCount(d.absent)} / ${formatCount(d.onLeave)}`} sub={d.previousDay ? `Yesterday ${formatCount(d.previousDay.absent)} absent` : "No data for yesterday"} /></KpiCell>
+                <KpiCell><GradientKpi icon={CalendarCheck} hue="cyan" label="Shrinkage" value={formatPct(d.shrinkagePct)} sub={<Change text={shrinkageChange(d.shrinkagePct, d.previousDay)} />}
+                  status={shrink === "warning" ? "warning" : shrink === "critical" ? "critical" : null} /></KpiCell>
+                <KpiCell><GradientKpi icon={Clock3} hue="orange" label="Late today" value={formatCount(d.totalLate)} sub={`${formatCount(d.lateNotOnRoster)} not on today's roster`} /></KpiCell>
+                <KpiCell><GradientKpi icon={CalendarClock} hue="teal" label="Yet to start" value={formatCount(d.yetToStart)} sub="Shift not begun" /></KpiCell>
+                <KpiCell><GradientKpi icon={CalendarCheck} hue="indigo" label="Week-off worked" value={formatCount(d.weekOffWorked)} sub="Came in on a week off" /></KpiCell>
+                <KpiCell><GradientKpi icon={CalendarClock} hue="slate" label="Shrinkage yesterday" value={d.previousDay && d.previousDay.scheduled > 0 ? formatPct(d.previousDay.shrinkagePct) : "—"}
+                  sub={d.previousDay ? `${formatCount(d.previousDay.absent)} absent of ${formatCount(d.previousDay.scheduled)}` : "No data for yesterday"} /></KpiCell>
+              </KpiGrid>
+              <div className="bhl-grid bhl-grid-3">
+                <ChartCard title="Present, absent and on leave" chip={`${formatCount(d.scheduled)} scheduled`} accent="cyan" table={b.donutTable}>
+                  <DonutChart label="Attendance today" center={formatPct(d.shrinkagePct)} centerLabel="Shrinkage" height={240}
+                    slices={[{ key: "p", label: "Present", value: nn(d.present), color: PAL.s1 }, { key: "a", label: "Absent", value: nn(d.absent), color: PAL.s2 },
+                      { key: "l", label: "On leave", value: nn(d.onLeave), color: PAL.s4 }]} />
+                  <p className="bhl-note"><Change text={shrinkageChange(d.shrinkagePct, d.previousDay)} /></p>
+                </ChartCard>
+                <ChartCard title="Shift bands: planned, absent, late" chip="4 bands" accent="violet" className="bhl-span-2"
+                  table={{ caption: "Attendance by shift band", columns: ["Band", "Planned", "Absent", "Late"], rows: (d.bands ?? []).map((x) => [x.band, formatCount(x.planned), formatCount(x.absent), formatCount(x.late)]) }}>
+                  <BarsChart label="Planned, absent and late by shift band" xKey="band" height={270} data={(d.bands ?? []).map((x) => ({ ...x }))}
+                    series={[{ key: "planned", label: "Planned", color: PAL.s1 }, { key: "absent", label: "Absent", color: PAL.s2 }, { key: "late", label: "Late", color: PAL.s4 }]} />
+                </ChartCard>
+              </div>
+              <ChartCard title="By process" chip={`${b.byProcess.rows.length} processes · most absent first`} accent="blue" table={b.byProcessTable}>
+                {b.byProcess.rows.length ? (
+                  <BarsChart label={b.byProcess.label} xKey="process" horizontal height={Math.max(180, b.byProcess.rows.length * 36 + 50)}
+                    data={b.byProcess.rows.map((r) => ({ process: r.label, ...Object.fromEntries(r.segments.map((s) => [s.key, s.value])) }))}
+                    series={[{ key: "present", label: "Present", color: PAL.s1, stack: "a" }, { key: "absent", label: "Absent", color: PAL.s2, stack: "a" }, { key: "open", label: "Not marked", color: PAL.other, stack: "a" }]} />
+                ) : <EmptyLine text="No shift slots for this date" />}
+              </ChartCard>
+              <SlotTable d={d} onProcess={pick} />
+              <div className="bhl-grid bhl-grid-2">
+                <LateTable d={d} late={b.late} onProcess={pick} />
                 {lb ? <TeamLate lb={lb} /> : null}
-              </Grid>
+              </div>
             </div>
           );
         }}
-      </SectionShell>
+      </SectionGate>
       {!attendanceOk && lb && lb.status !== "empty" ? (
-        <SectionShell<LeaderboardRow[]> icon={Clock3} tone="amber" title="Late arrivals by team" section={lb} emptyText="No late arrivals by team">
-          {() => <TeamLate lb={lb} />}
-        </SectionShell>
+        <TeamLate lb={lb} />
       ) : null}
     </div>
   );

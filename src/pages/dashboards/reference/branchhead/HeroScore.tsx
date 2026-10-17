@@ -76,13 +76,10 @@ export function HeroScore({ branch, overview, score, trend, onOpenAttention }: H
   const yesterday = vsYesterday(overview);
   const n = overview.attention.length;
   return (
-    <div className="bh-card-body grid items-stretch gap-4 rounded-2xl border border-slate-100 bg-gradient-to-br from-sky-50 via-white to-white p-4 shadow-sm sm:p-5 lg:grid-cols-[minmax(220px,auto)_minmax(0,1fr)]">
+    <div className="bhl-card bh-card-body grid items-stretch gap-4 lg:grid-cols-[minmax(240px,auto)_minmax(0,1fr)]">
       {/* Left column: centred stack (name and status, ring with band, trend, attention, date, vs yesterday). */}
       <div className="bh-hero-left flex min-w-0 flex-col items-center justify-center gap-2 text-center">
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <h2 className="min-w-0 text-[16px] font-bold text-slate-900">{branch.branchName}</h2>
-          <StatusChip status={overview.status} />
-        </div>
+        <h2 className="min-w-0 text-[16px] font-extrabold text-slate-900">{branch.branchName}</h2>
         {score ? (
           <>
             <ScoreRing value={score.score} label="Health score" band={scoreBand(score.score).label} size={150} />
@@ -97,6 +94,9 @@ export function HeroScore({ branch, overview, score, trend, onOpenAttention }: H
             {n} {n === 1 ? "needs" : "need"} attention
           </button>
         ) : null}
+        <p className="inline-flex flex-wrap items-center justify-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-700">
+          Report status <StatusChip status={overview.status} />
+        </p>
         <p className="text-[12px] text-slate-700">{overview.date}</p>
         {yesterday ? <p className="text-[12px] text-slate-700">{yesterday}</p> : null}
       </div>

@@ -27,12 +27,12 @@ const html = (o: { ov?: BranchOverview; sc?: Score; trend?: Array<number | null>
 );
 
 describe("HeroScore", () => {
-  it("left column is a centred stack: name and status, a 150px ring, attention, date, vs yesterday", () => {
+  it("left column is a centred stack: name, a 150px ring with its band, attention, the labelled report status, date, vs yesterday", () => {
     const out = html({ trend: [70, 75, 82] });
     const left = out.slice(out.indexOf("bh-hero-left"), out.indexOf("Score by pillar"));
     expect(left).toContain("items-center justify-center");
     expect(left).toContain('width="150"');
-    const at = ["Kolkata", "Healthy", 'aria-label="Health score:', "Health score trend", "1 needs attention", "2026-10-15", "vs 10.0% yesterday"].map((t) => left.indexOf(t));
+    const at = ["Kolkata", 'aria-label="Health score:', "Health score trend", "1 needs attention", "Report status", "Healthy", "2026-10-15", "vs 10.0% yesterday"].map((t) => left.indexOf(t));
     expect(at.every((i) => i >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
   });

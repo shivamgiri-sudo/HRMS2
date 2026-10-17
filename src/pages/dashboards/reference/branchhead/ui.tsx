@@ -1,20 +1,26 @@
 import type { ComponentType, ReactNode } from "react";
-import { Inbox, LayoutGrid } from "lucide-react";
-import { SectionCard, type KpiTone } from "@/components/process-performance/DashboardKit";
+import { Inbox } from "lucide-react";
+import type { KpiTone } from "@/components/process-performance/DashboardKit";
 import type { SectionResult } from "../../../../../backend/src/modules/branch-head-health/types";
 import { SectionError } from "./SectionPanels";
+import { AccentCard, type Accent } from "./look";
 
 type IconType = ComponentType<{ className?: string }>;
 
-/** Section card used by every Branch Head block: kit SectionCard look, the subtitle as a right-aligned note. */
-export function BhCard({ title, subtitle, icon = LayoutGrid, tone = "slate", children }: {
+/** Kit tone names (kept for callers) mapped onto the accent stripe colours. */
+const ACCENT_OF: Record<string, Accent> = {
+  emerald: "emerald", teal: "emerald", green: "emerald", violet: "violet", indigo: "violet", purple: "violet",
+  amber: "orange", orange: "orange", rose: "rose", red: "rose", cyan: "cyan", sky: "cyan",
+};
+
+/** Section card used by every Branch Head block: accent card (stripe, dot, title) with the subtitle as the right-hand chip. */
+export function BhCard({ title, subtitle, tone = "slate", children }: {
   title: string; subtitle?: ReactNode; icon?: IconType; tone?: KpiTone | "slate"; children: ReactNode;
 }) {
   return (
-    <SectionCard icon={icon} title={title} tone={tone}
-      action={subtitle ? <span className="shrink-0 whitespace-nowrap text-right text-[11px] text-slate-500">{subtitle}</span> : undefined}>
+    <AccentCard title={title} chip={subtitle} accent={ACCENT_OF[tone] ?? "blue"}>
       <div className="bh-card-body">{children}</div>
-    </SectionCard>
+    </AccentCard>
   );
 }
 

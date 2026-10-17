@@ -1,8 +1,11 @@
 import { AlertTriangle, Inbox } from "lucide-react";
 import type { SectionResult } from "../../../../../../backend/src/modules/branch-head-health/types";
-import { BarList, ChartFrame, DataTable, StatTile, barListTable, type BarListProps, type TableSpec } from "../viz";
+import { GradientKpi, KpiCell, KpiGrid, type KpiHue } from "../look";
+import { BarList, ChartFrame, DataTable, barListTable, type BarListProps, type TableSpec } from "../viz";
 import { SectionError } from "../SectionPanels";
-import { Fold, TileItem, Tiles } from "./shared";
+import { Fold } from "./shared";
+
+const HUES: KpiHue[] = ["navy", "emerald", "violet", "cyan", "orange", "teal", "indigo"];
 import { num } from "./OpsHeatGrid";
 
 type Part = SectionResult<unknown> | undefined;
@@ -72,7 +75,7 @@ export function CallmasterBlock({ section }: { section?: SectionResult<unknown> 
             {groups.map(([g, fields]) => (
               <div key={g}>
                 <h5 className="mb-1 text-[12px] font-semibold uppercase text-slate-700">{g}</h5>
-                <Tiles label={`${g} KPIs`}>{fields.map(([k, v]) => <TileItem key={k}><StatTile label={humanLabel(k)} value={cellText(v)} /></TileItem>)}</Tiles>
+                <KpiGrid label={`${g} KPIs`} cols={5}>{fields.map(([k, v], i) => <KpiCell key={k}><GradientKpi hue={HUES[i % HUES.length]} label={humanLabel(k)} value={cellText(v)} /></KpiCell>)}</KpiGrid>
               </div>
             ))}
           </div>
@@ -87,10 +90,10 @@ export function CallmasterBlock({ section }: { section?: SectionResult<unknown> 
       <Sub title="Fatal calls" part={p.fatal}>
         {fatal ? (
           <div>
-            <Tiles label="Fatal calls">
-              <TileItem><StatTile label="Total fatal calls" value={cellText(fatal.totalFatalCalls)} /></TileItem>
-              <TileItem><StatTile label="Agents with fatals" value={cellText(fatal.agentsWithFatals)} /></TileItem>
-            </Tiles>
+            <KpiGrid label="Fatal calls">
+              <KpiCell><GradientKpi hue="rose" label="Total fatal calls" value={cellText(fatal.totalFatalCalls)} /></KpiCell>
+              <KpiCell><GradientKpi hue="slate" label="Agents with fatals" value={cellText(fatal.agentsWithFatals)} /></KpiCell>
+            </KpiGrid>
             {fatal.truncated ? (
               <p role="status" className="mt-2 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-[13px] text-amber-900">
                 <AlertTriangle className="h-4 w-4" aria-hidden="true" />Showing the most recent 5,000 audit rows - counts are partial
