@@ -294,8 +294,10 @@ const ORDINARY_GRN_CONSUMED_SQL =
 const ORDINARY_GRN_RESERVED_SQL = "'branch_head_approved','accounts_head_approved'";
 
 /**
- * Leg 3 of readGrnSpend: db_bill vouchers (the mirror, grn_entry_line_snapshot) that HRMS does not carry. Line level, because only the line
- * carries the cost centre; branch from the cost centre because the mirror's branch ids are db_bill's, not branch_master's.
+ * Leg 3 of readGrnSpend: db_bill vouchers (the mirror, grn_entry_snapshot) that HRMS does not carry. Header level, because
+ * grn_entry_line_snapshot is incomplete — for Sep-26 it covers only 156 of 285 headers and under-represents amounts by ~17L.
+ * Branch is resolved via branch_master.branch_name = grn_entry_snapshot.branch_name (exact match; all 4 active branches resolve).
+ * Reconciliation entries (entry_status='reconciliation') are excluded — they are Finance manual corrections handled by Leg 4.
  *
  * The two duplicate guards (see LEGACY_TWIN_MIN_AMOUNT) used to be correlated NOT EXISTS subqueries inside one UNION. On production that
  * made the consumed read take 33-46 s for every month that has mirror lines (Oct 2026, with none, took 3 s): every line re-scanned
@@ -304,21 +306,22 @@ const ORDINARY_GRN_RESERVED_SQL = "'branch_head_approved','accounts_head_approve
  */
 export async function readLegacyMirrorSpend(
   periodCode: string,
-  scope: { sql: string; params: unknown[] },
+  _scope: { sql: string; params: unknown[] },
   withProcess: boolean,
   processJoin: (alias: string) => string,
   processCol: (first: string | null, alias: string) => string,
   withDetail: boolean,
 ): Promise<RowDataPacket[]> {
+  // grn_entry_snapshot is already company-scoped (MAS Callnet mirror only) and has no
+  // cost_centre_master join, so the ccm-based scope predicates do not apply here.
   const [lines] = await db.execute<RowDataPacket[]>(
-    `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id, ${processCol(null, "pc3")} AS process_id, l.amount AS amount,
-            COALESCE(ge.grn_no, l.bill_source_id) AS grn_ref, ge.vendor AS vendor, l.particular AS particular
-       FROM grn_entry_line_snapshot l
-       JOIN grn_entry_snapshot ge ON ge.bill_source_id = l.grn_source_id
-       LEFT JOIN cost_centre_master ccm ON ccm.cost_centre_code = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-       ${processJoin("pc3")}
-      WHERE ge.period_code = ? AND ge.is_rejected = 0 AND ${scope.sql}`,
-    [periodCode, ...scope.params],
+    `SELECT bm.id AS branch_id, NULL AS cost_centre_id, NULL AS process_id, ge.amount AS amount,
+            COALESCE(ge.grn_no, CAST(ge.bill_source_id AS CHAR)) AS grn_ref, ge.vendor AS vendor, ge.description AS particular
+       FROM grn_entry_snapshot ge
+       LEFT JOIN branch_master bm ON UPPER(TRIM(bm.branch_name)) = UPPER(TRIM(ge.branch_name)) COLLATE utf8mb4_unicode_ci
+      WHERE ge.period_code = ? AND ge.is_rejected = 0
+        AND (ge.entry_status IS NULL OR ge.entry_status != 'reconciliation')`,
+    [periodCode],
   );
   if (!lines.length) return [];
 
