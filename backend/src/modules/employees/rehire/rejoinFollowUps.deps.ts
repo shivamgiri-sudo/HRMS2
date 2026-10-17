@@ -1,5 +1,6 @@
 import { invalidateAuthContextCache } from "../../../middleware/authMiddleware.js";
 import { dispatchJoinProvisioningTasks } from "../../it-provisioning/it-provisioning.service.js";
+import { settleAbsconderPayHoldOnRejoin } from "../../payroll/absconder-pay-release.service.js";
 import type { FollowUpDeps } from "./rejoinFollowUps.js";
 
 /**
@@ -8,5 +9,6 @@ import type { FollowUpDeps } from "./rejoinFollowUps.js";
  */
 export const realFollowUpDeps: FollowUpDeps = {
   invalidateAuthContextCache,
+  settleAbsconderPayHold: (employeeId, actorUserId) => settleAbsconderPayHoldOnRejoin(employeeId, actorUserId),
   dispatchJoinProvisioningTasks: (input) => dispatchJoinProvisioningTasks(input),
 };

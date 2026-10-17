@@ -60,7 +60,7 @@ describe("held employees", () => {
     const [sql, params] = query.mock.calls[0];
     expect(String(sql)).toContain("er.pay_hold_released_at IS NULL");
     expect(String(sql)).toContain("'absconding','abandonment'");
-    expect(String(sql)).toMatch(/NOT IN \('draft','revoked','rejected','cancelled','withdrawn'\)/);
+    expect(String(sql)).toMatch(/NOT IN \('draft','revoked','rejected','cancelled','withdrawn','rejoined'\)/);
     expect(String(sql)).toContain("ORDER BY x.created_at DESC");
     expect(params).toEqual([["e1", "e2"]]);
     expect(String(sql)).toContain("er.pay_hold_at IS NOT NULL");

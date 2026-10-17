@@ -92,4 +92,18 @@ describe("runRejoinFollowUps", () => {
     const failing = executor({ ...base, "INSERT INTO employee_reactivation_audit": new Error("audit down") });
     await expect(runRejoinFollowUps(failing as never, deps(), input)).resolves.toBeDefined();
   });
+
+  it("settles an absconder pay hold left by the old exit and reports it as its own step", async () => {
+    const settle = vi.fn(async () => "pay hold lifted; 2026-09 cannot be rewritten: arrears task raised for Payroll HR");
+    const results = await runRejoinFollowUps(executor(base) as never, deps({ settleAbsconderPayHold: settle }), input);
+    expect(settle).toHaveBeenCalledWith("e1", "bh1");
+    expect(results.find((r) => r.step === "pay_hold")).toEqual({ step: "pay_hold", ok: true, detail: expect.stringContaining("arrears task") });
+  });
+  it("adds no pay_hold step when there was no hold, and records a failure without undoing the others", async () => {
+    const none = await runRejoinFollowUps(executor(base) as never, deps({ settleAbsconderPayHold: vi.fn(async () => null) }), input);
+    expect(none.some((r) => r.step === "pay_hold")).toBe(false);
+    const bad = await runRejoinFollowUps(executor(base) as never, deps({ settleAbsconderPayHold: vi.fn(async () => { throw new Error("db down"); }) }), input);
+    expect(bad.find((r) => r.step === "pay_hold")).toEqual({ step: "pay_hold", ok: false, detail: "db down" });
+    expect(bad.filter((r) => r.ok).length).toBe(3);
+  });
 });

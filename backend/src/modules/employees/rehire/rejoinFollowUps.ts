@@ -2,7 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import type { SqlExecutor } from "./rehireFacts.js";
 
 export interface FollowUpResult {
-  step: "auth" | "lms" | "it_provisioning";
+  step: "auth" | "lms" | "it_provisioning" | "pay_hold";
   ok: boolean;
   detail?: string;
 }
@@ -17,6 +17,8 @@ export interface FollowUpInput {
 
 /** The two side-effecting dependencies are injected so this unit never imports auth or IT-provisioning modules. */
 export interface FollowUpDeps {
+  /** Lifts an absconder pay hold left over from the old exit and settles any closed month. Returns a note, or null. */
+  settleAbsconderPayHold?: (employeeId: string, actorUserId: string) => Promise<string | null>;
   invalidateAuthContextCache: (userId: string) => void;
   dispatchJoinProvisioningTasks: (input: {
     employeeId: string;
@@ -110,7 +112,17 @@ export async function runRejoinFollowUps(
     results.push({ step: "it_provisioning", ok: false, detail: msg(e) });
   }
 
-  // 4. Audit. A failing audit write must not mask the results.
+  // 4. Absconder pay hold: the old exit no longer holds pay; settle what it left behind. Only reported when there was a hold.
+  if (deps.settleAbsconderPayHold) {
+    try {
+      const note = await deps.settleAbsconderPayHold(input.employeeId, input.approverId);
+      if (note) results.push({ step: "pay_hold", ok: true, detail: note });
+    } catch (e) {
+      results.push({ step: "pay_hold", ok: false, detail: msg(e) });
+    }
+  }
+
+  // 5. Audit. A failing audit write must not mask the results.
   try {
     await db.execute(
       `INSERT INTO employee_reactivation_audit (request_id, action, actioned_by, remarks, metadata)

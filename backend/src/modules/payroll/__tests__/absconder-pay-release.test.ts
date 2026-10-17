@@ -177,3 +177,46 @@ describe("release (branch Payroll HR only)", () => {
     expect(await svc.releaseHold({ exitRequestId: "x1", reason, actorUserId: "pr" })).toMatchObject({ route: "fnf", openRunRecalculated: false });
   });
 });
+
+describe("rejoin settles the hold (settleAbsconderPayHoldOnRejoin)", () => {
+  const rejoined = { ...base, status: "rejoined", pay_hold_requested_at: "2026-10-06", pay_hold_at: "2026-10-07" };
+  const rejoinRow = () => execute.mockImplementation(async (sql: string, params?: string[]) => {
+    const q = String(sql);
+    if (q.includes("FROM exit_request er JOIN employees e")) return [[exit]];
+    if (q.includes("FROM salary_prep_run spr")) return [runRows[String(params?.[1] ?? "")] ?? []];
+    writes.push(q);
+    return [{ affectedRows: 1 }];
+  });
+  it("a rejoined exit can no longer take a new hold", async () => {
+    exit = { ...rejoined, pay_hold_at: null, pay_hold_requested_at: null };
+    await expect(svc.placeHold({ exitRequestId: "x1", reason, actorUserId: "hr" })).rejects.toMatchObject({ code: "HOLD_NOT_ABSCONDING" });
+  });
+  it("does nothing for someone who never had a hold", async () => {
+    execute.mockImplementation(async () => [[]]);
+    expect(await svc.settleAbsconderPayHoldOnRejoin("e1", "bh1")).toBeNull();
+  });
+  it("lifts an unreleased hold, rebuilds open runs and routes to payroll when nothing is closed", async () => {
+    exit = { ...rejoined }; rejoinRow();
+    runRows = { "2026-10": [{ status: "processing" }] };
+    const note = await svc.settleAbsconderPayHoldOnRejoin("e1", "bh1");
+    expect(note).toContain("pay hold lifted");
+    expect(writes.some((w) => w.includes("pay_hold_released_at = NOW()"))).toBe(true);
+    expect(writes.some((w) => w.includes("INSERT INTO absconder_pay_release_event"))).toBe(true);
+    expect(writes.some((w) => w.includes("pay_release_route = 'payroll'"))).toBe(true);
+  });
+  it("routes to arrears (not F&F) and raises a Payroll HR task when a month is closed", async () => {
+    exit = { ...rejoined, pay_hold_released_at: "2026-10-09", pay_release_route: "fnf" }; rejoinRow();
+    runRows = { "2026-10": [{ status: "FINALIZED" }] };
+    recalc.mockResolvedValue({ status: "queued", runId: "r1", message: "" });
+    roleHolders.mockResolvedValue(["hrp"]);
+    const note = await svc.settleAbsconderPayHoldOnRejoin("e1", "bh1");
+    expect(note).toContain("arrears task raised");
+    expect(writes.some((w) => w.includes("pay_release_route = 'arrears'"))).toBe(true);
+    expect(writes.some((w) => w.includes("pay_hold_released_at = NOW()"))).toBe(false);
+  });
+  it("leaves a hold that was already released into payroll alone", async () => {
+    exit = { ...rejoined, pay_hold_released_at: "2026-10-09", pay_release_route: "payroll" }; rejoinRow();
+    expect(await svc.settleAbsconderPayHoldOnRejoin("e1", "bh1")).toContain("already released into payroll");
+    expect(writes.length).toBe(0);
+  });
+});

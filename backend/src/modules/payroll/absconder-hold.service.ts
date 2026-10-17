@@ -13,7 +13,7 @@
  * lifts it (pay_hold_released_at). No Branch Head or Payroll Head step is involved
  * (absconder-pay-release.service.ts).
  *
- * Held means: the employee's LATEST exit is a live absconding/abandonment exit (not revoked, withdrawn,
+ * Held means: the employee's LATEST exit is a live absconding/abandonment exit (not revoked, withdrawn, rejoined,
  * rejected, cancelled or draft), the hold has been approved (pay_hold_at set), and it has not been
  * released (pay_hold_released_at is NULL).
  *
@@ -48,7 +48,7 @@ export async function absconderHoldConfig(): Promise<{ enabled: boolean }> {
 const HELD_PREDICATE = `
   (LOWER(COALESCE(er.exit_type, '')) IN ('absconding','abandonment')
    OR LOWER(COALESCE(er.exit_sub_type, '')) IN ('absconding','abandonment'))
-  AND LOWER(COALESCE(er.status, '')) NOT IN ('draft','revoked','rejected','cancelled','withdrawn')
+  AND LOWER(COALESCE(er.status, '')) NOT IN ('draft','revoked','rejected','cancelled','withdrawn','rejoined')
   AND er.pay_hold_at IS NOT NULL
   AND er.pay_hold_released_at IS NULL
   AND er.id = (SELECT x.id FROM exit_request x WHERE x.employee_id = er.employee_id

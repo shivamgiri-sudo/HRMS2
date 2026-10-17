@@ -80,7 +80,7 @@ async function writeEvent(x: ExitRow, action: string, actorUserId: string | null
 
 function assertAbsconding(x: ExitRow): void {
   const isAbs = [x.exit_type, x.exit_sub_type].some((v) => ["absconding", "abandonment"].includes(String(v ?? "").toLowerCase()));
-  const live = !["draft", "revoked", "rejected", "cancelled", "withdrawn"].includes(String(x.status ?? "").toLowerCase());
+  const live = !["draft", "revoked", "rejected", "cancelled", "withdrawn", "rejoined"].includes(String(x.status ?? "").toLowerCase());
   if (!isAbs || !live) throw refuse(409, "HOLD_NOT_ABSCONDING", "A pay hold can only be placed on a live absconding exit.");
 }
 
@@ -294,4 +294,60 @@ export async function releaseHold(p: { exitRequestId: string; reason: string; ac
   const route = openRunRecalculated ? "payroll" : "fnf";
   await db.execute(`UPDATE exit_request SET pay_release_route = ? WHERE id = ? AND pay_release_route IS NULL`, [route, x.id]);
   return { route, openRunRecalculated };
+}
+
+/**
+ * The employee came back (rejoin approved). Runs AFTER the rejoin has committed; never throws.
+ *
+ * The old absconding exit is now 'rejoined', so the hold no longer applies to them (absconder-hold.service.ts).
+ * What is left is any hold that was never lifted and any released month that was waiting for an F&F that
+ * will now never happen:
+ *   - an unreleased hold is released here, recorded as the rejoin (not as a person's decision);
+ *   - the open runs are rebuilt so days now payable show up in payroll;
+ *   - a month whose run is closed cannot be rewritten and there is no F&F for someone who came back, so the
+ *     route becomes 'arrears' and the branch Payroll HR gets a task to pay those days (and the PF/ESIC on
+ *     them) through the arrears ledger. Nothing is paid automatically: the amount is a human's call.
+ * Returns a one-line note for the rejoin follow-up report, or null when this employee had no hold.
+ */
+export async function settleAbsconderPayHoldOnRejoin(employeeId: string, actorUserId: string | null): Promise<string | null> {
+  const [rows] = await db.execute<ExitRow[]>(
+    `SELECT er.id, er.employee_id, e.branch_id, e.employee_code,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS employee_name,
+            COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, er.absconding_since) AS last_working_day,
+            er.pay_hold_requested_at, er.pay_hold_requested_by, er.pay_hold_requested_reason,
+            er.pay_hold_at, er.pay_hold_released_at, er.pay_release_route,
+            NULL AS reporting_manager_user_id, er.exit_type, er.exit_sub_type, er.status
+       FROM exit_request er JOIN employees e ON e.id = er.employee_id
+      WHERE er.employee_id = ? AND LOWER(COALESCE(er.status, '')) = 'rejoined' AND er.pay_hold_at IS NOT NULL
+        AND (LOWER(COALESCE(er.exit_type, '')) IN ('absconding','abandonment') OR LOWER(COALESCE(er.exit_sub_type, '')) IN ('absconding','abandonment'))
+      ORDER BY er.created_at DESC, er.id DESC LIMIT 1`,
+    [employeeId],
+  );
+  const x = rows[0];
+  if (!x) return null;
+  if (String(x.pay_release_route ?? "") === "payroll") return "Absconder pay hold was already released into payroll.";
+  const notes: string[] = [];
+  if (!x.pay_hold_released_at) {
+    await db.execute(
+      `UPDATE exit_request SET pay_hold_released_at = NOW(), pay_hold_released_by = ?, pay_hold_released_reason = ?
+        WHERE id = ? AND pay_hold_released_at IS NULL`,
+      [actorUserId, "Employee rejoined: hold lifted automatically", x.id],
+    );
+    await writeEvent(x, "hold_released", actorUserId, "system_rejoin", "Employee rejoined: hold lifted automatically");
+    notes.push("pay hold lifted");
+  }
+  const { openRunRecalculated } = await recalcOpenRuns(x, "Absconder rejoined: pay hold lifted, days restored", actorUserId);
+  const closedMonths = await closedMonthsForRelease(x).catch(() => [] as string[]);
+  if (openRunRecalculated && closedMonths.length === 0) {
+    await db.execute(`UPDATE exit_request SET pay_release_route = 'payroll' WHERE id = ?`, [x.id]);
+    notes.push("open payroll run recalculated");
+  } else {
+    await db.execute(`UPDATE exit_request SET pay_release_route = 'arrears' WHERE id = ?`, [x.id]);
+    const months = closedMonths.length ? closedMonths.join(", ") : "an already-closed month";
+    notes.push(`${months} cannot be rewritten: arrears task raised for Payroll HR`);
+    await inbox(await branchOnlyRoleHolders(["payroll_hr"], x.branch_id), "absconder_rejoin_arrears", x,
+      `Rejoined absconder: pay released days by arrears: ${x.employee_name ?? x.employee_code ?? ""}`,
+      `${x.employee_name ?? x.employee_code ?? "This employee"} rejoined, so there will be no F&F. Salary days for ${months} (payroll closed) must be paid through the arrears ledger, and PF/ESIC on them filed as arrears. Nothing has been paid automatically.`);
+  }
+  return notes.join("; ");
 }
