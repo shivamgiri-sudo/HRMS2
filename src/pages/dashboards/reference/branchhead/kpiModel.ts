@@ -55,7 +55,8 @@ function okData<T>(s: { status: string; data: unknown } | undefined): T | null {
 /** Shrinkage today vs the previous day, in percentage points; lower shrinkage is good. */
 export function shrinkageDelta(a: AttendanceData | null): StatDelta | undefined {
   const prev = a?.previousDay?.shrinkagePct;
-  if (!a || !fin(a.shrinkagePct) || !fin(prev)) return undefined;
+  // Nobody scheduled today (or yesterday) means there is no shrinkage to compare, not a drop of 100 points.
+  if (!a || !(a.scheduled > 0) || !(a.previousDay && a.previousDay.scheduled > 0) || !fin(a.shrinkagePct) || !fin(prev)) return undefined;
   const diff = Math.round((a.shrinkagePct - prev) * 10) / 10;
   if (diff === 0) return { text: "0.0 pts vs yesterday", direction: "flat", good: null };
   return { text: `${diff > 0 ? "+" : ""}${diff.toFixed(1)} pts vs yesterday`, direction: diff > 0 ? "up" : "down", good: diff < 0 };
@@ -76,10 +77,13 @@ export function buildKpis(ov: BranchOverview): KpiTile[] {
   const fill = ppl && fin(mandate) && mandate > 0 ? (ppl.totalActive / mandate) * 100 : null;
   const risk = atr ? atr.critical + atr.high : null;
   const grn = fi?.grn ?? null;
+  const noRoster = !!att && !(att.scheduled > 0);
+  const noBudget = !!fi && !(fi.budget.totalBudget > 0);
+  const noPnl = !!fi && !(fi.revenueRunning > 0) && !(fi.totalCostRunning > 0);
 
   return [
-    { id: "shrinkage", label: "Shrinkage", metric: "shrinkagePct", value: formatPct(att?.shrinkagePct), tone: toneFor(att?.shrinkagePct, KPI_TONES.shrinkagePct),
-      delta: shrinkageDelta(att), hint: att ? `${formatCount(att.absent)} absent of ${formatCount(att.scheduled)}` : NO_DATA },
+    { id: "shrinkage", label: "Shrinkage", metric: "shrinkagePct", value: noRoster ? "—" : formatPct(att?.shrinkagePct), tone: noRoster ? "neutral" : toneFor(att?.shrinkagePct, KPI_TONES.shrinkagePct),
+      delta: shrinkageDelta(att), hint: att ? (noRoster ? "Nobody scheduled today" : `${formatCount(att.absent)} absent of ${formatCount(att.scheduled)}`) : NO_DATA },
     { id: "late", label: "Late today", metric: "totalLate", value: formatCount(att?.totalLate), tone: toneFor(lateShare, KPI_TONES.lateSharePct),
       hint: lateShare == null ? (att ? "No one present yet" : NO_DATA) : `${formatPct(lateShare)} of present` },
     { id: "headcount", label: "Headcount vs mandate", metric: "totalActive", tone: mandateTone(ppl?.totalActive, mandate),
@@ -88,9 +92,9 @@ export function buildKpis(ov: BranchOverview): KpiTile[] {
     { id: "attrition", label: "Attrition risk", value: formatCount(risk), tone: toneFor(risk, KPI_TONES.attritionRisk),
       hint: atr ? `${formatCount(atr.critical)} critical, ${formatCount(atr.high)} high` : NO_DATA },
     { id: "profit", label: "Operating profit", metric: "opPct", value: formatPct(fi?.opPct), tone: toneFor(fi?.opPct, KPI_TONES.opPct),
-      hint: fi ? `${formatInr(fi.operatingProfit)} month to date` : NO_DATA },
-    { id: "budget", label: "Budget used", metric: "budgetUtilizationPct", value: formatPct(fi?.budgetUtilizationPct), tone: toneFor(fi?.budgetUtilizationPct, KPI_TONES.budgetPct),
-      hint: fi ? `${formatInr(fi.budget.available)} available` : NO_DATA },
+      hint: fi ? (noPnl ? "No P&L activity yet" : `${formatInr(fi.operatingProfit)} month to date`) : NO_DATA },
+    { id: "budget", label: "Budget used", metric: "budgetUtilizationPct", value: noBudget ? "—" : formatPct(fi?.budgetUtilizationPct), tone: noBudget ? "neutral" : toneFor(fi?.budgetUtilizationPct, KPI_TONES.budgetPct),
+      hint: fi ? (noBudget ? "No budget set" : `${formatInr(fi.budget.available)} available`) : NO_DATA },
     { id: "grn", label: "GRN pending", value: formatCount(grn?.pending), tone: toneFor(grn?.pending, KPI_TONES.grnPending),
       hint: grn ? `${formatCount(grn.pendingOver3Days)} over 3 days` : NO_DATA },
     { id: "openings", label: "Open positions", metric: "openPositions", value: formatCount(hir?.openPositions), tone: "neutral",

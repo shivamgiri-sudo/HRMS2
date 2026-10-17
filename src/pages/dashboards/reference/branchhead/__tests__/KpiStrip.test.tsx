@@ -120,3 +120,26 @@ describe("KpiStrip", () => {
     expect(onOpen.mock.calls.map((c) => c[0])).toEqual([...KPI_IDS]);
   });
 });
+
+describe("empty branches do not show fake numbers", () => {
+  const tile = (ov: BranchOverview, id: string) => buildKpis(ov).find((t) => t.id === id)!;
+  it("nobody scheduled: shrinkage is a dash with a plain note and no -100 pts delta", () => {
+    const att = { ...fx.attendance, scheduled: 0, present: 0, absent: 0, onLeave: 0, shrinkagePct: 0 };
+    const t = tile(overview({ attendance: fx.ok(att) }), "shrinkage");
+    expect(t.value).toBe("—");
+    expect(t.tone).toBe("neutral");
+    expect(t.hint).toBe("Nobody scheduled today");
+    expect(t.delta).toBeUndefined();
+  });
+  it("no schedule yesterday: no delta; a normal day keeps its delta", () => {
+    const att = { ...fx.attendance, previousDay: { shrinkagePct: 0, absent: 0, scheduled: 0 } };
+    expect(tile(overview({ attendance: fx.ok(att) }), "shrinkage").delta).toBeUndefined();
+    expect(tile(overview(), "shrinkage").delta?.text).toContain("pts vs yesterday");
+  });
+  it("no budget set: budget used is a dash saying so; no P&L activity says so", () => {
+    const fi = { ...fx.finance, revenueRunning: 0, totalCostRunning: 0, budget: { ...fx.finance.budget, totalBudget: 0, available: 0 } };
+    const ov = overview({ finance: fx.ok(fi) });
+    expect(tile(ov, "budget")).toMatchObject({ value: "—", hint: "No budget set", tone: "neutral" });
+    expect(tile(ov, "profit").hint).toBe("No P&L activity yet");
+  });
+});

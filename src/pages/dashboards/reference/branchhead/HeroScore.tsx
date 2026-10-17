@@ -36,8 +36,20 @@ export function pillarRows(score: NonNullable<Score>) {
 function vsYesterday(ov: BranchOverview): string | null {
   const a = ov.attendance?.status === "ok" ? (ov.attendance.data as AttendanceData | null) : null;
   const prev = a?.previousDay?.shrinkagePct;
-  if (!a || prev == null || !Number.isFinite(prev) || !Number.isFinite(a.shrinkagePct)) return null;
+  // No roster today or yesterday: there is nothing to compare ("0.0% vs 100.0% yesterday" would mislead).
+  if (!a || !(a.scheduled > 0) || !(a.previousDay && a.previousDay.scheduled > 0) || prev == null || !Number.isFinite(prev) || !Number.isFinite(a.shrinkagePct)) return null;
   return `Shrinkage ${formatPct(a.shrinkagePct)} vs ${formatPct(prev)} yesterday`;
+}
+
+/** When fewer than half the weights are scored the number is a thin read: say so next to the ring. */
+export function partialScoreNote(score: NonNullable<Score>): string | null {
+  const total = score.pillars.reduce((n, p) => n + (Number.isFinite(p.weight) ? p.weight : 0), 0);
+  if (!(total > 0)) return null;
+  const excluded = new Set(score.excluded);
+  const scoredPillars = score.pillars.filter((p) => p.score != null && Number.isFinite(p.score) && !excluded.has(p.key));
+  const scoredWeight = scoredPillars.reduce((n, p) => n + p.weight, 0);
+  if (scoredWeight / total >= 0.5) return null;
+  return `Partial score: only ${scoredPillars.length} of ${score.pillars.length} pillars have data (${Math.round((scoredWeight / total) * 100)}% of the weight)`;
 }
 
 function PillarBars({ score }: { score: NonNullable<Score> }) {
@@ -83,6 +95,7 @@ export function HeroScore({ branch, overview, score, trend, onOpenAttention }: H
         {score ? (
           <>
             <ScoreRing value={score.score} label="Health score" band={scoreBand(score.score).label} size={150} />
+            {partialScoreNote(score) ? <p role="note" className="max-w-[240px] rounded-lg border border-amber-400 bg-amber-50 px-2 py-1 text-[12px] font-semibold text-amber-950">{partialScoreNote(score)}</p> : null}
             {trend ? <Sparkline points={trend} label="Health score trend" width={120} height={32} /> : null}
           </>
         ) : (

@@ -1,4 +1,5 @@
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { EmptyLine } from "./AccentCard";
 import "./look.css";
 
 /** Validated categorical slots from viz.css (light), plus the neutral "other". Status colours stay reserved for status. */
@@ -24,6 +25,9 @@ export function BarsChart({ label, data, xKey, series, height = 260, horizontal 
   label: string; data: Row[]; xKey: string; series: ChartSeries[]; height?: number; horizontal?: boolean;
   format?: (v: number) => string; rightFormat?: (v: number) => string;
 }) {
+  // A chart with nothing to draw (every value zero or missing) is an empty axis frame: say so instead.
+  const drawn = data.some((r) => series.some((s) => Number.isFinite(Number(r[s.key])) && Number(r[s.key]) !== 0));
+  if (!drawn) return <EmptyLine text="Nothing to show for this period yet" />;
   const hasRight = series.some((s) => s.axis === "right");
   const narrow = typeof window !== "undefined" && window.innerWidth < 640;
   const fmtOf = (s: ChartSeries) => (s.axis === "right" && rightFormat ? rightFormat : format);
@@ -76,6 +80,7 @@ export function DonutChart({ label, slices, center, centerLabel, height = 230, f
   label: string; slices: Array<{ key: string; label: string; value: number; color: string }>; center: string; centerLabel: string; height?: number; format?: (v: number) => string;
 }) {
   const data = slices.filter((s) => s.value > 0);
+  if (data.length === 0) return <EmptyLine text="Nothing to show for this period yet" />;
   return (
     <div className="bhl-chart relative" role="img" aria-label={`${label}: ${slices.map((s) => `${s.label} ${format(s.value)}`).join(", ")}`} style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
