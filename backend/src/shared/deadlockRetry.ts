@@ -37,6 +37,11 @@ export function isDeadlockError(error: unknown): boolean {
   return typeof errno === "number" && RETRYABLE_LOCK_ERRNOS.has(errno);
 }
 
+function isOnlyDeadlock(error: unknown): boolean {
+  const { code, errno } = error as { code?: unknown; errno?: unknown };
+  return code === "ER_LOCK_DEADLOCK" || errno === 1213;
+}
+
 export interface DeadlockRetryOptions {
   /** Total attempts including the first. Bounded on purpose — an unbounded retry against a
    *  genuinely contended row spins for ever and reads as a hang rather than a failure. */
@@ -46,6 +51,9 @@ export interface DeadlockRetryOptions {
   /** Called with the attempt number before each retry, so a run reports contention instead
    *  of absorbing it silently. */
   onRetry?: (attempt: number, error: unknown) => void;
+  /** Retry only 1213 (deadlock). A 1205 lock-wait timeout has already waited ~50 s, so retrying it
+   *  several times reads as a hang. Default false keeps the original behaviour. */
+  deadlockOnly?: boolean;
   /** Test seam. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -56,7 +64,7 @@ export async function withDeadlockRetry<T>(
   operation: () => Promise<T>,
   options: DeadlockRetryOptions = {},
 ): Promise<T> {
-  const { attempts = 5, delayMs = 100, onRetry, sleep = defaultSleep } = options;
+  const { attempts = 5, delayMs = 100, onRetry, sleep = defaultSleep, deadlockOnly = false } = options;
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -66,6 +74,7 @@ export async function withDeadlockRetry<T>(
       // Anything that is not a lock conflict is a real failure: surface it immediately
       // rather than retrying a wrong column until the attempt budget runs out.
       if (!isDeadlockError(error)) throw error;
+      if (deadlockOnly && !isOnlyDeadlock(error)) throw error;
 
       lastError = error;
       if (attempt === attempts) break;

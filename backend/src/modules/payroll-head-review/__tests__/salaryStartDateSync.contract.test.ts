@@ -52,7 +52,8 @@ describe("salary start date is written once, atomically, by the central service"
 
   it("writeComponentAssignment (assign / create-and-assign) validates first, writes in one transaction, then commits the date everywhere", () => {
     const fn = bodyOf("writeComponentAssignment");
-    expect(fn).toContain("connection.beginTransaction()");
+    // begin / commit / rollback live in the shared wrapper, which also locks the review row and retries deadlocks.
+    expect(fn).toContain("withEmployeeAssignmentTx(");
     expect(fn).toContain("...actorAuthority(ctx.roles)");
     // Validation must precede the first write, otherwise the locks see the fresh date as "already carried".
     expect(fn.indexOf("prepareSalaryStartDate(")).toBeGreaterThan(-1);
@@ -62,22 +63,26 @@ describe("salary start date is written once, atomically, by the central service"
     expect(fn.indexOf("commitSalaryStartDate(")).toBeGreaterThan(
       fn.indexOf("UPDATE employee_salary_assignment"),
     );
-    expect(fn.indexOf("commitSalaryStartDate(")).toBeLessThan(
-      fn.indexOf("connection.commit()"),
+    // The date is committed everywhere as the last step of the body; the wrapper then commits the transaction.
+    expect(fn).toContain("return toSalaryDateOutcome(await commitSalaryStartDate(");
+    // (generic signature, so bodyOf's `name(` lookup does not match it)
+    const tx = SERVICE.slice(
+      SERVICE.indexOf("async function withEmployeeAssignmentTx"),
+      SERVICE.indexOf("async function writeComponentAssignment"),
     );
-    expect(fn).toContain("connection.rollback()");
+    expect(tx).toContain("connection.beginTransaction()");
+    expect(tx.indexOf("FOR UPDATE")).toBeLessThan(tx.indexOf("await body(connection)"));
+    expect(tx.indexOf("await body(connection)")).toBeLessThan(tx.indexOf("connection.commit()"));
+    expect(tx).toContain("connection.rollback()");
   });
 
   it("approveOfferedPackage (one-click approval) does the same", () => {
     const fn = bodyOf("approveOfferedPackage");
-    expect(fn).toContain("connection.beginTransaction()");
+    expect(fn).toContain("withEmployeeAssignmentTx(");
     expect(fn.indexOf("prepareSalaryStartDate(")).toBeLessThan(
       fn.indexOf("INSERT INTO salary_component_assignments"),
     );
-    expect(fn.indexOf("commitSalaryStartDate(")).toBeLessThan(
-      fn.indexOf("connection.commit()"),
-    );
-    expect(fn).toContain("connection.rollback()");
+    expect(fn).toContain("return toSalaryDateOutcome(await commitSalaryStartDate(");
   });
 
   it("updateAssignmentEffectiveDate validates first and commits the date everywhere inside its transaction", () => {

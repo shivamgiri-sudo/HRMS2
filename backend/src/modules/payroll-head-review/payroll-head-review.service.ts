@@ -49,6 +49,7 @@ import { buildBankReadinessForEmployees } from "../payroll/bank-payment-readines
 import { createPackage, getPackageById } from "../payroll-masters/payrollMasters.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
+import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
 
 // GET /queue and /branches are open to all of these (see routes.ts) — payroll_hr/branch_head
 // are branch/process-scoped via buildScopeWhereClause below, payroll_head/admin/super_admin see
@@ -818,6 +819,41 @@ interface PackageDateContext {
  * way left a component assignment with no matching review/assignment date, and the date sync at
  * the end swallowed its own errors.
  */
+/**
+ * Runs one employee's salary-assignment write as a single transaction that is safe under concurrency.
+ *
+ * Production 2026-10-17: "Assign package" failed with ER_LOCK_DEADLOCK on the INSERT into
+ * salary_component_assignments (1,968 deadlock lines in the log). Two requests for the same employee (a double
+ * click, a retry, or two Payroll users) both ran UPDATE ... WHERE employee_id=? AND status='active', which takes
+ * index locks, and then both tried to INSERT, so MySQL killed one.
+ *   1. The employee's review row is locked FIRST, so a second request for the same employee waits for the
+ *      first to finish instead of interleaving with it.
+ *   2. If MySQL still picks this transaction as a deadlock victim, the WHOLE transaction is retried (never a
+ *      single statement: MySQL has already rolled the rest back). Only 1213 is retried, not lock-wait timeouts.
+ */
+async function withEmployeeAssignmentTx<T>(employeeId: string, body: (connection: Awaited<ReturnType<typeof db.getConnection>>) => Promise<T>): Promise<T> {
+  return withDeadlockRetry(async () => {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.execute(`SELECT id FROM employee_payroll_head_review WHERE employee_id = ? FOR UPDATE`, [employeeId]);
+      const result = await body(connection);
+      await connection.commit();
+      return result;
+    } catch (e) {
+      await connection.rollback();
+      throw e;
+    } finally {
+      connection.release();
+    }
+  }, {
+    attempts: 3,
+    delayMs: 150,
+    deadlockOnly: true,
+    onRetry: (attempt) => console.warn(`[payroll-head-review] deadlock on assignment write for ${employeeId}, retrying (attempt ${attempt + 1})`),
+  });
+}
+
 async function writeComponentAssignment(
   employeeId: string,
   pkg: RowDataPacket,
@@ -827,10 +863,7 @@ async function writeComponentAssignment(
   candidateId: string | null,
   ctx: PackageDateContext
 ): Promise<SalaryDateOutcome> {
-  const connection = await db.getConnection();
-  let outcome: SalaryDateOutcome;
-  try {
-    await connection.beginTransaction();
+  const outcome: SalaryDateOutcome = await withEmployeeAssignmentTx(employeeId, async (connection) => {
 
     // Validate before any write (see updateAssignmentEffectiveDate for why the order matters).
     const prepared = await prepareSalaryStartDate(connection, {
@@ -901,14 +934,8 @@ async function writeComponentAssignment(
       [Number(pkg.package_amount ?? (pkg.ctc ?? 0)) * 12, effectiveDate, employeeId]
     );
 
-    outcome = toSalaryDateOutcome(await commitSalaryStartDate(connection, prepared));
-    await connection.commit();
-  } catch (e) {
-    await connection.rollback();
-    throw e;
-  } finally {
-    connection.release();
-  }
+    return toSalaryDateOutcome(await commitSalaryStartDate(connection, prepared));
+  });
 
   // See syncOfferRecordFromPackage() -- keeps the ORIGINAL offer row from going stale
   // (e.g. still showing 0) the moment Payroll Head assigns a real catalog package here.
@@ -1010,10 +1037,7 @@ export async function approveOfferedPackage(
     throw httpError("No employment offer found for this candidate.", 404, "NO_OFFER");
   }
 
-  const connection = await db.getConnection();
-  let salary_date: SalaryDateOutcome;
-  try {
-    await connection.beginTransaction();
+  const salary_date: SalaryDateOutcome = await withEmployeeAssignmentTx(employeeId, async (connection) => {
 
     const prepared = await prepareSalaryStartDate(connection, {
       employeeId,
@@ -1068,14 +1092,8 @@ export async function approveOfferedPackage(
       [Number(offer.offered_ctc ?? 0) * 12, effectiveDate, employeeId]
     );
 
-    salary_date = toSalaryDateOutcome(await commitSalaryStartDate(connection, prepared));
-    await connection.commit();
-  } catch (e) {
-    await connection.rollback();
-    throw e;
-  } finally {
-    connection.release();
-  }
+    return toSalaryDateOutcome(await commitSalaryStartDate(connection, prepared));
+  });
 
   await audit(actorUserId, "PAYROLL_HEAD_OFFERED_PACKAGE_APPROVED", employeeId, {
     offer_id: offer.id,
