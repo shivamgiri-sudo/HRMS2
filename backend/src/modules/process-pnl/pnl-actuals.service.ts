@@ -427,52 +427,64 @@ export async function readGrnSpend(
   const legs: string[] = [];
   const params: unknown[] = [];
 
-  // Leg 1 — Smart GRN per-cost-centre allocation rows.
-  legs.push(
-    `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
-            ${processCol("a.process_id", "pc1")} AS process_id, ${grnAllocationExGstSql("a")} AS amount,
-            ${detailCols("app_allocation", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
-       FROM grn_cost_allocation a
-       JOIN grn_request gr ON gr.id = a.grn_request_id
-       LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
-       ${processJoin("pc1")}
-      WHERE a.lifecycle_status = '${lifecycle}' AND gr.accounting_period = ? AND ${HRMS_RAISED_GRN_SQL} AND ${scope.sql}`,
-  );
-  params.push(periodCode, ...scope.params);
+  // OWNER RULE 2026-10-16: For periods before Oct 2026, Finance managed all vendor GRNs in
+  // db_bill. HRMS-raised Smart GRNs exist for Aug-Sep 2026 but are not in Finance's approved P&L
+  // (Finance never reconciled them into the db_bill-based sheet). Including them overstates GRN
+  // by Rs 31.86L for Sep-26 and Rs 3.66L for Aug-26, making EBITDA ~35L too low.
+  // Fix: for historical periods (< 2026-10), skip L1+L2 (HRMS GRNs) and use only L3 (db_bill
+  // mirror) + L4 (manual corrections). For Oct 2026+, Finance enters GRNs directly in HRMS so
+  // L1+L2 are the only source (no mirror).
+  const isHistoricalPeriod = periodCode < "2026-10";
 
-  // Leg 2 — ordinary GRN: amount on grn_request itself, no allocation rows (so a Smart GRN is
-  // never counted twice). Its status says where the money sits: only Branch/Accounts Head approval
-  // holds a reservation and only Finance Head approval consumes it. "Anything but draft" used to
-  // book submitted, returned and consumption_reversed GRNs as consumed.
-  const ordinaryStatuses = kind === "reserved" ? ORDINARY_GRN_RESERVED_SQL : ORDINARY_GRN_CONSUMED_SQL;
-  legs.push(
-    `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
-            ${processCol("gr.process_id", "pc2")} AS process_id, ${grnRequestExGstSql("gr")} AS amount,
-            ${detailCols("app_grn", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
-       FROM grn_request gr
-       LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
-       ${processJoin("pc2")}
-      WHERE gr.budget_line_id IS NOT NULL
-        AND gr.status IN (${ordinaryStatuses})
-        AND gr.accounting_period = ?
-        AND ${HRMS_RAISED_GRN_SQL}
-        AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
-        AND ${scope.sql}`,
-  );
-  params.push(periodCode, ...scope.params);
+  if (!isHistoricalPeriod) {
+    // Leg 1 — Smart GRN per-cost-centre allocation rows.
+    legs.push(
+      `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
+              ${processCol("a.process_id", "pc1")} AS process_id, ${grnAllocationExGstSql("a")} AS amount,
+              ${detailCols("app_allocation", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
+         FROM grn_cost_allocation a
+         JOIN grn_request gr ON gr.id = a.grn_request_id
+         LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+         ${processJoin("pc1")}
+        WHERE a.lifecycle_status = '${lifecycle}' AND gr.accounting_period = ? AND ${HRMS_RAISED_GRN_SQL} AND ${scope.sql}`,
+    );
+    params.push(periodCode, ...scope.params);
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date, SUM(amount) AS amount
-       FROM (${legs.join("\n UNION ALL \n")}) t
-      GROUP BY branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date`,
-    params,
-  );
+    // Leg 2 — ordinary GRN: amount on grn_request itself, no allocation rows (so a Smart GRN is
+    // never counted twice). Its status says where the money sits: only Branch/Accounts Head approval
+    // holds a reservation and only Finance Head approval consumes it.
+    const ordinaryStatuses = kind === "reserved" ? ORDINARY_GRN_RESERVED_SQL : ORDINARY_GRN_CONSUMED_SQL;
+    legs.push(
+      `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
+              ${processCol("gr.process_id", "pc2")} AS process_id, ${grnRequestExGstSql("gr")} AS amount,
+              ${detailCols("app_grn", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
+         FROM grn_request gr
+         LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
+         ${processJoin("pc2")}
+        WHERE gr.budget_line_id IS NOT NULL
+          AND gr.status IN (${ordinaryStatuses})
+          AND gr.accounting_period = ?
+          AND ${HRMS_RAISED_GRN_SQL}
+          AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
+          AND ${scope.sql}`,
+    );
+    params.push(periodCode, ...scope.params);
+  }
+
+  const rows: RowDataPacket[] = legs.length
+    ? (
+        await db.execute<RowDataPacket[]>(
+          `SELECT branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date, SUM(amount) AS amount
+             FROM (${legs.join("\n UNION ALL \n")}) t
+            GROUP BY branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date`,
+          params,
+        )
+      )[0]
+    : [];
   // Leg 3 — the db_bill mirror, read separately (see readLegacyMirrorSpend). Consumed only: a mirrored bill is billed history, never
   // "reserved". Read for both kinds it counted every line twice.
-  // OWNER RULE 2026-10-16: From Oct 2026 onwards ONLY HRMS-raised GRNs are counted (Leg 1+2).
-  // The db_bill mirror (Leg 3) is limited to historical periods before 2026-10 when GRN entry
-  // was managed in db_bill. Oct 2026+ Finance enters all vendor GRNs directly in HRMS.
-  const isHistoricalPeriod = periodCode < "2026-10";
+  // Limited to historical periods (< 2026-10): Oct 2026+ Finance enters GRNs in HRMS (L1+L2).
+  // Historical periods (Apr-Sep 2026): only the mirror counts; L1+L2 are skipped (see above).
   if (kind === "consumed" && isHistoricalPeriod && (await tableExists("grn_entry_line_snapshot"))) {
     rows.push(...(await readLegacyMirrorSpend(periodCode, scope, withProcess, processJoin, processCol, withDetail)));
   }
