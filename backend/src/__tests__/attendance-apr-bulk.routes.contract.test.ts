@@ -197,13 +197,13 @@ describe("defect 3 — a small well-formed file still succeeds and classifies id
     expect(insertCall[1]).toEqual(expect.arrayContaining(["absent", 1]));
   });
 
-  it("an employee not found or inactive is still skipped with the unchanged reason", async () => {
+  it("an unknown employee code is skipped with a reason naming the code as not in HRMS", async () => {
     const csv = csvOf([{ code: "UNKNOWN", date: "01-08-2026", mins: 500 }]);
     const res = await request(appFor("wfm")).post("/api/wfm/attendance/apr-bulk-upload").attach("file", Buffer.from(csv), "apr.csv");
     expect(res.status).toBe(200);
     expect(res.body.uploaded).toBe(0);
     expect(res.body.errors).toEqual(
-      expect.arrayContaining([expect.objectContaining({ employee_code: "UNKNOWN", reason: "Employee not found or inactive" })]),
+      expect.arrayContaining([expect.objectContaining({ employee_code: "UNKNOWN", reason: "Employee code not found in HRMS" })]),
     );
   });
 
