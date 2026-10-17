@@ -40,6 +40,20 @@ export type CenterData = {
   reason_breakdown?: Array<{ reason: string; count: number }>;
   branch_breakdown?: Array<{ branch: string; count: number; rate: number }>;
   aon_breakdown?: Array<{ bucket: string; voluntary: number; involuntary: number; count: number }>;
+  /** Pending NOC cases with no exit request (raised straight from the NOC screen). */
+  noc_without_exit?: NocWithoutExitRow[];
+};
+
+export type NocWithoutExitRow = {
+  noc_case_id: string;
+  employee_id: string;
+  employee_code: string | null;
+  employee_name: string | null;
+  noc_case_status: string;
+  last_working_day: string | null;
+  days_open: number | null;
+  branch_name: string | null;
+  process_name: string | null;
 };
 
 export type FullFinalCalc = {

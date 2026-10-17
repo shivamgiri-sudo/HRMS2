@@ -3,6 +3,7 @@
  * line page into smaller files). Shared types/consts/primitives live in ./shared.ts.
  */
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, Clock, FileText, ShieldCheck, UserMinus } from "lucide-react";
 import { Search } from "lucide-react";
 import { AIInsightPanel } from "@/components/ai";
@@ -85,6 +86,15 @@ export function OverviewTab({
         .some((v) => v?.toLowerCase().includes(q));
     });
   }, [data, stage, search, typeFilter]);
+
+  // Pending NOCs with no exit request: counted as NOC-pending in the Ops Control Tower, so they
+  // must be findable here too. Same search box; the stage/type filters are exit-request fields.
+  const nocOnly = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (data?.noc_without_exit ?? []).filter((r) =>
+      !q || [r.employee_name, r.employee_code, r.branch_name, r.process_name].some((v) => v?.toLowerCase().includes(q)),
+    );
+  }, [data, search]);
 
   // Approval Center deep link: ring the row once the list has rendered.
   useApprovalFocus(!loading && filtered.length > 0);
@@ -362,11 +372,63 @@ export function OverviewTab({
             {loading && !data
               ? "Loading exit records…"
               : search || typeFilter !== "all" || stage !== "all"
-                ? "No records match these filters."
+                ? nocOnly.length
+                  ? "No exit requests match. Matching NOC cases without an exit request are listed below."
+                  : "No records match these filters."
                 : "No exit records found."}
           </div>
         )}
       </div>
+
+      {nocOnly.length > 0 && (
+        <div className="overflow-hidden rounded-2xl border border-amber-200 bg-white/95 shadow-sm">
+          <div className="border-b border-amber-100 bg-amber-50/60 p-4">
+            <h2 className="font-bold text-slate-800">
+              Pending NOC cases with no exit request ({nocOnly.length})
+            </h2>
+            <p className="text-sm text-slate-600">
+              These NOCs were raised straight from the NOC screen, so there is no exit request for the
+              board above. They are still counted as NOC pending. Open the NOC case to work it.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[800px] text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                <tr>
+                  {["Employee", "Branch / Process", "LWD", "NOC status", "Days open", "Action"].map((h) => (
+                    <th key={h} className="p-4 font-semibold">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {nocOnly.map((r) => (
+                  <tr key={r.noc_case_id} className="border-t">
+                    <td className="p-4">
+                      <div className="font-semibold text-slate-800">{r.employee_name ?? "—"}</div>
+                      <div className="text-xs text-slate-500">{r.employee_code ?? "—"}</div>
+                    </td>
+                    <td className="p-4">
+                      <div>{r.branch_name ?? "—"}</div>
+                      <div className="text-xs text-slate-500">{r.process_name ?? "—"}</div>
+                    </td>
+                    <td className="p-4">{r.last_working_day ?? "—"}</td>
+                    <td className="p-4 capitalize">{r.noc_case_status.replace(/_/g, " ")}</td>
+                    <td className="p-4">{r.days_open ?? "—"}</td>
+                    <td className="p-4">
+                      <Link
+                        to={`/payroll/noc-cases?case=${encodeURIComponent(r.noc_case_id)}`}
+                        className="inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <ShieldCheck className="h-3 w-3" /> Open NOC case
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       {drawerExitId && (
         <NoticePeriodDrawer
           exitId={drawerExitId}

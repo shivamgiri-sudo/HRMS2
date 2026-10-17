@@ -16,7 +16,8 @@
 // clock used there.
 import { abscondedWithoutExceptionSql } from "../exit/ff-settlement-gate.service.js";
 import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
-import { awaitingFinalApprovalSql, nocFinalApprovalFrom } from "../payroll/noc-final-approval.service.js";
+import { nocFinalApprovalFrom } from "../payroll/noc-final-approval.service.js";
+import { nocPendingSql } from "../payroll/noc-pending-rule.js";
 import { DIGILOCKER_EVIDENCE_SQL } from "../ats/onboarding-bridge-heal.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -395,26 +396,25 @@ export async function getFnfPendingDetail(
 // ── 5. NOC pending ───────────────────────────────────────────────────────────────────────────
 // noc_case.status is 'invited'/'employee_submitted'/'in_progress' while still open; 'completed',
 // 'cancelled' and 'declined' are terminal. branch_id is carried directly on the case.
-const NOC_OPEN_STATUSES = ["invited", "employee_submitted", "in_progress"];
-
+// The pending rule itself (open and workable, or completed awaiting Payroll Head final approval) lives in
+// payroll/noc-pending-rule.ts so the Exit Command Center lists exactly the people counted here.
 export async function getNocPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   // Completed cases waiting for the Payroll Head's final approval are still a pendency: F&F is
   // locked behind them. Only counted once noc_ph_final_approval_from is switched on.
-  const from = await nocFinalApprovalFrom();
-  const awaiting = from ? ` OR ${awaitingFinalApprovalSql("noc_case")}` : "";
   // An absconder cannot be worked until the Payroll Head records an F&F exception, so — like the F&F
   // count — they are not a pendency anyone can clear. Excluded from the OPEN part only; a completed NOC
   // awaiting the Payroll Head's final approval is still counted.
+  const pending = nocPendingSql("noc_case", "er", "e", await nocFinalApprovalFrom());
   const rows = await query<RowDataPacket>(
     "noc-pending",
     `SELECT noc_case.branch_id, COUNT(*) AS n
        FROM noc_case
        LEFT JOIN exit_request er ON er.id = noc_case.exit_request_id
        LEFT JOIN employees e ON e.id = noc_case.employee_id
-      WHERE (noc_case.status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")}) AND NOT ${abscondedWithoutExceptionSql("er", "e")})${awaiting}
+      WHERE ${pending.sql}
       GROUP BY noc_case.branch_id`,
-    from ? [...NOC_OPEN_STATUSES, from] : NOC_OPEN_STATUSES,
+    pending.params,
   );
   return rollupCounts(
     branches,
@@ -433,7 +433,7 @@ export interface NocDetailRow {
 export async function getNocPendingDetail(
   branchId: string,
 ): Promise<NocDetailRow[]> {
-  const from = await nocFinalApprovalFrom();
+  const pending = nocPendingSql("noc_case", "er", "e", await nocFinalApprovalFrom());
   const rows = await query<RowDataPacket>(
     "noc-pending-detail",
     `SELECT noc_case.employee_id, noc_case.employee_code, noc_case.employee_name, noc_case.status,
@@ -442,10 +442,10 @@ export async function getNocPendingDetail(
        LEFT JOIN exit_request er ON er.id = noc_case.exit_request_id
        LEFT JOIN employees e ON e.id = noc_case.employee_id
       WHERE noc_case.branch_id = ?
-        AND ((noc_case.status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")}) AND NOT ${abscondedWithoutExceptionSql("er", "e")})${from ? ` OR ${awaitingFinalApprovalSql("noc_case")}` : ""})
+        AND ${pending.sql}
       ORDER BY noc_case.initiated_at ASC
       LIMIT 200`,
-    [branchId, ...NOC_OPEN_STATUSES, ...(from ? [from] : [])],
+    [branchId, ...pending.params],
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
