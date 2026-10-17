@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1369,
-  "columnCount": 20005,
+  "columnCount": 20006,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -11040,7 +11040,8 @@
       "approved_by_fh_at",
       "description",
       "source_created_at",
-      "synced_at"
+      "synced_at",
+      "comp_id"
     ],
     "grn_expense_master_snapshot": [
       "id",
