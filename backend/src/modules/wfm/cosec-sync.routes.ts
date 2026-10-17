@@ -76,7 +76,7 @@ cosecSyncRouter.get(
     const [bioRows, attRows, unmappedRows, watermarkRows] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total_bio_logs,
-                MAX(attendance_date) AS latest_bio_date
+                MAX(punch_date) AS latest_bio_date
            FROM biometric_attendance_log`
       ),
       db.execute<RowDataPacket[]>(
@@ -84,8 +84,10 @@ cosecSyncRouter.get(
            FROM attendance_daily_record`
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS unmapped_count
-           FROM cosec_unmapped_users`
+        `SELECT COALESCE(SUM(records_failed), 0) AS unmapped_count
+           FROM integration_sync_run
+          WHERE integration_key = 'cosec_unmapped'
+            AND started_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`
       ),
       db.execute<RowDataPacket[]>(
         `SELECT *
